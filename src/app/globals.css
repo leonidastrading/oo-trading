@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --page: #0b0b0b;
+  --surface: #161615;
+  --surface-2: #1f1f1d;
+  --border: rgba(255, 255, 255, 0.1);
+  --grid: #2c2c2a;
+  --axis: #4a4a46;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --gain: #3fb59d;
+  --gain-bg: rgba(63, 181, 157, 0.14);
+  --loss: #e66767;
+  --loss-bg: rgba(230, 103, 103, 0.14);
+  --accent: #e0b73b;
+  --link: #9d93ec;
+  --warn: #fab219;
+  --spot: #3987e5;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-gain: var(--gain);
+  --color-loss: var(--loss);
+  --color-accent: var(--accent);
+  --color-link: var(--link);
+  --color-warn: var(--warn);
+  --color-spot: var(--spot);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+table.data th {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  text-align: right;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+table.data th:first-child,
+table.data td:first-child {
+  text-align: left;
+}
+table.data td {
+  padding: 8px 10px;
+  text-align: right;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

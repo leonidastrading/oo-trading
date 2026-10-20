@@ -1,0 +1,165 @@
+// Schwab transactions -> fills -> FIFO realized P/L.
+import { MULTIPLIER, parseOptionSymbol, rootToUnderlying, type PutCall } from "./options";
+import { todayET } from "./time";
+
+export interface SchwabTransferItem {
+  instrument?: { assetType?: string; symbol?: string; underlyingSymbol?: string; description?: string };
+  amount?: number;
+  cost?: number;
+  price?: number;
+  feeType?: string;
+  positionEffect?: "OPENING" | "CLOSING" | string;
+}
+
+export interface SchwabTransaction {
+  activityId?: number;
+  time?: string;
+  tradeDate?: string;
+  type?: string;
+  orderId?: number;
+  netAmount?: number;
+  description?: string;
+  transferItems?: SchwabTransferItem[];
+}
+
+export interface Fill {
+  id: string;
+  time: number;
+  orderId: string;
+  type: string;
+  symbol: string;
+  assetType: string;
+  underlying: string;
+  expiration: string | null;
+  putCall: PutCall | null;
+  strike: number | null;
+  /** Signed: + bought, − sold. */
+  qty: number;
+  price: number;
+  fees: number;
+  /** Signed cash flow including fees (+ received). */
+  cash: number;
+  effect: "OPENING" | "CLOSING" | null;
+}
+
+const isFee = (it: SchwabTransferItem) => it.instrument?.assetType === "CURRENCY" || !!it.feeType;
+
+export function normalizeTransactions(txs: SchwabTransaction[]): Fill[] {
+  const fills: Fill[] = [];
+  for (const tx of txs) {
+    const items = tx.transferItems ?? [];
+    const legs = items.filter((it) => !isFee(it) && it.instrument?.symbol && it.amount);
+    if (!legs.length) continue;
+    const mult = (it: SchwabTransferItem) => (it.instrument?.assetType === "OPTION" ? MULTIPLIER : 1);
+    const legCash = legs.map((it) => it.cost ?? -(it.amount ?? 0) * (it.price ?? 0) * mult(it));
+    const grossCash = legCash.reduce((a, b) => a + b, 0);
+    const feeItems = items.filter(isFee).reduce((a, it) => a + Math.abs(it.cost ?? 0), 0);
+    let fees = feeItems;
+    if (typeof tx.netAmount === "number") {
+      // Single-leg settlement rows (e.g. expirations) may carry no price; trust netAmount.
+      if (legs.length === 1 && legs[0].price === undefined && legs[0].cost === undefined) {
+        legCash[0] = tx.netAmount;
+        fees = 0;
+      } else {
+        fees = Math.max(0, round2(grossCash - tx.netAmount));
+      }
+    }
+    const totalQty = legs.reduce((a, it) => a + Math.abs(it.amount ?? 0), 0);
+    const time = Date.parse(tx.time ?? tx.tradeDate ?? "") || 0;
+    legs.forEach((it, i) => {
+      const symbol = it.instrument!.symbol!;
+      const parsed = parseOptionSymbol(symbol);
+      const qty = it.amount ?? 0;
+      const fee = totalQty ? (fees * Math.abs(qty)) / totalQty : 0;
+      fills.push({
+        id: `${tx.activityId ?? time}-${i}`,
+        time,
+        orderId: String(tx.orderId ?? tx.activityId ?? time),
+        type: tx.type ?? "TRADE",
+        symbol,
+        assetType: it.instrument?.assetType ?? "UNKNOWN",
+        underlying: parsed ? rootToUnderlying(parsed.root) : (it.instrument?.underlyingSymbol ?? symbol).replace(/^\$/, ""),
+        expiration: parsed?.expiration ?? null,
+        putCall: parsed?.putCall ?? null,
+        strike: parsed?.strike ?? null,
+        qty,
+        price: it.price ?? 0,
+        fees: round2(fee),
+        cash: round2(legCash[i] - fee),
+        effect: it.positionEffect === "OPENING" || it.positionEffect === "CLOSING" ? it.positionEffect : null,
+      });
+    });
+  }
+  return fills.sort((a, b) => a.time - b.time);
+}
+
+export interface ClosedLeg {
+  fill: Fill;
+  closedQty: number;
+  /** null when the opening lot predates the lookback window. */
+  realized: number | null;
+}
+
+/**
+ * FIFO-match closing fills against earlier opening fills in the window and return
+ * the closes that happened on `date` (ET) with their realized P/L (net of fees).
+ */
+export function realizedOn(fills: Fill[], date: string): ClosedLeg[] {
+  type Lot = { qty: number; cashPerUnit: number };
+  const lots = new Map<string, Lot[]>();
+  const out: ClosedLeg[] = [];
+  for (const f of [...fills].sort((a, b) => a.time - b.time)) {
+    const queue = lots.get(f.symbol) ?? [];
+    lots.set(f.symbol, queue);
+    const opposite = queue.length > 0 && Math.sign(queue[0].qty) !== Math.sign(f.qty);
+    const closing = f.effect ? f.effect === "CLOSING" : opposite;
+    if (!closing) {
+      queue.push({ qty: f.qty, cashPerUnit: f.cash / Math.abs(f.qty) });
+      continue;
+    }
+    let remaining = Math.abs(f.qty);
+    const closeCashPerUnit = f.cash / Math.abs(f.qty);
+    let realized = 0;
+    let matched = 0;
+    while (remaining > 0 && queue.length && Math.sign(queue[0].qty) !== Math.sign(f.qty)) {
+      const lot = queue[0];
+      const m = Math.min(remaining, Math.abs(lot.qty));
+      realized += (lot.cashPerUnit + closeCashPerUnit) * m;
+      matched += m;
+      remaining -= m;
+      lot.qty -= Math.sign(lot.qty) * m;
+      if (lot.qty === 0) queue.shift();
+    }
+    if (todayET(f.time) !== date) continue;
+    if (matched > 0) out.push({ fill: f, closedQty: matched, realized: round2(realized) });
+    if (remaining > 0) out.push({ fill: f, closedQty: remaining, realized: null });
+  }
+  return out;
+}
+
+export interface ClosedOrder {
+  orderId: string;
+  time: number;
+  underlying: string;
+  legs: ClosedLeg[];
+  realized: number;
+  unknownBasis: boolean;
+}
+
+export function groupClosesByOrder(closes: ClosedLeg[]): ClosedOrder[] {
+  const map = new Map<string, ClosedOrder>();
+  for (const c of closes) {
+    const o =
+      map.get(c.fill.orderId) ??
+      ({ orderId: c.fill.orderId, time: c.fill.time, underlying: c.fill.underlying, legs: [], realized: 0, unknownBasis: false } as ClosedOrder);
+    o.legs.push(c);
+    if (c.realized === null) o.unknownBasis = true;
+    else o.realized = round2(o.realized + c.realized);
+    map.set(c.fill.orderId, o);
+  }
+  return [...map.values()].sort((a, b) => b.time - a.time);
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
