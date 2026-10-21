@@ -31,9 +31,8 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
 
   const data = useMemo(() => {
     const w = WINDOWS[win].pts;
-    const center = best.pnl > 0 ? (spot + (best.range ? (best.range.low + best.range.high) / 2 : best.price)) / 2 : spot;
-    return analysis.curve.filter((p) => !Number.isFinite(w) || Math.abs(p.price - center) <= w);
-  }, [analysis, win, spot, best]);
+    return analysis.curve.filter((p) => !Number.isFinite(w) || Math.abs(p.price - spot) <= w);
+  }, [analysis, win, spot]);
 
   const max = Math.max(...data.map((d) => d.pnl), 0);
   const min = Math.min(...data.map((d) => d.pnl), 0);

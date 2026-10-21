@@ -32,6 +32,7 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
   const zone = a.profitZone;
   const inZone = zone && (zone.lower === null || a.spot >= zone.lower) && (zone.upper === null || a.spot <= zone.upper);
   const underlying = data.underlying;
+  const singleBestRow = a.table.filter((r) => r.isBest).length === 1;
 
   return (
     <section className="card space-y-4 p-4 md:p-5">
@@ -43,15 +44,44 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
         <Stat
           label="Best close"
-          value={priceRange(a.best.range, a.best.price)}
-          sub={<span className={plClass(a.best.pnl)}>{money(a.best.pnl, { sign: true })}</span>}
+          value={
+            a.best.atEdge ? (
+              <span>
+                {a.best.price > a.spot ? "↑ " : "↓ "}
+                {strike(a.best.price)}
+                {a.best.price > a.spot ? "+" : "−"}
+              </span>
+            ) : (
+              priceRange(a.best.range, a.best.price)
+            )
+          }
+          sub={
+            <>
+              <span className={plClass(a.best.pnl)}>{money(a.best.pnl, { sign: true })}</span>
+              {a.best.atEdge && (
+                <span className="block">keeps {a.best.price > a.spot ? "rising above" : "rising below"} the ±3% range</span>
+              )}
+              {a.best.atEdge && a.spotZone && (
+                <span className="block">
+                  flat <span className={plClass(a.spotZone.pnl)}>{money(a.spotZone.pnl, { sign: true })}</span> at{" "}
+                  {strike(a.spotZone.range.low)}–{strike(a.spotZone.range.high)}
+                </span>
+              )}
+            </>
+          }
         />
         <Stat
           label="Profit zone"
           value={
             zone ? (
               <span>
-                {zone.lower !== null ? strike(Math.round(zone.lower)) : "<" + a.lo}–{zone.upper !== null ? strike(Math.round(zone.upper)) : ">" + a.hi}
+                {zone.lower !== null && zone.upper !== null
+                  ? `${strike(Math.round(zone.lower))}–${strike(Math.round(zone.upper))}`
+                  : zone.lower !== null
+                    ? `above ${strike(Math.round(zone.lower))}`
+                    : zone.upper !== null
+                      ? `below ${strike(Math.round(zone.upper))}`
+                      : "whole range"}
               </span>
             ) : (
               <span className="text-loss">None</span>
@@ -117,7 +147,7 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
                   <td className="num">
                     {strike(r.price)}
                     {r.isCurrent && <span className="ml-2 text-xs text-spot">● now</span>}
-                    {r.isBest && <span className="ml-2 text-xs text-gain">★ best</span>}
+                    {r.isBest && singleBestRow && <span className="ml-2 text-xs text-gain">★ best</span>}
                   </td>
                   <td className={plClass(r.pnl)}>{money(r.pnl, { sign: true })}</td>
                   <td className="text-muted">{r.price - Math.round(a.spot / 5) * 5 >= 0 ? "+" : ""}{r.price - Math.round(a.spot / 5) * 5}</td>

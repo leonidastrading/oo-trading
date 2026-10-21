@@ -116,3 +116,30 @@ describe("today's book (best SPX close)", () => {
     expect(a.worst.atEdge).toBe(true);
   });
 });
+
+describe("open-ended upside (orphan long calls)", () => {
+  // Live book from 2026-10-21: put spreads plus long calls with no short calls above.
+  const book: OptionLeg[] = [
+    leg(11, "P", 7510, 2.31), leg(-11, "P", 7585, 5.19), leg(21, "P", 7625, 0.17), leg(-21, "P", 7725, 4.97),
+    leg(27, "C", 7880, 0.03), leg(18, "C", 7890, 0.03), leg(18, "C", 7895, 0.03),
+  ];
+  const a = analyzeClose(book, 7757.17)!;
+
+  it("flags a best close at the range edge instead of presenting it as a target", () => {
+    expect(a.best.atEdge).toBe(true);
+    expect(a.best.price).toBe(a.hi);
+  });
+  it("reports the flat zone around the current price", () => {
+    expect(a.spotZone).toEqual({ range: { low: 7725, high: 7880 }, pnl: a.pnlAtSpot });
+    // Displayed avg prices are rounded to cents, so allow a few dollars vs. the live +$13,054.
+    expect(Math.abs(a.pnlAtSpot - 13054)).toBeLessThan(20);
+  });
+  it("has a lower breakeven only", () => {
+    expect(a.profitZone?.lower).toBeGreaterThan(7715);
+    expect(a.profitZone?.lower).toBeLessThan(7725);
+    expect(a.profitZone?.upper).toBeNull();
+  });
+  it("does not mark a flat ±50 table as all-best", () => {
+    expect(a.table.filter((r) => r.isBest).length).toBeLessThan(a.table.length);
+  });
+});

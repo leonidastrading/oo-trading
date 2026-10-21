@@ -99,7 +99,10 @@ export interface CloseAnalysis {
   lo: number;
   hi: number;
   netCost: number;
-  best: { price: number; range: PriceRange | null; pnl: number };
+  /** atEdge: the max sits at the edge of the range (P/L keeps rising beyond it, e.g. naked long calls). */
+  best: { price: number; range: PriceRange | null; pnl: number; atEdge: boolean };
+  /** Flat P/L run that contains the current price, if any (e.g. between an iron condor's shorts). */
+  spotZone: { range: PriceRange; pnl: number } | null;
   worst: { price: number; range: PriceRange | null; pnl: number; atEdge: boolean };
   /** Breakevens bracketing the best close; null if beyond the analysed range. */
   profitZone: { lower: number | null; upper: number | null } | null;
@@ -159,24 +162,30 @@ export function analyzeClose(
     rows.push({ price: p, pnl: expiryPnl(legs, p, extraCost) });
   }
   const tableBest = rows.reduce((m, r) => (r.pnl > m ? r.pnl : m), -Infinity);
+  const tableFlat = rows.every((r) => r.pnl === rows[0].pnl);
+  const touchesEdge = (i: number, r: PriceRange | null) =>
+    i === 0 || i === curve.length - 1 || (r !== null && (r.low === lo || r.high === hi));
+  const si = Math.min(curve.length - 1, Math.max(0, Math.round((spot - lo) / step)));
+  const spotRange = flatRange(curve, si, curve[si].pnl);
 
   return {
     spot,
     lo,
     hi,
     netCost: round2(netCost(legs) + extraCost),
-    best: { price: best.price, range: bestRange, pnl: best.pnl },
+    best: { price: best.price, range: bestRange, pnl: best.pnl, atEdge: touchesEdge(bi, bestRange) },
+    spotZone: spotRange ? { range: spotRange, pnl: curve[si].pnl } : null,
     worst: {
       price: worst.price,
       range: worstRange,
       pnl: worst.pnl,
-      atEdge: wi === 0 || wi === curve.length - 1 || (worstRange !== null && (worstRange.low === lo || worstRange.high === hi)),
+      atEdge: touchesEdge(wi, worstRange),
     },
     profitZone,
     breakevens: bes,
     pnlAtSpot: expiryPnl(legs, spot, extraCost),
     curve,
-    table: rows.map((r) => ({ ...r, isCurrent: r.price === center, isBest: r.pnl === tableBest })),
+    table: rows.map((r) => ({ ...r, isCurrent: r.price === center, isBest: !tableFlat && r.pnl === tableBest })),
   };
 }
 
