@@ -26,7 +26,7 @@ Next.js (App Router, TypeScript) + Tailwind + Recharts, deployed on Vercel, with
 > Schwab refresh tokens expire **7 days** after you log in. The dashboard warns you when fewer than 2 days are left (banner on every page). Click **Reconnect Schwab** in Settings to log in again. Access tokens (30 min) refresh automatically.
 
 ### 2. Login method (any combination)
-- **Password** (simplest): set `DASHBOARD_PASSWORD` to a long random string and sign in with `ALLOWED_EMAIL` + that password. Failed attempts are rate-limited (5 per 15 min).
+- **Password** (simplest): set `DASHBOARD_PASSWORD` to a long random string and sign in with `ALLOWED_EMAIL` + that password. Failed attempts are rate-limited (5 per 15 min). Change it any time in **Settings → Change password**: the new password is stored as a scrypt hash in Redis (overriding `DASHBOARD_PASSWORD`) and every existing session is signed out.
 - **GitHub**: Settings → Developer settings → OAuth Apps → New. Homepage `https://<your-app>.vercel.app`, callback `https://<your-app>.vercel.app/api/auth/callback/github`. Set `GITHUB_ID` and `GITHUB_SECRET`. Your GitHub primary email must equal `ALLOWED_EMAIL`.
 - **Google**: Google Cloud Console → Credentials → OAuth client (Web). Redirect URI `https://<your-app>.vercel.app/api/auth/callback/google`. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
 

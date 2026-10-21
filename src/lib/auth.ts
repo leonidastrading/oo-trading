@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GitHubProvider from "next-auth/providers/github";
@@ -6,25 +5,6 @@ import GoogleProvider from "next-auth/providers/google";
 import { isAllowedEmail } from "./allowed";
 
 export { isAllowedEmail };
-
-const MAX_FAILURES = 5; // per 15 minutes, across all clients
-
-function samePassword(a: string, b: string): boolean {
-  const ha = createHash("sha256").update(a).digest();
-  const hb = createHash("sha256").update(b).digest();
-  return timingSafeEqual(ha, hb);
-}
-
-async function tooManyFailures(record: boolean): Promise<boolean> {
-  try {
-    const { kv } = await import("./kv");
-    const key = `auth:failures:${Math.floor(Date.now() / 900_000)}`;
-    if (record) return (await kv().incr(key, 960)) > MAX_FAILURES;
-    return ((await kv().get<number>(key)) ?? 0) >= MAX_FAILURES;
-  } catch {
-    return false; // KV not configured yet; the password is long and random anyway
-  }
-}
 
 const providers: NextAuthOptions["providers"] = [];
 if (process.env.DASHBOARD_PASSWORD) {
@@ -37,10 +17,10 @@ if (process.env.DASHBOARD_PASSWORD) {
         password: { label: "Password", type: "password" },
       },
       async authorize(creds) {
-        const expected = process.env.DASHBOARD_PASSWORD;
-        if (!expected || !creds?.email || !creds.password) return null;
+        if (!creds?.email || !creds.password) return null;
+        const { checkPassword, tooManyFailures } = await import("./password");
         if (await tooManyFailures(false)) return null;
-        if (isAllowedEmail(creds.email) && samePassword(creds.password, expected)) {
+        if (isAllowedEmail(creds.email) && (await checkPassword(creds.password))) {
           return { id: creds.email.toLowerCase(), email: creds.email.toLowerCase() };
         }
         await tooManyFailures(true);
@@ -68,6 +48,12 @@ export const authOptions: NextAuthOptions = {
       // Google: require a verified address.
       if (account?.provider === "google" && (profile as { email_verified?: boolean })?.email_verified === false) return false;
       return isAllowedEmail(user.email);
+    },
+    async jwt({ token, user }) {
+      // Stamp the login time once; it survives token refreshes so a password
+      // change (sessionsValidAfter) can revoke older sessions.
+      if (user) token.authAt = Date.now();
+      return token;
     },
   },
 };

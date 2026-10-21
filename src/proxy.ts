@@ -3,6 +3,7 @@
 import { getToken } from "next-auth/jwt";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAllowedEmail } from "@/lib/allowed";
+import { sessionsValidAfter } from "@/lib/sessionEpoch";
 
 const PUBLIC_PREFIXES = ["/login", "/api/auth/", "/api/cron/"];
 
@@ -11,7 +12,10 @@ export async function proxy(req: NextRequest) {
   if (PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) return NextResponse.next();
 
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-  if (token && isAllowedEmail(token.email)) return NextResponse.next();
+  if (token && isAllowedEmail(token.email)) {
+    const validAfter = await sessionsValidAfter();
+    if (!validAfter || Number(token.authAt ?? 0) >= validAfter) return NextResponse.next();
+  }
 
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

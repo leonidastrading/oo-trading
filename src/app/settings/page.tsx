@@ -3,6 +3,7 @@
 import { signOut } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
+import { ChangePassword } from "@/components/ChangePassword";
 import { Banner } from "@/components/StatusBar";
 import { parseOOTradeLog } from "@/lib/ooCsv";
 import type { TokenStatus } from "@/lib/schwab/tokens";
@@ -209,6 +210,8 @@ function SettingsInner() {
           </div>
         ))}
       </section>
+
+      <ChangePassword />
 
       <section className="card space-y-3 p-4">
         <h2 className="text-lg font-bold text-accent">Data reset</h2>
