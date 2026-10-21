@@ -44,12 +44,17 @@ export interface Fill {
 
 const isFee = (it: SchwabTransferItem) => it.instrument?.assetType === "CURRENCY" || !!it.feeType;
 
-export function normalizeTransactions(txs: SchwabTransaction[]): Fill[] {
+/**
+ * @param feePerContract If set, option fees are |contracts| × this rate per side (your broker's
+ * schedule) instead of the fees Schwab reports on each transaction.
+ */
+export function normalizeTransactions(txs: SchwabTransaction[], feePerContract?: number): Fill[] {
   const fills: Fill[] = [];
   for (const tx of txs) {
     const items = tx.transferItems ?? [];
     const legs = items.filter((it) => !isFee(it) && it.instrument?.symbol && it.amount);
     if (!legs.length) continue;
+    const settlement = legs.length === 1 && legs[0].price === undefined && legs[0].cost === undefined;
     const mult = (it: SchwabTransferItem) => (it.instrument?.assetType === "OPTION" ? MULTIPLIER : 1);
     const legCash = legs.map((it) => it.cost ?? -(it.amount ?? 0) * (it.price ?? 0) * mult(it));
     const grossCash = legCash.reduce((a, b) => a + b, 0);
@@ -57,7 +62,7 @@ export function normalizeTransactions(txs: SchwabTransaction[]): Fill[] {
     let fees = feeItems;
     if (typeof tx.netAmount === "number") {
       // Single-leg settlement rows (e.g. expirations) may carry no price; trust netAmount.
-      if (legs.length === 1 && legs[0].price === undefined && legs[0].cost === undefined) {
+      if (settlement) {
         legCash[0] = tx.netAmount;
         fees = 0;
       } else {
@@ -70,7 +75,14 @@ export function normalizeTransactions(txs: SchwabTransaction[]): Fill[] {
       const symbol = it.instrument!.symbol!;
       const parsed = parseOptionSymbol(symbol);
       const qty = it.amount ?? 0;
-      const fee = totalQty ? (fees * Math.abs(qty)) / totalQty : 0;
+      const fee =
+        feePerContract !== undefined && it.instrument?.assetType === "OPTION"
+          ? settlement
+            ? 0 // expirations/exercises carry no commission
+            : Math.abs(qty) * feePerContract
+          : totalQty
+            ? (fees * Math.abs(qty)) / totalQty
+            : 0;
       fills.push({
         id: `${tx.activityId ?? time}-${i}`,
         time,
@@ -91,6 +103,15 @@ export function normalizeTransactions(txs: SchwabTransaction[]): Fill[] {
     });
   }
   return fills.sort((a, b) => a.time - b.time);
+}
+
+/** Contracts and fees for fills on `date` (ET). */
+export function feesOn(fills: Fill[], date: string): { contracts: number; fees: number } {
+  const today = fills.filter((f) => todayET(f.time) === date && f.assetType === "OPTION");
+  return {
+    contracts: today.reduce((s, f) => s + Math.abs(f.qty), 0),
+    fees: round2(today.reduce((s, f) => s + f.fees, 0)),
+  };
 }
 
 export interface ClosedLeg {

@@ -92,6 +92,12 @@ export function quoteSymbol(underlying: string): string {
 
 export const TX_LOOKBACK_DAYS = 10;
 
+/** Commission + fees per option contract, per side (default $0.88). */
+export function feePerContract(): number {
+  const v = Number(process.env.FEE_PER_CONTRACT);
+  return Number.isFinite(v) && v >= 0 && process.env.FEE_PER_CONTRACT !== "" && process.env.FEE_PER_CONTRACT !== undefined ? v : 0.88;
+}
+
 export async function fetchFills(refDate: string): Promise<Fill[]> {
   const hash = await getAccountHash();
   const raw = await schwabGet<SchwabTransaction[]>(`/trader/v1/accounts/${hash}/transactions`, {
@@ -99,7 +105,7 @@ export async function fetchFills(refDate: string): Promise<Fill[]> {
     endDate: new Date().toISOString(),
     types: "TRADE",
   });
-  return normalizeTransactions(Array.isArray(raw) ? raw : []);
+  return normalizeTransactions(Array.isArray(raw) ? raw : [], feePerContract());
 }
 
 export function cachedAccount(maxAgeMs: number, force = false): Promise<CacheResult<AccountSnapshot>> {
@@ -112,5 +118,5 @@ export function cachedQuotes(symbols: string[], maxAgeMs: number, force = false)
 }
 
 export function cachedFills(refDate: string, maxAgeMs: number, force = false): Promise<CacheResult<Fill[]>> {
-  return cached(`fills:${refDate}`, maxAgeMs, () => fetchFills(refDate), { force });
+  return cached(`fills:${refDate}:fee${feePerContract()}`, maxAgeMs, () => fetchFills(refDate), { force });
 }

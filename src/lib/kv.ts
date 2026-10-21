@@ -128,7 +128,9 @@ const g = globalThis as unknown as { __kv?: Store };
 export const KV_MISSING =
   "Storage not set up: connect an Upstash Redis store to this Vercel project (Storage tab), then redeploy.";
 
+/** True when a store is available (Redis, or the in-memory fallback outside Vercel). */
 export function kvConfigured(): boolean {
+  if (!process.env.VERCEL) return true;
   return !!(
     (process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL) &&
     (process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN)

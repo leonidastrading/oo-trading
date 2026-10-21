@@ -33,8 +33,19 @@ export default function LivePage() {
       )}
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Tile label={`Net liq ••${data?.account?.last4 ?? ""}`} value={money(data?.account?.netLiq)} />
-        <Tile label="Day P/L" value={money(data?.account?.dayPl, { sign: true })} tone={toneOf(data?.account?.dayPl)} />
+        <Tile label="Open P/L" value={money(data?.pl?.open, { sign: true })} tone={toneOf(data?.pl?.open)} />
+        <Tile
+          label="Closed P/L"
+          value={money(data?.pl?.closed, { sign: true })}
+          tone={toneOf(data?.pl?.closed)}
+          sub={
+            data?.pl
+              ? data.pl.unknownBasis
+                ? `net of fees · ${data.pl.unknownBasis} close(s) w/o basis excluded`
+                : "net of fees"
+              : undefined
+          }
+        />
         <Tile
           label="SPX"
           value={num(spx?.last)}
@@ -46,7 +57,12 @@ export default function LivePage() {
             ) : undefined
           }
         />
-        <Tile label="Buying power" value={money(data?.account?.buyingPower)} />
+        <Tile
+          label="Fees"
+          value={data?.pl ? money(-data.pl.fees, { cents: true }) : "—"}
+          tone={data?.pl?.fees ? "loss" : null}
+          sub={data?.pl ? `${data.pl.contracts.toLocaleString("en-US")} contracts × $${data.pl.feeRate.toFixed(2)}` : undefined}
+        />
       </section>
 
       {spxExpiry ? (

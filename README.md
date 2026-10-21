@@ -2,7 +2,7 @@
 
 Next.js (App Router, TypeScript) + Tailwind + Recharts, deployed on Vercel, with Upstash Redis (Vercel KV) for tokens, cache and data.
 
-- **Live** — net liq, day P/L, SPX, buying power; positions grouped into spreads by expiration; **Best SPX close** panel (P/L at 4:00 PM settlement for today's expirations only) with expiry chart, breakevens, worst case and a ±50-pt table. Positions not expiring today are listed separately with mark P/L.
+- **Live** — open P/L, closed P/L (net of fees), SPX, fees today; positions grouped into spreads by expiration; **Best SPX close** panel (P/L at 4:00 PM settlement for today's expirations only) with expiry chart, breakevens, worst case and a ±50-pt table. Positions not expiring today are listed separately with mark P/L.
 - **Today** — open P/L, closed (realized) P/L from Schwab fills (FIFO, net of fees, 10-day lookback for cost basis), total, account day P/L, closed orders and fills.
 - **Stats** — from Option Omega trade-log CSVs: per-strategy stats, stop-loss vs. expiration breakdown, daily P/L table + CSV download, calendar heatmap, equity curve, drawdown, best/worst 10 days, and end-of-day Schwab snapshots.
 - **Settings** — Schwab connection status/reconnect (refresh-token countdown), CSV upload, manual EOD snapshot, data reset.
@@ -74,7 +74,8 @@ All Schwab calls go through server routes (`/api/live`, `/api/today`) backed by 
 
 - **Expiry P/L** (`src/lib/options.ts`): Σ qty × 100 × intrinsic(S) − net cost, where intrinsic is `max(S−K,0)` for calls and `max(K−S,0)` for puts, and net cost is Σ qty × Schwab average price × 100. It is evaluated from SPX −3% to +3% in 1-pt steps. A flat maximum (e.g. an iron condor) is shown as a range. Breakevens are linearly interpolated zero crossings, and the profit zone is the pair that brackets the best close.
 - Schwab nets identical contracts, so two BWBs on the same strikes appear as one leg with a blended average price. The expiry curve is the same either way.
-- **Realized P/L today**: FIFO match of closing fills against opening fills from the last 10 days. Fees are taken from each transaction's `netAmount`. Closes whose opening fill is older than the window are flagged and excluded.
+- **Fees**: `FEE_PER_CONTRACT` (default $0.88) × contracts per side for every option fill; expirations are free. The Live page shows today's total.
+- **Realized P/L today**: FIFO match of closing fills against opening fills from the last 10 days, net of the fees above. Closes whose opening fill is older than the window are flagged and excluded.
 - **OO stats**: win = P/L > 0, loser = P/L < 0. A day's P/L is assigned to its *Date Closed* (falling back to Date Opened). Avg P/L per lot = total P/L ÷ total contracts. Loser close reasons are classified as Stop Loss (contains "stop"), Expired (contains "expir") or Other. De-duplication key: strategy + date opened + time opened + legs.
 
 ## Project layout

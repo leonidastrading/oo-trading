@@ -2,8 +2,8 @@
 import "server-only";
 import { takeManualRefresh } from "./cache";
 import { analyzeClose, type CloseAnalysis } from "./options";
-import { groupClosesByOrder, realizedOn, type ClosedOrder, type Fill } from "./realized";
-import { cachedAccount, cachedFills, cachedQuotes, quoteSymbol, type Balances, type Quote } from "./schwab/data";
+import { feesOn, groupClosesByOrder, realizedOn, type ClosedOrder, type Fill } from "./realized";
+import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
 import { tokenStatus, type TokenStatus } from "./schwab/tokens";
 import { groupSpreads, toLeg, type SpreadGroup } from "./spreads";
 import { lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
@@ -32,6 +32,8 @@ export interface LiveData {
   fetchedAt: number | null;
   account: (Balances & { last4: string; dayPl: number | null }) | null;
   spx: Quote | null;
+  /** Session P/L: open (all positions), closed (realized today, net of fees), fees today. */
+  pl: { open: number; closed: number; fees: number; contracts: number; feeRate: number; unknownBasis: number } | null;
   groups: SpreadGroup[];
   /** Today's expirations, one chart per underlying. */
   expiring: ExpiryChart[];
@@ -66,11 +68,15 @@ export async function getLiveData(force = false): Promise<LiveData> {
   };
   if (!token.connected) {
     meta.errors.push(token.lastError ?? "Schwab is not connected — connect it in Settings.");
-    return { meta, fetchedAt: null, account: null, spx: null, groups: [], expiring: [] };
+    return { meta, fetchedAt: null, account: null, spx: null, pl: null, groups: [], expiring: [] };
   }
 
-  const acct = await cachedAccount(maxAge(policy.positionsMs), allowForce);
-  if (acct.error) meta.errors.push(acct.error);
+  const sessionDate = lastSessionDate(now);
+  const [acct, fills] = await Promise.all([
+    cachedAccount(maxAge(policy.positionsMs), allowForce),
+    cachedFills(sessionDate, maxAge(policy.transactionsMs), allowForce),
+  ]);
+  for (const e of [acct.error, fills.error]) if (e && !meta.errors.includes(e)) meta.errors.push(e);
   const today = todayET(now);
   const positions = acct.data?.positions ?? [];
   const groups = groupSpreads(positions, today);
@@ -96,6 +102,18 @@ export async function getLiveData(force = false): Promise<LiveData> {
   expiring.sort((a, b) => (a.underlying === "SPX" ? -1 : b.underlying === "SPX" ? 1 : a.underlying.localeCompare(b.underlying)));
 
   const b = acct.data?.balances;
+  const closes = realizedOn(fills.data ?? [], sessionDate);
+  const fee = feesOn(fills.data ?? [], sessionDate);
+  const pl = acct.data
+    ? {
+        open: Math.round(positions.reduce((s, p) => s + p.plOpen, 0) * 100) / 100,
+        closed: Math.round(closes.reduce((s, c) => s + (c.realized ?? 0), 0) * 100) / 100,
+        fees: fee.fees,
+        contracts: fee.contracts,
+        feeRate: feePerContract(),
+        unknownBasis: closes.filter((c) => c.realized === null).length,
+      }
+    : null;
   const fetchedAt = Math.min(acct.fetchedAt ?? Infinity, quotes.fetchedAt ?? Infinity);
   meta.delayed = isDelayed(session.phase, Number.isFinite(fetchedAt) ? fetchedAt : null, policy.positionsMs, now);
   return {
@@ -109,6 +127,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
         }
       : null,
     spx,
+    pl,
     groups,
     expiring,
   };

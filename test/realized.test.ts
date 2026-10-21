@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupClosesByOrder, normalizeTransactions, realizedOn, type SchwabTransaction } from "@/lib/realized";
+import { feesOn, groupClosesByOrder, normalizeTransactions, realizedOn, type SchwabTransaction } from "@/lib/realized";
 
 const tx = (
   id: number,
@@ -45,5 +45,37 @@ describe("realized P/L", () => {
     expect(unknown.realized).toBeNull();
     const orders = groupClosesByOrder(closes);
     expect(orders.find((o) => o.orderId === "13")!.unknownBasis).toBe(true);
+  });
+});
+
+describe("fixed per-contract fees", () => {
+  const P = "SPXW  261020P07720000";
+  const fills = normalizeTransactions(
+    [
+      tx(1, "2026-10-20T14:00:00+0000", 20, P, -10, 5, "OPENING", 0.66),
+      tx(2, "2026-10-20T18:00:00+0000", 21, P, 10, 2, "CLOSING", 0.66),
+    ],
+    0.88,
+  );
+
+  it("charges $0.88 per contract per side instead of Schwab's reported fee", () => {
+    expect(fills.map((f) => f.fees)).toEqual([8.8, 8.8]);
+    expect(fills[0].cash).toBeCloseTo(5000 - 8.8, 2);
+  });
+
+  it("nets the rate into realized P/L and totals fees for the day", () => {
+    const [c] = realizedOn(fills, "2026-10-20");
+    expect(c.realized).toBeCloseTo(3000 - 17.6, 2);
+    expect(feesOn(fills, "2026-10-20")).toEqual({ contracts: 20, fees: 17.6 });
+    expect(feesOn(fills, "2026-10-21")).toEqual({ contracts: 0, fees: 0 });
+  });
+
+  it("charges nothing on expiration/settlement rows", () => {
+    const [f] = normalizeTransactions(
+      [{ activityId: 9, time: "2026-10-20T21:00:00+0000", type: "RECEIVE_AND_DELIVER", netAmount: 0,
+         transferItems: [{ instrument: { assetType: "OPTION", symbol: P }, amount: 10, positionEffect: "CLOSING" }] }],
+      0.88,
+    );
+    expect(f.fees).toBe(0);
   });
 });
