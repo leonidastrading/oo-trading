@@ -65,7 +65,7 @@ export function StatusBar({
         <Banner tone="warn">Data delayed — last good data is from {formatTimeET(fetchedAt)}. Retrying automatically.</Banner>
       )}
       {meta?.manualRefreshBlocked && <Banner tone="info">Manual refresh is limited to once per 30s; showing cached data.</Banner>}
-      {[...(meta?.errors ?? []), ...(clientError ? [`Could not reach the dashboard API: ${clientError}`] : [])].map((e) => (
+      {[...(meta?.errors ?? []), ...(clientError ? [clientError] : [])].map((e) => (
         <Banner key={e} tone="error">
           {e}
           {fetchedAt ? ` — showing last good data from ${formatTimeET(fetchedAt)}.` : ""}

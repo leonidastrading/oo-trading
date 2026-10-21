@@ -28,7 +28,13 @@ export default function StatsPage() {
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
 
   useEffect(() => {
-    Promise.all([fetch("/api/oo/trades").then((r) => r.json()), fetch("/api/snapshots").then((r) => r.json())])
+    const getJson = async (url: string) => {
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+      return j;
+    };
+    Promise.all([getJson("/api/oo/trades"), getJson("/api/snapshots")])
       .then(([t, s]) => {
         setTrades(t.trades ?? []);
         setMeta(t.meta ?? null);

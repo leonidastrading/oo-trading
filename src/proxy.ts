@@ -2,7 +2,7 @@
 // except the sign-in flow itself and the cron endpoint (which checks CRON_SECRET).
 import { getToken } from "next-auth/jwt";
 import { NextResponse, type NextRequest } from "next/server";
-import { isAllowedEmail } from "@/lib/auth";
+import { isAllowedEmail } from "@/lib/allowed";
 
 const PUBLIC_PREFIXES = ["/login", "/api/auth/", "/api/cron/"];
 

@@ -1,3 +1,4 @@
+import { requireKv } from "@/lib/apiGuard";
 import { NextResponse, type NextRequest } from "next/server";
 import { hasSnapshot, takeEodSnapshot } from "@/lib/eod";
 import { etParts, isTradingDay } from "@/lib/time";
@@ -7,6 +8,8 @@ export const dynamic = "force-dynamic";
 // Vercel Cron (see vercel.json) calls this with `Authorization: Bearer $CRON_SECRET`.
 // Two UTC schedules cover EDT and EST; we only act between 16:15 and 18:00 ET, once per day.
 export async function GET(req: NextRequest) {
+  const missing = requireKv();
+  if (missing) return missing;
   const secret = process.env.CRON_SECRET;
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

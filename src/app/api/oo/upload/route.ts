@@ -1,3 +1,4 @@
+import { requireKv } from "@/lib/apiGuard";
 import { NextResponse, type NextRequest } from "next/server";
 import { KEYS, kv } from "@/lib/kv";
 import { isValidTrade, tradeKey, type OOTrade } from "@/lib/ooCsv";
@@ -6,6 +7,8 @@ export const dynamic = "force-dynamic";
 
 // Receives trades already parsed in the browser (same parser), in chunks.
 export async function POST(req: NextRequest) {
+  const missing = requireKv();
+  if (missing) return missing;
   const body = (await req.json().catch(() => null)) as { trades?: unknown[]; file?: string } | null;
   if (!body || !Array.isArray(body.trades)) return NextResponse.json({ error: "Expected { trades: [] }" }, { status: 400 });
   if (body.trades.length > 5000) return NextResponse.json({ error: "Max 5000 trades per request" }, { status: 413 });

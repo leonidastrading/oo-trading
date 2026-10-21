@@ -125,6 +125,16 @@ class MemoryStore implements Store {
 
 const g = globalThis as unknown as { __kv?: Store };
 
+export const KV_MISSING =
+  "Storage not set up: connect an Upstash Redis store to this Vercel project (Storage tab), then redeploy.";
+
+export function kvConfigured(): boolean {
+  return !!(
+    (process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL) &&
+    (process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN)
+  );
+}
+
 export function kv(): Store {
   if (g.__kv) return g.__kv;
   const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
@@ -132,7 +142,7 @@ export function kv(): Store {
   if (url && token) {
     g.__kv = new RedisStore(new Redis({ url, token }));
   } else {
-    if (process.env.VERCEL) throw new Error("KV is not configured: set KV_REST_API_URL and KV_REST_API_TOKEN");
+    if (process.env.VERCEL) throw new Error(KV_MISSING);
     console.warn("[kv] No Redis configured; using in-memory store (dev only).");
     g.__kv = new MemoryStore();
   }

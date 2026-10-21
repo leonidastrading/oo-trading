@@ -32,7 +32,10 @@ export function usePoll<T extends { meta: PollMeta }>(url: string) {
           router.replace("/login");
           return;
         }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? `HTTP ${res.status}`);
+        }
         const json = (await res.json()) as T;
         if (cancelled) return;
         setData(json);

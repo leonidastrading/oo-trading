@@ -10,6 +10,7 @@ import { formatDateTimeET, formatTimeET } from "@/lib/time";
 
 interface Status {
   now: number;
+  setupError?: string;
   token: TokenStatus;
   accountLast4: string | null;
   configured: { clientId: boolean; clientSecret: boolean; redirectUri: string | null };
@@ -109,6 +110,7 @@ function SettingsInner() {
         <span className="num text-sm text-ink-2">Last updated {formatTimeET(status?.now)}</span>
       </div>
 
+      {status?.setupError && <Banner tone="error">{status.setupError}</Banner>}
       {schwabParam === "connected" && <Banner tone="info">✓ Schwab connected.</Banner>}
       {schwabParam === "error" && <Banner tone="error">Schwab connection failed ({params.get("reason") ?? "unknown"}). Try again.</Banner>}
       {msg && <Banner tone={msg.tone}>{msg.text}</Banner>}
