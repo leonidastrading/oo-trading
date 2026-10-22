@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { BestClosePanel } from "@/components/BestClosePanel";
-import { money, num, signed } from "@/components/format";
+import { money, num, plClass, signed } from "@/components/format";
 import { PositionGroups } from "@/components/PositionGroups";
 import { StatusBar } from "@/components/StatusBar";
 import { Tile, toneOf } from "@/components/Tile";
@@ -74,7 +74,14 @@ export default function LivePage() {
       {otherExpiry.map((e) => (
         <section key={e.key} className="card p-4">
           <h2 className="mb-2 font-semibold text-accent">{e.underlying} expiring today</h2>
-          <ExpiryChart analysis={e.analysis} underlying={e.underlying} />
+          {e.settled ? (
+            <p className="text-sm">
+              Settled at <span className="num">{num(e.spot)}</span> · final P/L{" "}
+              <span className={plClass(e.analysis.pnlAtSpot)}>{money(e.analysis.pnlAtSpot, { sign: true })}</span>
+            </p>
+          ) : (
+            <ExpiryChart analysis={e.analysis} underlying={e.underlying} />
+          )}
         </section>
       ))}
 

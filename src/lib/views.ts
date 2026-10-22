@@ -6,7 +6,7 @@ import { feesOn, groupClosesByOrder, realizedOn, type ClosedOrder, type Fill } f
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
 import { tokenStatus, type TokenStatus } from "./schwab/tokens";
 import { groupSpreads, toLeg, type SpreadGroup } from "./spreads";
-import { lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
+import { etParts, lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
 
 export interface Meta {
   now: number;
@@ -25,6 +25,8 @@ export interface ExpiryChart {
   spot: number;
   analysis: CloseAnalysis;
   markPl: number;
+  /** After the session close (16:15 ET, 13:15 on early closes): spot is the settlement and P/L is final. */
+  settled: boolean;
 }
 
 export interface LiveData {
@@ -91,12 +93,13 @@ export async function getLiveData(force = false): Promise<LiveData> {
   const byUnderlying = new Map<string, SpreadGroup[]>();
   for (const g of todays) byUnderlying.set(g.underlying, [...(byUnderlying.get(g.underlying) ?? []), g]);
   const expiring: ExpiryChart[] = [];
+  const settled = session.tradingDay && etParts(now).minutesOfDay >= session.closeMin;
   for (const [underlying, gs] of byUnderlying) {
     const spot = quotes.data?.[quoteSymbol(underlying)]?.last;
     const legs = gs.flatMap((g) => g.positions).map(toLeg).filter((l) => l !== null);
     const analysis = spot ? analyzeClose(legs, spot) : null;
     if (spot && analysis) {
-      expiring.push({ key: gs[0].key, underlying, spot, analysis, markPl: gs.reduce((s, g) => s + g.plOpen, 0) });
+      expiring.push({ key: gs[0].key, underlying, spot, analysis, markPl: gs.reduce((s, g) => s + g.plOpen, 0), settled });
     }
   }
   expiring.sort((a, b) => (a.underlying === "SPX" ? -1 : b.underlying === "SPX" ? 1 : a.underlying.localeCompare(b.underlying)));

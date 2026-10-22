@@ -2,7 +2,7 @@
 
 import type { ExpiryChart as ExpiryData } from "@/lib/views";
 import { ExpiryChart } from "./ExpiryChart";
-import { money, plClass, priceRange, strike } from "./format";
+import { money, num, plClass, priceRange, strike } from "./format";
 
 function Stat({ label, value, sub, tone }: { label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: string }) {
   return (
@@ -33,6 +33,21 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
   const inZone = zone && (zone.lower === null || a.spot >= zone.lower) && (zone.upper === null || a.spot <= zone.upper);
   const underlying = data.underlying;
   const singleBestRow = a.table.filter((r) => r.isBest).length === 1;
+
+  if (data.settled) {
+    return (
+      <section className="card space-y-1 p-4 md:p-5">
+        <h2 className="text-lg font-bold text-accent">Today&apos;s {underlying} expirations</h2>
+        <p className="text-xl font-bold md:text-2xl">
+          Settled at <span className="num">{num(a.spot)}</span> · final P/L{" "}
+          <span className={plClass(a.pnlAtSpot)}>{money(a.pnlAtSpot, { sign: true })}</span>
+        </p>
+        <p className="text-xs text-muted">
+          Cash-settled at the 4:00 PM close. Schwab posts the settlement overnight (~1:45 AM ET).
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section className="card space-y-4 p-4 md:p-5">
