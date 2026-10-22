@@ -1,3 +1,4 @@
+import type { Position } from "@/lib/spreads";
 import { describe, expect, it } from "vitest";
 import { countOpenEntries, feesOn, groupClosesByOrder, normalizeTransactions, realizedOn, type SchwabTransaction } from "@/lib/realized";
 
@@ -117,7 +118,10 @@ describe("countOpenEntries", () => {
   // One transaction per leg; legs of one order share the orderId.
   const order = (orderId: number, legs: [string, number][], time = t, effect: "OPENING" | "CLOSING" = "OPENING") =>
     legs.map(([sym, qty], i) => tx(orderId * 10 + i, time, orderId, sym, qty, 1, effect, 0.88));
-  const pos = (symbol: string, qty: number, expiration = "2026-10-22") => ({ symbol, qty, underlying: "SPX", expiration });
+  const pos = (symbol: string, qty: number, expiration = "2026-10-22"): Position => ({
+    symbol, qty, underlying: "SPX", expiration, assetType: "OPTION", description: "", putCall: null, strike: null,
+    avgPrice: 1, mark: 1, marketValue: 0, plOpen: 0, plDay: 0,
+  });
 
   const bwbA = order(1, [[S("P", 7720), -18], [S("P", 7750), 9], [S("P", 7675), 9]]);
   const bwbB = order(2, [[S("P", 7720), -18], [S("P", 7750), 9], [S("P", 7675), 9]]);

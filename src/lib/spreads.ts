@@ -38,6 +38,79 @@ export interface Position {
   marketValue: number;
   plOpen: number;
   plDay: number;
+  /** Strategy entry this leg belongs to (set by splitByEntry): "order:<id>" or "older:<underlying>|<exp>". */
+  entryKey?: string;
+  /** When the entry's opening order filled (epoch ms), if known. */
+  enteredAt?: number | null;
+}
+
+/** An open lot from FIFO matching of fills. */
+export interface EntryLot {
+  qty: number;
+  price: number;
+  orderId: string;
+  time: number;
+}
+
+/**
+ * Split Schwab's netted positions back into strategy entries using the open lots from
+ * fills: each opening order becomes its own set of legs at its own fill prices. Quantity
+ * not covered by lots (opened before the lookback window) stays at Schwab's average price.
+ */
+export function splitByEntry(positions: Position[], lots: Map<string, EntryLot[]>): Position[] {
+  const out: Position[] = [];
+  for (const p of positions) {
+    if (p.qty === 0) continue;
+    const mult = p.assetType === "OPTION" ? MULTIPLIER : 1;
+    const olderKey = `older:${p.underlying}|${p.expiration ?? p.symbol}`;
+    // Newest lots first, capped at the position size.
+    const byOrder = new Map<string, { qty: number; cost: number; time: number }>();
+    let left = Math.abs(p.qty);
+    for (const lot of [...(lots.get(p.symbol) ?? [])].reverse()) {
+      if (left <= 0) break;
+      if (Math.sign(lot.qty) !== Math.sign(p.qty)) continue;
+      const q = Math.min(left, Math.abs(lot.qty));
+      left -= q;
+      const o = byOrder.get(lot.orderId) ?? { qty: 0, cost: 0, time: lot.time };
+      o.qty += q;
+      o.cost += q * lot.price;
+      o.time = Math.min(o.time, lot.time);
+      byOrder.set(lot.orderId, o);
+    }
+    const sign = Math.sign(p.qty);
+    const share = (qty: number) => Math.abs(qty) / Math.abs(p.qty);
+    let explainedPl = 0;
+    for (const [orderId, o] of byOrder) {
+      const qty = sign * o.qty;
+      const avg = o.cost / o.qty;
+      const plOpen = qty * (p.mark - avg) * mult;
+      explainedPl += plOpen;
+      out.push({
+        ...p,
+        qty,
+        avgPrice: avg,
+        marketValue: qty * p.mark * mult,
+        plOpen,
+        plDay: p.plDay * share(qty),
+        entryKey: `order:${orderId}`,
+        enteredAt: o.time,
+      });
+    }
+    if (left > 0) {
+      const qty = sign * left;
+      out.push({
+        ...p,
+        qty,
+        marketValue: qty * p.mark * mult,
+        // Whatever Schwab's open P/L doesn't attribute to the entries above.
+        plOpen: byOrder.size ? p.plOpen - explainedPl : p.plOpen,
+        plDay: p.plDay * share(qty),
+        entryKey: olderKey,
+        enteredAt: null,
+      });
+    }
+  }
+  return out;
 }
 
 export function normalizePosition(p: SchwabPosition): Position {
@@ -99,6 +172,8 @@ export interface SpreadGroup {
   plOpen: number;
   plDay: number;
   marketValue: number;
+  /** Entry time when the group is a single strategy entry (see splitByEntry). */
+  enteredAt: number | null;
 }
 
 export function daysBetween(from: string, to: string): number {
@@ -112,7 +187,8 @@ export function groupSpreads(positions: Position[], today: string): SpreadGroup[
   const map = new Map<string, Position[]>();
   for (const p of positions) {
     if (p.qty === 0) continue;
-    const key = p.expiration ? `${p.underlying}|${p.expiration}` : `${p.underlying}|${p.symbol}`;
+    const base = p.expiration ? `${p.underlying}|${p.expiration}` : `${p.underlying}|${p.symbol}`;
+    const key = p.entryKey ? `${base}|${p.entryKey}` : base;
     const list = map.get(key) ?? [];
     list.push(p);
     map.set(key, list);
@@ -133,11 +209,14 @@ export function groupSpreads(positions: Position[], today: string): SpreadGroup[
       plOpen: sum(list.map((p) => p.plOpen)),
       plDay: sum(list.map((p) => p.plDay)),
       marketValue: sum(list.map((p) => p.marketValue)),
+      enteredAt: first.enteredAt ?? null,
     });
   }
   return groups.sort(
     (a, b) =>
-      (a.expiration ?? "9999").localeCompare(b.expiration ?? "9999") || a.underlying.localeCompare(b.underlying),
+      (a.expiration ?? "9999").localeCompare(b.expiration ?? "9999") ||
+      a.underlying.localeCompare(b.underlying) ||
+      (a.enteredAt ?? 0) - (b.enteredAt ?? 0),
   );
 }
 

@@ -3,10 +3,10 @@ import "server-only";
 import { takeManualRefresh } from "./cache";
 import { CASH_SETTLED, expiredOrders, pendingExpired } from "./expired";
 import { analyzeClose, type CloseAnalysis } from "./options";
-import { countOpenEntries, feesOn, groupClosesByOrder, realizedOn, type ClosedOrder, type Fill } from "./realized";
+import { countOpenEntries, feesOn, groupClosesByOrder, openLots, realizedOn, type ClosedOrder, type Fill } from "./realized";
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
 import { tokenStatus, type TokenStatus } from "./schwab/tokens";
-import { groupSpreads, toLeg, type Position, type SpreadGroup } from "./spreads";
+import { groupSpreads, splitByEntry, toLeg, type Position, type SpreadGroup } from "./spreads";
 import { etParts, lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
 
 export interface Meta {
@@ -173,7 +173,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
       : null,
     spx,
     pl,
-    groups: groupSpreads(expired.open, today),
+    groups: groupSpreads(splitByEntry(expired.open, openLots(fills.data ?? [])), today),
     expiring,
   };
 }
@@ -241,6 +241,6 @@ export async function getTodayData(force = false): Promise<TodayData> {
     entries: countOpenEntries(allFills, positions),
     dayPl: b && b.netLiq !== null && b.startNetLiq !== null ? b.netLiq - b.startNetLiq : null,
     total: Math.round((realized + openPl) * 100) / 100,
-    groups: groupSpreads(positions, todayET(now)),
+    groups: groupSpreads(splitByEntry(positions, openLots(allFills)), todayET(now)),
   };
 }

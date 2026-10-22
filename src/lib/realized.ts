@@ -1,5 +1,6 @@
 // Schwab transactions -> fills -> FIFO realized P/L.
 import { MULTIPLIER, parseOptionSymbol, rootToUnderlying, type PutCall } from "./options";
+import { splitByEntry, type EntryLot, type Position } from "./spreads";
 import { todayET } from "./time";
 
 export interface SchwabTransferItem {
@@ -141,6 +142,8 @@ interface Lot {
   qty: number;
   cashPerUnit: number;
   orderId: string;
+  price: number;
+  time: number;
 }
 
 /** FIFO-match fills; calls onClose for each closing fill and returns the still-open lots per symbol. */
@@ -155,7 +158,7 @@ function runFifo(
     const opposite = queue.length > 0 && Math.sign(queue[0].qty) !== Math.sign(f.qty);
     const closing = f.effect ? f.effect === "CLOSING" : opposite;
     if (!closing) {
-      queue.push({ qty: f.qty, cashPerUnit: f.cash / Math.abs(f.qty), orderId: f.orderId });
+      queue.push({ qty: f.qty, cashPerUnit: f.cash / Math.abs(f.qty), orderId: f.orderId, price: f.price, time: f.time });
       continue;
     }
     let remaining = Math.abs(f.qty);
@@ -190,28 +193,18 @@ export function realizedOn(fills: Fill[], date: string): ClosedLeg[] {
   return out;
 }
 
+/** Still-open lots per symbol after FIFO matching, with the order that opened them. */
+export function openLots(fills: Fill[]): Map<string, EntryLot[]> {
+  return runFifo(fills);
+}
+
 /**
  * Number of open strategy entries: legs opened in the same Schwab order (same orderId)
  * count once, even when several strategies enter in the same second. Open legs whose
  * opening fill predates the lookback window are grouped by underlying + expiration.
  */
-export function countOpenEntries(
-  fills: Fill[],
-  positions: { symbol: string; qty: number; underlying: string; expiration: string | null }[],
-): number {
-  const lots = runFifo(fills);
-  const entries = new Set<string>();
-  for (const p of positions) {
-    if (p.qty === 0) continue;
-    let explained = 0;
-    for (const lot of lots.get(p.symbol) ?? []) {
-      if (Math.sign(lot.qty) !== Math.sign(p.qty)) continue;
-      entries.add(`order:${lot.orderId}`);
-      explained += Math.abs(lot.qty);
-    }
-    if (explained < Math.abs(p.qty)) entries.add(`older:${p.underlying}|${p.expiration ?? p.symbol}`);
-  }
-  return entries.size;
+export function countOpenEntries(fills: Fill[], positions: Position[]): number {
+  return new Set(splitByEntry(positions, openLots(fills)).map((p) => p.entryKey)).size;
 }
 
 export interface ClosedOrder {

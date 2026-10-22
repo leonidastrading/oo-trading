@@ -2,6 +2,7 @@
 
 import type { SpreadGroup } from "@/lib/spreads";
 import { expirationLabel } from "@/lib/spreads";
+import { formatTimeET } from "@/lib/time";
 import { money, num, plClass, strike } from "./format";
 
 export function PositionGroups({ groups, today, empty }: { groups: SpreadGroup[]; today: string; empty?: string }) {
@@ -18,6 +19,7 @@ export function PositionGroups({ groups, today, empty }: { groups: SpreadGroup[]
               <div className="text-xs text-muted">
                 {g.expiration ? `${expirationLabel(g.expiration, today)} · ${g.expiration} · ${g.dte}DTE` : "No expiration"} ·{" "}
                 {g.positions.length} leg{g.positions.length === 1 ? "" : "s"}
+                {g.enteredAt ? ` · entered ${formatTimeET(g.enteredAt)}` : ""}
               </div>
             </div>
             <div className="ml-auto flex gap-4 text-right">
