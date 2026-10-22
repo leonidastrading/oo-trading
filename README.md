@@ -76,6 +76,7 @@ All Schwab calls go through server routes (`/api/live`, `/api/today`) backed by 
 - Schwab nets identical contracts, so two BWBs on the same strikes appear as one leg with a blended average price. The expiry curve is the same either way.
 - **Fees**: `FEE_PER_CONTRACT` (default $0.88) × contracts per side for every option fill; expirations are free. The Live page shows today's total.
 - **Realized P/L today**: FIFO match of closing fills against opening fills from the last 10 days, net of the fees above. Closes whose opening fill is older than the window are flagged and excluded.
+- **Expired, pending Schwab posting**: from the session close (16:15 ET) until Schwab posts the cash settlement (~01:45 ET), that day's expiring cash-settled index options (SPX, NDX, RUT, XSP…) are valued at the index close and counted in Closed P/L instead of Open P/L, on both Live and Today. Once Schwab posts a settlement, the posted transaction replaces the estimate.
 - **OO stats**: win = P/L > 0, loser = P/L < 0. A day's P/L is assigned to its *Date Closed* (falling back to Date Opened). Avg P/L per lot = total P/L ÷ total contracts. Loser close reasons are classified as Stop Loss (contains "stop"), Expired (contains "expir") or Other. De-duplication key: strategy + date opened + time opened + legs.
 
 ## Project layout

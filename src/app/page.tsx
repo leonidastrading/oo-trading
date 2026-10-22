@@ -39,11 +39,16 @@ export default function LivePage() {
           value={money(data?.pl?.closed, { sign: true })}
           tone={toneOf(data?.pl?.closed)}
           sub={
-            data?.pl
-              ? data.pl.unknownBasis
-                ? `net of fees · ${data.pl.unknownBasis} close(s) w/o basis excluded`
-                : "net of fees"
-              : undefined
+            data?.pl ? (
+              <>
+                {data.pl.unknownBasis ? `net of fees · ${data.pl.unknownBasis} close(s) w/o basis excluded` : "net of fees"}
+                {data.pl.expiredPending && (
+                  <span className="block">
+                    incl. {money(data.pl.expired, { sign: true })} expired (pending Schwab posting)
+                  </span>
+                )}
+              </>
+            ) : undefined
           }
         />
         <Tile
@@ -87,7 +92,11 @@ export default function LivePage() {
 
       <section>
         <h2 className="mb-2 text-lg font-bold text-accent">Expiring today</h2>
-        <PositionGroups groups={todays} today={today} empty="Nothing expires today." />
+        <PositionGroups
+          groups={todays}
+          today={today}
+          empty={data?.pl?.expiredPending ? "Expired — valued at settlement in Closed P/L (pending Schwab posting)." : "Nothing expires today."}
+        />
       </section>
 
       <section>

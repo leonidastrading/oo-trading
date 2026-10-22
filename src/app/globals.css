@@ -59,25 +59,28 @@ body {
   border-radius: 14px;
 }
 
-table.data th {
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-weight: 600;
-  text-align: right;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-table.data th:first-child,
-table.data td:first-child {
-  text-align: left;
-}
-table.data td {
-  padding: 8px 10px;
-  text-align: right;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+/* In a layer so Tailwind utilities (e.g. whitespace-normal) can override these defaults. */
+@layer components {
+  table.data th {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    text-align: right;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  table.data th:first-child,
+  table.data td:first-child {
+    text-align: left;
+  }
+  table.data td {
+    padding: 8px 10px;
+    text-align: right;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
 }

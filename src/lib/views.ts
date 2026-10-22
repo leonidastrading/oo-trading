@@ -1,11 +1,12 @@
 // Server-side assembly of the Live and Today page payloads.
 import "server-only";
 import { takeManualRefresh } from "./cache";
+import { CASH_SETTLED, expiredOrders, pendingExpired } from "./expired";
 import { analyzeClose, type CloseAnalysis } from "./options";
 import { feesOn, groupClosesByOrder, realizedOn, type ClosedOrder, type Fill } from "./realized";
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
 import { tokenStatus, type TokenStatus } from "./schwab/tokens";
-import { groupSpreads, toLeg, type SpreadGroup } from "./spreads";
+import { groupSpreads, toLeg, type Position, type SpreadGroup } from "./spreads";
 import { etParts, lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
 
 export interface Meta {
@@ -35,7 +36,7 @@ export interface LiveData {
   account: (Balances & { last4: string; dayPl: number | null }) | null;
   spx: Quote | null;
   /** Session P/L: open (all positions), closed (realized today, net of fees), fees today. */
-  pl: { open: number; closed: number; fees: number; contracts: number; feeRate: number; unknownBasis: number } | null;
+  pl: { open: number; closed: number; expired: number; expiredPending: boolean; fees: number; contracts: number; feeRate: number; unknownBasis: number } | null;
   groups: SpreadGroup[];
   /** Today's expirations, one chart per underlying. */
   expiring: ExpiryChart[];
@@ -57,6 +58,43 @@ async function baseMeta(force: boolean) {
 function isDelayed(phase: MarketPhase, fetchedAt: number | null, intervalMs: number, now: number) {
   if (phase === "closed" || !Number.isFinite(intervalMs)) return false;
   return fetchedAt === null || now - fetchedAt > 2 * intervalMs;
+}
+
+/**
+ * Split positions into still-open ones and expired cash-settled options valued at settlement
+ * ("Expired (pending Schwab posting)"), from the session close until Schwab posts them.
+ */
+export function splitExpired(
+  positions: Position[],
+  fills: Fill[],
+  quotes: Record<string, Quote> | null | undefined,
+  now: number,
+) {
+  const session = marketSession(now);
+  const opts = {
+    sessionDate: lastSessionDate(now),
+    today: todayET(now),
+    afterClose: session.tradingDay && etParts(now).minutesOfDay >= session.closeMin,
+    settle: Object.fromEntries([...CASH_SETTLED].map((u) => [u, quotes?.[quoteSymbol(u)]?.last])),
+    fills,
+  };
+  const pending = pendingExpired(positions, opts);
+  const gone = new Set(pending.map((p) => p.symbol));
+  const orders = expiredOrders(pending, opts);
+  return {
+    open: positions.filter((p) => !gone.has(p.symbol)),
+    orders,
+    realized: Math.round(orders.reduce((s, o) => s + o.realized, 0) * 100) / 100,
+  };
+}
+
+/** Quote symbols needed to value the session's expiring cash-settled options. */
+export function settlementSymbols(positions: Position[], sessionDate: string): string[] {
+  return [
+    ...new Set(
+      positions.filter((p) => p.expiration === sessionDate && CASH_SETTLED.has(p.underlying)).map((p) => quoteSymbol(p.underlying)),
+    ),
+  ];
 }
 
 /** Max cache age: just under the poll interval while open; when closed, only refetch if empty. */
@@ -84,7 +122,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
   const groups = groupSpreads(positions, today);
   const todays = groups.filter((g) => g.isToday);
 
-  const symbols = new Set(["$SPX", ...todays.map((g) => quoteSymbol(g.underlying))]);
+  const symbols = new Set(["$SPX", ...todays.map((g) => quoteSymbol(g.underlying)), ...settlementSymbols(positions, sessionDate)]);
   const quotes = await cachedQuotes([...symbols], maxAge(policy.positionsMs), allowForce);
   if (quotes.error && quotes.error !== acct.error) meta.errors.push(quotes.error);
   const spx = quotes.data?.["$SPX"] ?? null;
@@ -107,10 +145,13 @@ export async function getLiveData(force = false): Promise<LiveData> {
   const b = acct.data?.balances;
   const closes = realizedOn(fills.data ?? [], sessionDate);
   const fee = feesOn(fills.data ?? [], sessionDate);
+  const expired = splitExpired(positions, fills.data ?? [], quotes.data, now);
   const pl = acct.data
     ? {
-        open: Math.round(positions.reduce((s, p) => s + p.plOpen, 0) * 100) / 100,
-        closed: Math.round(closes.reduce((s, c) => s + (c.realized ?? 0), 0) * 100) / 100,
+        open: Math.round(expired.open.reduce((s, p) => s + p.plOpen, 0) * 100) / 100,
+        closed: Math.round((closes.reduce((s, c) => s + (c.realized ?? 0), 0) + expired.realized) * 100) / 100,
+        expired: expired.realized,
+        expiredPending: expired.orders.length > 0,
         fees: fee.fees,
         contracts: fee.contracts,
         feeRate: feePerContract(),
@@ -131,7 +172,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
       : null,
     spx,
     pl,
-    groups,
+    groups: groupSpreads(expired.open, today),
     expiring,
   };
 }
@@ -172,9 +213,16 @@ export async function getTodayData(force = false): Promise<TodayData> {
 
   const allFills = fills.data ?? [];
   const closes = realizedOn(allFills, sessionDate);
-  const closed = groupClosesByOrder(closes);
-  const realized = Math.round(closes.reduce((s, c) => s + (c.realized ?? 0), 0) * 100) / 100;
-  const positions = acct.data?.positions ?? [];
+  const allPositions = acct.data?.positions ?? [];
+  const settleSymbols = settlementSymbols(allPositions, sessionDate);
+  const quotes = settleSymbols.length
+    ? await cachedQuotes(["$SPX", ...settleSymbols.filter((s) => s !== "$SPX")], maxAge(policy.positionsMs), allowForce)
+    : null;
+  if (quotes?.error && !meta.errors.includes(quotes.error)) meta.errors.push(quotes.error);
+  const expired = splitExpired(allPositions, allFills, quotes?.data, now);
+  const closed = [...expired.orders, ...groupClosesByOrder(closes)];
+  const realized = Math.round((closes.reduce((s, c) => s + (c.realized ?? 0), 0) + expired.realized) * 100) / 100;
+  const positions = expired.open;
   const openPl = Math.round(positions.reduce((s, p) => s + p.plOpen, 0) * 100) / 100;
   const b = acct.data?.balances;
   meta.delayed = isDelayed(session.phase, fills.fetchedAt, policy.transactionsMs, now);

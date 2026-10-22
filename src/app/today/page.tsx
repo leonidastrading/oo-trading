@@ -28,7 +28,16 @@ export default function TodayPage() {
           label="Closed P/L"
           value={money(data?.realized, { sign: true })}
           tone={toneOf(data?.realized)}
-          sub={data?.unknownBasis ? `${data.unknownBasis} close(s) without basis excluded` : undefined}
+          sub={
+            data?.closed.some((o) => o.pending)
+              ? `incl. ${money(
+                  data.closed.filter((o) => o.pending).reduce((s, o) => s + o.realized, 0),
+                  { sign: true },
+                )} expired (pending Schwab posting)`
+              : data?.unknownBasis
+                ? `${data.unknownBasis} close(s) without basis excluded`
+                : undefined
+          }
         />
         <Tile label="Total" value={money(data?.total, { sign: true })} tone={toneOf(data?.total)} sub="closed + open" />
         <Tile label="Account day P/L" value={money(data?.dayPl, { sign: true })} tone={toneOf(data?.dayPl)} sub="net liq change" />
@@ -55,9 +64,16 @@ export default function TodayPage() {
                   <tr key={o.orderId}>
                     <td className="whitespace-normal">
                       <span className="text-link">
-                        {o.underlying} {o.legs.map((l) => `${l.fill.qty > 0 ? "+" : "−"}${l.closedQty} ${legText(l.fill)}`).join(" / ")}
+                        {o.underlying}{" "}
+                        {o.pending
+                          ? `${o.legs.length} leg${o.legs.length === 1 ? "" : "s"} expired`
+                          : o.legs.map((l) => `${l.fill.qty > 0 ? "+" : "−"}${l.closedQty} ${legText(l.fill)}`).join(" / ")}
                       </span>
-                      <span className="block text-xs text-muted">{formatTimeET(o.time)}</span>
+                      <span className="block text-xs text-muted">
+                        {o.pending
+                          ? `Expired (pending Schwab posting) · settled at ${num(o.pending.settle)}`
+                          : formatTimeET(o.time)}
+                      </span>
                     </td>
                     <td className={o.unknownBasis ? "text-muted" : plClass(o.realized)}>
                       {money(o.realized, { sign: true })}

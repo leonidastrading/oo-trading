@@ -181,6 +181,8 @@ export interface ClosedOrder {
   legs: ClosedLeg[];
   realized: number;
   unknownBasis: boolean;
+  /** Set for expired options valued at settlement that Schwab hasn't posted yet. */
+  pending?: { settle: number };
 }
 
 export function groupClosesByOrder(closes: ClosedLeg[]): ClosedOrder[] {
