@@ -42,11 +42,7 @@ export default function LivePage() {
             data?.pl ? (
               <>
                 {data.pl.unknownBasis ? `net of fees · ${data.pl.unknownBasis} close(s) w/o basis excluded` : "net of fees"}
-                {data.pl.expiredPending && (
-                  <span className="block">
-                    incl. {money(data.pl.expired, { sign: true })} expired
-                  </span>
-                )}
+                {data.pl.expiredPending && ` · incl. ${money(data.pl.expired, { sign: true })} expired`}
               </>
             ) : undefined
           }
