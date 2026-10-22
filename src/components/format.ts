@@ -42,8 +42,8 @@ export function priceRange(r: { low: number; high: number } | null, single: numb
 // Categorical slots (dark-mode steps), assigned in fixed order by strategy name.
 export const SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
 
-/** "3 open positions · 12 legs": entries (one per Schwab order) and the legs they hold. */
+/** "3 positions · 12 legs": entries (one per Schwab order) and the legs they hold. */
 export function openPositionsLabel(entries: number, groups: { positions: unknown[] }[]): string {
   const legs = groups.reduce((s, g) => s + g.positions.length, 0);
-  return `${entries} open position${entries === 1 ? "" : "s"} · ${legs} leg${legs === 1 ? "" : "s"}`;
+  return `${entries} position${entries === 1 ? "" : "s"} · ${legs} leg${legs === 1 ? "" : "s"}`;
 }
