@@ -79,3 +79,34 @@ describe("fixed per-contract fees", () => {
     expect(f.fees).toBe(0);
   });
 });
+
+describe("overnight cash settlements (Schwab posts ~01:45 ET next day)", () => {
+  // Oct 20 put sold 8 @ 5.00; expired ITM at SPX 7712.57 -> settled 8 @ 37.43, posted 2026-10-21 01:47:50 ET.
+  const P = "SPXW  261020P07750000";
+  const fills = normalizeTransactions(
+    [
+      tx(1, "2026-10-20T18:00:00+0000", 30, P, -8, 5, "OPENING", 0.88),
+      tx(2, "2026-10-21T05:47:50+0000", 31, P, 8, 37.43, "CLOSING", 0),
+    ],
+    0.88,
+  );
+
+  it("books the settlement on the expiration date, with no commission", () => {
+    const s = fills[1];
+    expect(s.bookDate).toBe("2026-10-20");
+    expect(s.settlement).toBe(true);
+    expect(s.fees).toBe(0);
+  });
+
+  it("realizes it on the expiration date, not the posting date", () => {
+    expect(realizedOn(fills, "2026-10-21")).toHaveLength(0);
+    const closes = realizedOn(fills, "2026-10-20");
+    expect(closes).toHaveLength(1);
+    expect(closes[0].realized).toBeCloseTo((5 - 37.43) * 8 * 100 - 8 * 0.88, 2);
+  });
+
+  it("excludes settlements from contract counts and fees", () => {
+    expect(feesOn(fills, "2026-10-21")).toEqual({ contracts: 0, fees: 0 });
+    expect(feesOn(fills, "2026-10-20")).toEqual({ contracts: 8, fees: 7.04 });
+  });
+});

@@ -40,6 +40,14 @@ export interface Fill {
   /** Signed cash flow including fees (+ received). */
   cash: number;
   effect: "OPENING" | "CLOSING" | null;
+  /**
+   * Session (ET date) this fill belongs to. Normally the trade date, but Schwab posts
+   * cash settlements of expired index options overnight (≈01:45 ET the next day);
+   * those belong to the option's expiration date, not the posting date.
+   */
+  bookDate: string;
+  /** True for post-expiry settlement rows (no commission, not a traded contract). */
+  settlement: boolean;
 }
 
 const isFee = (it: SchwabTransferItem) => it.instrument?.assetType === "CURRENCY" || !!it.feeType;
@@ -75,10 +83,15 @@ export function normalizeTransactions(txs: SchwabTransaction[], feePerContract?:
       const symbol = it.instrument!.symbol!;
       const parsed = parseOptionSymbol(symbol);
       const qty = it.amount ?? 0;
+      // A fill posted after the option's expiration date is a settlement of that expiry
+      // (Schwab posts SPX cash settlements ~01:45 ET next day, with a price and CLOSING effect).
+      const tradeDay = todayET(time);
+      const postExpiry = !!parsed && parsed.expiration < tradeDay;
+      const isSettlement = settlement || postExpiry;
       const fee =
         feePerContract !== undefined && it.instrument?.assetType === "OPTION"
-          ? settlement
-            ? 0 // expirations/exercises carry no commission
+          ? isSettlement
+            ? 0 // expirations/exercises/cash settlements carry no commission
             : Math.abs(qty) * feePerContract
           : totalQty
             ? (fees * Math.abs(qty)) / totalQty
@@ -99,6 +112,8 @@ export function normalizeTransactions(txs: SchwabTransaction[], feePerContract?:
         fees: round2(fee),
         cash: round2(legCash[i] - fee),
         effect: it.positionEffect === "OPENING" || it.positionEffect === "CLOSING" ? it.positionEffect : null,
+        bookDate: postExpiry ? parsed!.expiration : tradeDay,
+        settlement: isSettlement,
       });
     });
   }
@@ -107,7 +122,8 @@ export function normalizeTransactions(txs: SchwabTransaction[], feePerContract?:
 
 /** Contracts and fees for fills on `date` (ET). */
 export function feesOn(fills: Fill[], date: string): { contracts: number; fees: number } {
-  const today = fills.filter((f) => todayET(f.time) === date && f.assetType === "OPTION");
+  // Settlements are not traded contracts and carry no commission.
+  const today = fills.filter((f) => f.bookDate === date && f.assetType === "OPTION" && !f.settlement);
   return {
     contracts: today.reduce((s, f) => s + Math.abs(f.qty), 0),
     fees: round2(today.reduce((s, f) => s + f.fees, 0)),
@@ -151,7 +167,7 @@ export function realizedOn(fills: Fill[], date: string): ClosedLeg[] {
       lot.qty -= Math.sign(lot.qty) * m;
       if (lot.qty === 0) queue.shift();
     }
-    if (todayET(f.time) !== date) continue;
+    if (f.bookDate !== date) continue;
     if (matched > 0) out.push({ fill: f, closedQty: matched, realized: round2(realized) });
     if (remaining > 0) out.push({ fill: f, closedQty: remaining, realized: null });
   }

@@ -118,5 +118,5 @@ export function cachedQuotes(symbols: string[], maxAgeMs: number, force = false)
 }
 
 export function cachedFills(refDate: string, maxAgeMs: number, force = false): Promise<CacheResult<Fill[]>> {
-  return cached(`fills:${refDate}:fee${feePerContract()}`, maxAgeMs, () => fetchFills(refDate), { force });
+  return cached(`fills:v2:${refDate}:fee${feePerContract()}`, maxAgeMs, () => fetchFills(refDate), { force });
 }

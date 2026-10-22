@@ -179,7 +179,7 @@ export async function getTodayData(force = false): Promise<TodayData> {
     meta,
     fetchedAt: fills.fetchedAt,
     sessionDate,
-    fills: allFills.filter((f) => todayET(f.time) === sessionDate).reverse(),
+    fills: allFills.filter((f) => f.bookDate === sessionDate).reverse(),
     closed,
     realized,
     unknownBasis: closes.filter((c) => c.realized === null).length,
