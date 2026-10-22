@@ -44,7 +44,7 @@ export default function LivePage() {
                 {data.pl.unknownBasis ? `net of fees · ${data.pl.unknownBasis} close(s) w/o basis excluded` : "net of fees"}
                 {data.pl.expiredPending && (
                   <span className="block">
-                    incl. {money(data.pl.expired, { sign: true })} expired (pending Schwab posting)
+                    incl. {money(data.pl.expired, { sign: true })} expired
                   </span>
                 )}
               </>
@@ -95,7 +95,7 @@ export default function LivePage() {
         <PositionGroups
           groups={todays}
           today={today}
-          empty={data?.pl?.expiredPending ? "Expired — valued at settlement in Closed P/L (pending Schwab posting)." : "Nothing expires today."}
+          empty={data?.pl?.expiredPending ? "Expired — valued at settlement in Closed P/L." : "Nothing expires today."}
         />
       </section>
 

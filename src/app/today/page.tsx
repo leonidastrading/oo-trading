@@ -33,7 +33,7 @@ export default function TodayPage() {
               ? `incl. ${money(
                   data.closed.filter((o) => o.pending).reduce((s, o) => s + o.realized, 0),
                   { sign: true },
-                )} expired (pending Schwab posting)`
+                )} expired`
               : data?.unknownBasis
                 ? `${data.unknownBasis} close(s) without basis excluded`
                 : undefined
@@ -71,7 +71,7 @@ export default function TodayPage() {
                       </span>
                       <span className="block text-xs text-muted">
                         {o.pending
-                          ? `Expired (pending Schwab posting) · settled at ${num(o.pending.settle)}`
+                          ? `Expired · settled at ${num(o.pending.settle)}`
                           : formatTimeET(o.time)}
                       </span>
                     </td>
