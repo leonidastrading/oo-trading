@@ -27,7 +27,7 @@ export default function TodayPage() {
           label="Open P/L"
           value={money(data?.openPl, { sign: true })}
           tone={toneOf(data?.openPl)}
-          sub={data?.fetchedAt ? openPositionsLabel(data.groups) : undefined}
+          sub={data?.fetchedAt ? openPositionsLabel(data.entries, data.groups) : undefined}
         />
         <Tile
           label="Closed P/L"

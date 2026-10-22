@@ -37,7 +37,7 @@ export default function LivePage() {
           label="Open P/L"
           value={money(data?.pl?.open, { sign: true })}
           tone={toneOf(data?.pl?.open)}
-          sub={data?.pl ? openPositionsLabel(data.groups) : undefined}
+          sub={data?.pl ? openPositionsLabel(data.pl.entries, data.groups) : undefined}
         />
         <Tile
           label="Closed P/L"

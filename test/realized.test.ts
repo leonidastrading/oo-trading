@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { feesOn, groupClosesByOrder, normalizeTransactions, realizedOn, type SchwabTransaction } from "@/lib/realized";
+import { countOpenEntries, feesOn, groupClosesByOrder, normalizeTransactions, realizedOn, type SchwabTransaction } from "@/lib/realized";
 
 const tx = (
   id: number,
@@ -108,5 +108,37 @@ describe("overnight cash settlements (Schwab posts ~01:45 ET next day)", () => {
   it("excludes settlements from contract counts and fees", () => {
     expect(feesOn(fills, "2026-10-21")).toEqual({ contracts: 0, fees: 0 });
     expect(feesOn(fills, "2026-10-20")).toEqual({ contracts: 8, fees: 7.04 });
+  });
+});
+
+describe("countOpenEntries", () => {
+  const S = (pc: "P" | "C", k: number) => `SPXW  261022${pc}${String(k * 1000).padStart(8, "0")}`;
+  const t = "2026-10-22T14:30:05+0000"; // same second for every entry
+  // One transaction per leg; legs of one order share the orderId.
+  const order = (orderId: number, legs: [string, number][], time = t, effect: "OPENING" | "CLOSING" = "OPENING") =>
+    legs.map(([sym, qty], i) => tx(orderId * 10 + i, time, orderId, sym, qty, 1, effect, 0.88));
+  const pos = (symbol: string, qty: number, expiration = "2026-10-22") => ({ symbol, qty, underlying: "SPX", expiration });
+
+  const bwbA = order(1, [[S("P", 7720), -18], [S("P", 7750), 9], [S("P", 7675), 9]]);
+  const bwbB = order(2, [[S("P", 7720), -18], [S("P", 7750), 9], [S("P", 7675), 9]]);
+  const ic = order(3, [[S("P", 7680), -18], [S("C", 7755), -18], [S("P", 7580), 18], [S("C", 7855), 18]]);
+  const book = [
+    pos(S("P", 7720), -36), pos(S("P", 7750), 18), pos(S("P", 7675), 18),
+    pos(S("P", 7680), -18), pos(S("C", 7755), -18), pos(S("P", 7580), 18), pos(S("C", 7855), 18),
+  ];
+
+  it("counts each order once, even when entries share strikes and the same second", () => {
+    expect(countOpenEntries(normalizeTransactions([...bwbA, ...bwbB, ...ic], 0.88), book)).toBe(3);
+  });
+
+  it("drops an entry once it is fully closed", () => {
+    const close = order(4, [[S("P", 7680), 18], [S("C", 7755), 18], [S("P", 7580), -18], [S("C", 7855), -18]], "2026-10-22T17:00:00+0000", "CLOSING");
+    const fills = normalizeTransactions([...bwbA, ...bwbB, ...ic, ...close], 0.88);
+    expect(countOpenEntries(fills, book.slice(0, 3))).toBe(2);
+  });
+
+  it("groups legs opened before the lookback window by underlying + expiration", () => {
+    const older = [pos(S("P", 7600), -10, "2026-10-23"), pos(S("P", 7525), 10, "2026-10-23")];
+    expect(countOpenEntries(normalizeTransactions(ic, 0.88), [...book.slice(3), ...older])).toBe(2);
   });
 });

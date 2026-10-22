@@ -137,21 +137,25 @@ export interface ClosedLeg {
   realized: number | null;
 }
 
-/**
- * FIFO-match closing fills against earlier opening fills in the window and return
- * the closes that happened on `date` (ET) with their realized P/L (net of fees).
- */
-export function realizedOn(fills: Fill[], date: string): ClosedLeg[] {
-  type Lot = { qty: number; cashPerUnit: number };
+interface Lot {
+  qty: number;
+  cashPerUnit: number;
+  orderId: string;
+}
+
+/** FIFO-match fills; calls onClose for each closing fill and returns the still-open lots per symbol. */
+function runFifo(
+  fills: Fill[],
+  onClose?: (f: Fill, matched: number, realized: number, unmatched: number) => void,
+): Map<string, Lot[]> {
   const lots = new Map<string, Lot[]>();
-  const out: ClosedLeg[] = [];
   for (const f of [...fills].sort((a, b) => a.time - b.time)) {
     const queue = lots.get(f.symbol) ?? [];
     lots.set(f.symbol, queue);
     const opposite = queue.length > 0 && Math.sign(queue[0].qty) !== Math.sign(f.qty);
     const closing = f.effect ? f.effect === "CLOSING" : opposite;
     if (!closing) {
-      queue.push({ qty: f.qty, cashPerUnit: f.cash / Math.abs(f.qty) });
+      queue.push({ qty: f.qty, cashPerUnit: f.cash / Math.abs(f.qty), orderId: f.orderId });
       continue;
     }
     let remaining = Math.abs(f.qty);
@@ -167,11 +171,47 @@ export function realizedOn(fills: Fill[], date: string): ClosedLeg[] {
       lot.qty -= Math.sign(lot.qty) * m;
       if (lot.qty === 0) queue.shift();
     }
-    if (f.bookDate !== date) continue;
+    onClose?.(f, matched, realized, remaining);
+  }
+  return lots;
+}
+
+/**
+ * FIFO-match closing fills against earlier opening fills in the window and return
+ * the closes that happened on `date` (ET) with their realized P/L (net of fees).
+ */
+export function realizedOn(fills: Fill[], date: string): ClosedLeg[] {
+  const out: ClosedLeg[] = [];
+  runFifo(fills, (f, matched, realized, remaining) => {
+    if (f.bookDate !== date) return;
     if (matched > 0) out.push({ fill: f, closedQty: matched, realized: round2(realized) });
     if (remaining > 0) out.push({ fill: f, closedQty: remaining, realized: null });
-  }
+  });
   return out;
+}
+
+/**
+ * Number of open strategy entries: legs opened in the same Schwab order (same orderId)
+ * count once, even when several strategies enter in the same second. Open legs whose
+ * opening fill predates the lookback window are grouped by underlying + expiration.
+ */
+export function countOpenEntries(
+  fills: Fill[],
+  positions: { symbol: string; qty: number; underlying: string; expiration: string | null }[],
+): number {
+  const lots = runFifo(fills);
+  const entries = new Set<string>();
+  for (const p of positions) {
+    if (p.qty === 0) continue;
+    let explained = 0;
+    for (const lot of lots.get(p.symbol) ?? []) {
+      if (Math.sign(lot.qty) !== Math.sign(p.qty)) continue;
+      entries.add(`order:${lot.orderId}`);
+      explained += Math.abs(lot.qty);
+    }
+    if (explained < Math.abs(p.qty)) entries.add(`older:${p.underlying}|${p.expiration ?? p.symbol}`);
+  }
+  return entries.size;
 }
 
 export interface ClosedOrder {

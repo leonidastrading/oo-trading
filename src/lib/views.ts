@@ -3,7 +3,7 @@ import "server-only";
 import { takeManualRefresh } from "./cache";
 import { CASH_SETTLED, expiredOrders, pendingExpired } from "./expired";
 import { analyzeClose, type CloseAnalysis } from "./options";
-import { feesOn, groupClosesByOrder, realizedOn, type ClosedOrder, type Fill } from "./realized";
+import { countOpenEntries, feesOn, groupClosesByOrder, realizedOn, type ClosedOrder, type Fill } from "./realized";
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
 import { tokenStatus, type TokenStatus } from "./schwab/tokens";
 import { groupSpreads, toLeg, type Position, type SpreadGroup } from "./spreads";
@@ -36,7 +36,7 @@ export interface LiveData {
   account: (Balances & { last4: string; dayPl: number | null }) | null;
   spx: Quote | null;
   /** Session P/L: open (all positions), closed (realized today, net of fees), fees today. */
-  pl: { open: number; closed: number; expired: number; expiredPending: boolean; fees: number; contracts: number; feeRate: number; unknownBasis: number } | null;
+  pl: { open: number; entries: number; closed: number; expired: number; expiredPending: boolean; fees: number; contracts: number; feeRate: number; unknownBasis: number } | null;
   groups: SpreadGroup[];
   /** Today's expirations, one chart per underlying. */
   expiring: ExpiryChart[];
@@ -149,6 +149,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
   const pl = acct.data
     ? {
         open: Math.round(expired.open.reduce((s, p) => s + p.plOpen, 0) * 100) / 100,
+        entries: countOpenEntries(fills.data ?? [], expired.open),
         closed: Math.round((closes.reduce((s, c) => s + (c.realized ?? 0), 0) + expired.realized) * 100) / 100,
         expired: expired.realized,
         expiredPending: expired.orders.length > 0,
@@ -186,6 +187,8 @@ export interface TodayData {
   realized: number;
   unknownBasis: number;
   openPl: number;
+  /** Open strategy entries (legs from one Schwab order count once). */
+  entries: number;
   dayPl: number | null;
   total: number;
   groups: SpreadGroup[];
@@ -199,7 +202,7 @@ export async function getTodayData(force = false): Promise<TodayData> {
   };
   const sessionDate = lastSessionDate(now);
   const empty: TodayData = {
-    meta, fetchedAt: null, sessionDate, fills: [], closed: [], realized: 0, unknownBasis: 0, openPl: 0, dayPl: null, total: 0, groups: [],
+    meta, fetchedAt: null, sessionDate, fills: [], closed: [], realized: 0, unknownBasis: 0, openPl: 0, entries: 0, dayPl: null, total: 0, groups: [],
   };
   if (!token.connected) {
     meta.errors.push(token.lastError ?? "Schwab is not connected — connect it in Settings.");
@@ -235,6 +238,7 @@ export async function getTodayData(force = false): Promise<TodayData> {
     realized,
     unknownBasis: closes.filter((c) => c.realized === null).length,
     openPl,
+    entries: countOpenEntries(allFills, positions),
     dayPl: b && b.netLiq !== null && b.startNetLiq !== null ? b.netLiq - b.startNetLiq : null,
     total: Math.round((realized + openPl) * 100) / 100,
     groups: groupSpreads(positions, todayET(now)),
