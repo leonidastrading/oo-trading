@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { BestClosePanel } from "@/components/BestClosePanel";
-import { money, num, plClass, signed } from "@/components/format";
+import { money, num, openPositionsLabel, plClass, signed } from "@/components/format";
 import { PositionGroups } from "@/components/PositionGroups";
 import { StatusBar } from "@/components/StatusBar";
 import { Tile, toneOf } from "@/components/Tile";
@@ -33,7 +33,12 @@ export default function LivePage() {
       )}
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Tile label="Open P/L" value={money(data?.pl?.open, { sign: true })} tone={toneOf(data?.pl?.open)} />
+        <Tile
+          label="Open P/L"
+          value={money(data?.pl?.open, { sign: true })}
+          tone={toneOf(data?.pl?.open)}
+          sub={data?.pl ? openPositionsLabel(data.groups) : undefined}
+        />
         <Tile
           label="Closed P/L"
           value={money(data?.pl?.closed, { sign: true })}

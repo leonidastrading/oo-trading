@@ -1,6 +1,6 @@
 "use client";
 
-import { money, num, plClass, strike } from "@/components/format";
+import { money, num, openPositionsLabel, plClass, strike } from "@/components/format";
 import { PositionGroups } from "@/components/PositionGroups";
 import { StatusBar } from "@/components/StatusBar";
 import { Tile, toneOf } from "@/components/Tile";
@@ -23,7 +23,12 @@ export default function TodayPage() {
       <StatusBar meta={data?.meta ?? null} fetchedAt={data?.fetchedAt ?? null} loading={loading} clientError={error} onRefresh={refresh} />
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Tile label="Open P/L" value={money(data?.openPl, { sign: true })} tone={toneOf(data?.openPl)} />
+        <Tile
+          label="Open P/L"
+          value={money(data?.openPl, { sign: true })}
+          tone={toneOf(data?.openPl)}
+          sub={data?.fetchedAt ? openPositionsLabel(data.groups) : undefined}
+        />
         <Tile
           label="Closed P/L"
           value={money(data?.realized, { sign: true })}
