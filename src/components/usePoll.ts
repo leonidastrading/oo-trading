@@ -33,7 +33,8 @@ export function usePoll<T extends { meta: PollMeta }>(url: string) {
     const load = async (force = false) => {
       if (timer) clearTimeout(timer);
       lastStart = Date.now();
-      setLoading(true);
+      // Only a manual refresh shows "Refreshing…"; automatic polls run silently.
+      if (force) setLoading(true);
       try {
         const res = await fetch(force ? `${url}?force=1` : url, {
           cache: "no-store",
@@ -56,7 +57,7 @@ export function usePoll<T extends { meta: PollMeta }>(url: string) {
         if (!cancelled) setError((e as Error).message);
       } finally {
         if (!cancelled) {
-          setLoading(false);
+          if (force) setLoading(false);
           if (document.visibilityState === "visible") timer = setTimeout(() => load(), pollMs ?? IDLE_POLL_MS);
         }
       }
