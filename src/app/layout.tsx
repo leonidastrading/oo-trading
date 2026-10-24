@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { MidnightReload } from "@/components/MidnightReload";
 import { Nav } from "@/components/Nav";
 import { TokenBanner } from "@/components/TokenBanner";
 import "./globals.css";
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full">
+        <MidnightReload />
         <Nav />
         <TokenBanner />
         <main className="mx-auto max-w-6xl px-4 pt-4 pb-24 md:pb-10">{children}</main>
