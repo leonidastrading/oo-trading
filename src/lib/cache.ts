@@ -25,8 +25,9 @@ export async function cached<T>(
   name: string,
   maxAgeMs: number,
   fetcher: () => Promise<T>,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; keepSeconds?: number } = {},
 ): Promise<CacheResult<T>> {
+  const keep = opts.keepSeconds ?? KEEP_SECONDS;
   const store = kv();
   const key = KEYS.cache(name);
   const entry = await store.get<Entry<T>>(key);
@@ -51,12 +52,12 @@ export async function cached<T>(
   try {
     const data = await fetcher();
     const next: Entry<T> = { data, fetchedAt: Date.now(), lastError: null, lastErrorAt: null };
-    await store.set(key, next, { ex: KEEP_SECONDS });
+    await store.set(key, next, { ex: keep });
     return { data, fetchedAt: next.fetchedAt, error: null };
   } catch (e) {
     const msg = (e as Error).message || String(e);
     console.error(`[cache:${name}]`, msg);
-    if (entry) await store.set(key, { ...entry, lastError: msg, lastErrorAt: Date.now() }, { ex: KEEP_SECONDS });
+    if (entry) await store.set(key, { ...entry, lastError: msg, lastErrorAt: Date.now() }, { ex: keep });
     return { data: entry?.data ?? null, fetchedAt: entry?.fetchedAt ?? null, error: msg };
   } finally {
     await store.del(KEYS.lock(name));

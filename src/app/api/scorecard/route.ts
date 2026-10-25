@@ -24,12 +24,12 @@ export async function GET(req: NextRequest) {
   const [fills, oo] = await Promise.all([
     token.connected
       ? cachedFillsSince(inception(), session.phase === "closed" ? 6 * 3600_000 : 5 * 60_000, force)
-      : Promise.resolve({ data: null, fetchedAt: null, error: token.lastError ?? "Schwab is not connected" }),
+      : Promise.resolve({ fills: null, fetchedAt: null, errors: [token.lastError ?? "Schwab is not connected"], windows: [] }),
     kv().hgetall<OOTrade>(KEYS.ooTrades),
   ]);
-  if (fills.error) errors.push(fills.error);
+  errors.push(...fills.errors);
   const ooTrades = Object.values(oo);
-  const sc = buildScorecard(fills.data ?? [], ooTrades, inception());
+  const sc = buildScorecard(fills.fills ?? [], ooTrades, inception());
   return NextResponse.json(
     {
       meta: {
@@ -42,11 +42,12 @@ export async function GET(req: NextRequest) {
       },
       fetchedAt: fills.fetchedAt,
       sources: {
-        schwabFills: fills.data ? `${fills.data.length} fills since ${inception()}` : null,
+        schwabFills: fills.fills ? `${fills.fills.length} fills since ${inception()}` : null,
+        schwabWindows: fills.windows,
         backtestTrades: ooTrades.length,
         backtestCoverageEnd: sc.coverageEnd,
         fillsByDay: Object.entries(
-          (fills.data ?? []).reduce<Record<string, Record<string, number>>>((m, f) => {
+          (fills.fills ?? []).reduce<Record<string, Record<string, number>>>((m, f) => {
             const day = (m[f.bookDate] ??= {});
             day[f.type] = (day[f.type] ?? 0) + 1;
             return m;

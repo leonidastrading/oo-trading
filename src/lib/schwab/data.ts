@@ -3,7 +3,7 @@ import "server-only";
 import { cached, type CacheResult } from "../cache";
 import { normalizeTransactions, type Fill, type SchwabTransaction } from "../realized";
 import { normalizePosition, type Position, type SchwabPosition } from "../spreads";
-import { addDays, etMidnightUtc } from "../time";
+import { addDays, etMidnightUtc, todayET } from "../time";
 import { getAccountHash, schwabGet } from "./client";
 
 export interface Balances {
@@ -108,27 +108,68 @@ export async function fetchFills(refDate: string): Promise<Fill[]> {
   return normalizeTransactions(Array.isArray(raw) ? raw : [], feePerContract());
 }
 
-/** All fills from `start` (ET date) to now; used by the scorecard (Schwab allows up to 1 year per call). */
-export async function fetchFillsSince(start: string): Promise<Fill[]> {
+/** Raw TRADE + RECEIVE_AND_DELIVER (expirations/cash settlements) transactions in [from, to). */
+async function fetchTransactionsWindow(from: Date, to: Date): Promise<SchwabTransaction[]> {
   const hash = await getAccountHash();
-  const yearAgo = new Date(Date.now() - 364 * 86_400_000);
-  const from = new Date(Math.max(etMidnightUtc(start).getTime(), yearAgo.getTime()));
-  // Expirations/cash settlements are posted as RECEIVE_AND_DELIVER, not TRADE.
-  const [trades, settlements] = await Promise.all(
+  const lists = await Promise.all(
     ["TRADE", "RECEIVE_AND_DELIVER"].map((types) =>
       schwabGet<SchwabTransaction[]>(`/trader/v1/accounts/${hash}/transactions`, {
         startDate: from.toISOString(),
-        endDate: new Date().toISOString(),
+        endDate: to.toISOString(),
         types,
       }),
     ),
   );
-  const raw = [...(Array.isArray(trades) ? trades : []), ...(Array.isArray(settlements) ? settlements : [])];
-  return normalizeTransactions(raw, feePerContract());
+  return lists.flatMap((l) => (Array.isArray(l) ? l : []));
 }
 
-export function cachedFillsSince(start: string, maxAgeMs: number, force = false): Promise<CacheResult<Fill[]>> {
-  return cached(`fills-since:v2:${start}:fee${feePerContract()}`, maxAgeMs, () => fetchFillsSince(start), { force });
+export interface FillsSince {
+  fills: Fill[];
+  fetchedAt: number | null;
+  errors: string[];
+  windows: { from: string; to: string; transactions: number | null; fetchedAt: number | null }[];
+}
+
+export const FILL_WINDOW_DAYS = 7;
+
+/**
+ * All fills from `start` (ET date) to now, fetched in 7-day windows. Each window is cached
+ * on its own: finished windows are kept for a year and never refetched, so only the current
+ * week hits Schwab on refresh, and one short response can't hide a whole period.
+ */
+export async function cachedFillsSince(start: string, liveMaxAgeMs: number, force = false): Promise<FillsSince> {
+  const yearAgo = todayET(Date.now() - 364 * 86_400_000);
+  let from = start > yearAgo ? start : yearAgo;
+  const today = todayET();
+  const settledBefore = addDays(today, -1); // settlements post overnight, so yesterday may still change
+  const windows: FillsSince["windows"] = [];
+  const raw: SchwabTransaction[] = [];
+  const errors: string[] = [];
+  let fetchedAt: number | null = null;
+  while (from <= today) {
+    const to = addDays(from, FILL_WINDOW_DAYS);
+    const done = to <= settledBefore;
+    const res = await cached(
+      `txwin:v1:${from}:${to}`,
+      done ? Infinity : liveMaxAgeMs,
+      () => fetchTransactionsWindow(etMidnightUtc(from), to > today ? new Date() : etMidnightUtc(to)),
+      { force: force && !done, keepSeconds: done ? 400 * 86_400 : undefined },
+    );
+    if (res.error && !errors.includes(res.error)) errors.push(res.error);
+    raw.push(...(res.data ?? []));
+    windows.push({ from, to, transactions: res.data?.length ?? null, fetchedAt: res.fetchedAt });
+    if (res.fetchedAt) fetchedAt = fetchedAt === null ? res.fetchedAt : Math.min(fetchedAt, res.fetchedAt);
+    from = to;
+  }
+  // Windows can overlap at the boundary instant; drop duplicate activities.
+  const seen = new Set<string>();
+  const unique = raw.filter((t) => {
+    const k = `${t.activityId ?? ""}|${t.time ?? ""}|${t.orderId ?? ""}|${t.netAmount ?? ""}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return { fills: normalizeTransactions(unique, feePerContract()), fetchedAt, errors, windows };
 }
 
 export function cachedAccount(maxAgeMs: number, force = false): Promise<CacheResult<AccountSnapshot>> {
