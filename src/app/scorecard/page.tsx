@@ -117,12 +117,14 @@ export default function ScorecardPage() {
               {money(-book.slippageCost, { sign: true })}
             </div>
             <div className="mt-1 text-sm text-ink-2">
-              {book.slippagePctOfBt === null ? "vs backtest P/L: —" : `${book.slippagePctOfBt.toFixed(1)}% of backtest P/L`}
+              {book.slippagePctOfBt === null || book.btPl <= 0
+                ? `backtest P/L ${money(book.btPl, { sign: true })}`
+                : `${book.slippagePctOfBt.toFixed(1)}% of backtest P/L`}
             </div>
           </div>
           {(
             [
-              ["Slippage", book.lights.slippage, book.flaggedFills ? `${book.flaggedFills} flagged fill(s)` : `entry avg ${book.entry.mean === null ? "—" : `$${book.entry.mean.toFixed(2)}`}/ct`],
+              ["Slippage", book.lights.slippage, book.flaggedFills ? `${book.flaggedFills} flagged fill(s)` : `entry avg ${book.entry.mean === null ? "—" : money(book.entry.mean, { cents: true, sign: true })}/ct`],
               ["Stop rate (last 20)", book.lights.stopRate, `${pct(book.stopRateRolling20)} vs ~${pct(book.expectedStopRate)} expected`],
               ["Missed / extra", book.lights.missedExtra, `${book.missed} missed · ${book.extra} extra`],
               ["Live vs backtest P/L", book.lights.gap, book.gapPct === null ? "—" : `${book.gapPct > 0 ? "+" : ""}${book.gapPct.toFixed(1)}%`],
