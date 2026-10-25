@@ -45,6 +45,13 @@ export async function GET(req: NextRequest) {
         schwabFills: fills.data ? `${fills.data.length} fills since ${inception()}` : null,
         backtestTrades: ooTrades.length,
         backtestCoverageEnd: sc.coverageEnd,
+        fillsByDay: Object.entries(
+          (fills.data ?? []).reduce<Record<string, Record<string, number>>>((m, f) => {
+            const day = (m[f.bookDate] ??= {});
+            day[f.type] = (day[f.type] ?? 0) + 1;
+            return m;
+          }, {}),
+        ).sort(([a], [b]) => a.localeCompare(b)),
       },
       ...sc,
     },

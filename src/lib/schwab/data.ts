@@ -113,16 +113,22 @@ export async function fetchFillsSince(start: string): Promise<Fill[]> {
   const hash = await getAccountHash();
   const yearAgo = new Date(Date.now() - 364 * 86_400_000);
   const from = new Date(Math.max(etMidnightUtc(start).getTime(), yearAgo.getTime()));
-  const raw = await schwabGet<SchwabTransaction[]>(`/trader/v1/accounts/${hash}/transactions`, {
-    startDate: from.toISOString(),
-    endDate: new Date().toISOString(),
-    types: "TRADE",
-  });
-  return normalizeTransactions(Array.isArray(raw) ? raw : [], feePerContract());
+  // Expirations/cash settlements are posted as RECEIVE_AND_DELIVER, not TRADE.
+  const [trades, settlements] = await Promise.all(
+    ["TRADE", "RECEIVE_AND_DELIVER"].map((types) =>
+      schwabGet<SchwabTransaction[]>(`/trader/v1/accounts/${hash}/transactions`, {
+        startDate: from.toISOString(),
+        endDate: new Date().toISOString(),
+        types,
+      }),
+    ),
+  );
+  const raw = [...(Array.isArray(trades) ? trades : []), ...(Array.isArray(settlements) ? settlements : [])];
+  return normalizeTransactions(raw, feePerContract());
 }
 
 export function cachedFillsSince(start: string, maxAgeMs: number, force = false): Promise<CacheResult<Fill[]>> {
-  return cached(`fills-since:v1:${start}:fee${feePerContract()}`, maxAgeMs, () => fetchFillsSince(start), { force });
+  return cached(`fills-since:v2:${start}:fee${feePerContract()}`, maxAgeMs, () => fetchFillsSince(start), { force });
 }
 
 export function cachedAccount(maxAgeMs: number, force = false): Promise<CacheResult<AccountSnapshot>> {
