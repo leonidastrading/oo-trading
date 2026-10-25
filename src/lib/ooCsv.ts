@@ -177,3 +177,36 @@ export function isValidTrade(t: unknown): t is OOTrade {
     typeof o.contracts === "number"
   );
 }
+
+export interface OOLeg {
+  /** Signed contracts: − sold, + bought. */
+  qty: number;
+  putCall: "P" | "C";
+  strike: number;
+  expiration: string; // YYYY-MM-DD
+  price: number;
+}
+
+const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+
+/** Parse OO's legs text, e.g. "26 Oct 16 7600 P STO 0.85 | 26 Oct 16 7500 P BTO 0.20". */
+export function parseLegs(legs: string, tradeDate: string): OOLeg[] {
+  const [ty, tm] = tradeDate.split("-").map(Number);
+  const out: OOLeg[] = [];
+  for (const part of legs.split("|")) {
+    const m = /^\s*(\d+)\s+([A-Za-z]{3})\s+(\d{1,2})\s+([\d.]+)\s+([PC])\s+(STO|BTO|STC|BTC)\s+([\d.]+)/i.exec(part);
+    if (!m) continue;
+    const month = MONTHS[m[2].toLowerCase()];
+    if (!month) continue;
+    const year = month < tm ? ty + 1 : ty; // expiry in next year (e.g. Dec trade, Jan expiry)
+    const sold = /^S/i.test(m[6]);
+    out.push({
+      qty: (sold ? -1 : 1) * Number(m[1]),
+      putCall: m[5].toUpperCase() as "P" | "C",
+      strike: Number(m[4]),
+      expiration: `${year}-${String(month).padStart(2, "0")}-${m[3].padStart(2, "0")}`,
+      price: Number(m[7]),
+    });
+  }
+  return out;
+}

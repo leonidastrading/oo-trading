@@ -34,8 +34,11 @@ export function StatusBar({
     return () => clearInterval(t);
   }, []);
   const wait = now ? Math.max(0, Math.ceil((lastManual + MANUAL_MS - now) / 1000)) : 0;
+  const every = meta?.pollMs ? (meta.pollMs >= 60_000 ? `${Math.round(meta.pollMs / 60_000)} min` : `${Math.round(meta.pollMs / 1000)}s`) : null;
   const phaseLabel =
-    meta?.phase === "final" ? "Final 45 min · 10s refresh" : meta?.phase === "open" ? "Market open · 15s refresh" : "Market closed";
+    meta?.phase === "closed" || !meta
+      ? "Market closed"
+      : `${meta.phase === "final" ? "Final 45 min" : "Market open"}${every ? ` · ${every} refresh` : ""}`;
 
   return (
     <div className="space-y-2">

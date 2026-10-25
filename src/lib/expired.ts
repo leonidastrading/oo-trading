@@ -58,6 +58,7 @@ export function expiredOrders(pending: Position[], o: ExpiredOpts): ClosedOrder[
         qty: -p.qty, // closing direction
         price: value,
         fees: 0,
+        schwabFees: 0,
         cash: round2(-p.qty * value * MULTIPLIER),
         effect: "CLOSING",
         bookDate: o.sessionDate,

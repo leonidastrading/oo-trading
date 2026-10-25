@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/", label: "Live", icon: "◉" },
   { href: "/today", label: "Today", icon: "☰" },
   { href: "/stats", label: "Stats", icon: "▤" },
+  { href: "/scorecard", label: "Scorecard", icon: "◎" },
   { href: "/settings", label: "Settings", icon: "⚙" },
 ];
 
@@ -33,7 +34,7 @@ export function Nav() {
       </nav>
       {/* Mobile bottom tabs */}
       <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-page/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
-        <div className="grid grid-cols-4">
+        <div className="grid grid-cols-5">
           {LINKS.map((l) => (
             <Link
               key={l.href}

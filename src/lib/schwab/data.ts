@@ -108,6 +108,23 @@ export async function fetchFills(refDate: string): Promise<Fill[]> {
   return normalizeTransactions(Array.isArray(raw) ? raw : [], feePerContract());
 }
 
+/** All fills from `start` (ET date) to now; used by the scorecard (Schwab allows up to 1 year per call). */
+export async function fetchFillsSince(start: string): Promise<Fill[]> {
+  const hash = await getAccountHash();
+  const yearAgo = new Date(Date.now() - 364 * 86_400_000);
+  const from = new Date(Math.max(etMidnightUtc(start).getTime(), yearAgo.getTime()));
+  const raw = await schwabGet<SchwabTransaction[]>(`/trader/v1/accounts/${hash}/transactions`, {
+    startDate: from.toISOString(),
+    endDate: new Date().toISOString(),
+    types: "TRADE",
+  });
+  return normalizeTransactions(Array.isArray(raw) ? raw : [], feePerContract());
+}
+
+export function cachedFillsSince(start: string, maxAgeMs: number, force = false): Promise<CacheResult<Fill[]>> {
+  return cached(`fills-since:v1:${start}:fee${feePerContract()}`, maxAgeMs, () => fetchFillsSince(start), { force });
+}
+
 export function cachedAccount(maxAgeMs: number, force = false): Promise<CacheResult<AccountSnapshot>> {
   return cached("account", maxAgeMs, fetchAccount, { force });
 }
