@@ -406,7 +406,10 @@ export interface Aggregate {
   stopRate: number | null;
   stopRateRolling20: number | null;
   expectedStopRate: number | null;
+  /** All closed live trades (incl. inferred strategy). */
   livePerCt: number | null;
+  /** Same-day matched trades only: live vs backtest. */
+  liveMatchedPerCt: number | null;
   btPerCt: number | null;
   expectedPerCt: number | null;
   gapPct: number | null;
@@ -490,6 +493,7 @@ export function aggregate(name: string, trades: ScoreTrade[], expectedFor: (stra
     stopRateRolling20,
     expectedStopRate,
     livePerCt: closed.length ? round2(closed.reduce((s, t) => s + t.live!.plPerCt!, 0) / closed.length) : null,
+    liveMatchedPerCt: matchedClosed.length ? round2(matchedClosed.reduce((s, t) => s + t.live!.plPerCt!, 0) / matchedClosed.length) : null,
     btPerCt: matchedClosed.length ? round2(matchedClosed.reduce((s, t) => s + t.bt!.plPerCt, 0) / matchedClosed.length) : null,
     expectedPerCt: expectedPerCt === null ? null : round2(expectedPerCt),
     gapPct: gapPct === null ? null : round2(gapPct),

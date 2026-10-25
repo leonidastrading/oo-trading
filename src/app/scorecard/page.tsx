@@ -156,9 +156,9 @@ export default function ScorecardPage() {
                   <th>Stop slip</th>
                   <th>Slip cost</th>
                   <th>Stop rate (20)</th>
-                  <th>Live $/ct</th>
-                  <th>Backtest $/ct</th>
+                  <th title="All closed live trades">Live $/ct</th>
                   <th>Expected $/ct</th>
+                  <th title="Same-day matched trades only">Matched: live / bt $/ct</th>
                   <th>P/L gap</th>
                   <th>Missed / extra</th>
                   <th>Fees $/side</th>
@@ -191,8 +191,11 @@ export default function ScorecardPage() {
                       {pct(a.stopRateRolling20)} <span className="text-xs text-muted">vs {pct(a.expectedStopRate)}</span>
                     </td>
                     <td>{money(a.livePerCt, { cents: true, sign: true })}</td>
-                    <td>{money(a.btPerCt, { cents: true, sign: true })}</td>
                     <td className="text-ink-2">{money(a.expectedPerCt, { sign: true })}</td>
+                    <td>
+                      {money(a.liveMatchedPerCt, { cents: true, sign: true })}{" "}
+                      <span className="text-muted">/ {money(a.btPerCt, { cents: true, sign: true })}</span>
+                    </td>
                     <td>{a.gapPct === null ? "—" : `${a.gapPct > 0 ? "+" : ""}${a.gapPct.toFixed(1)}%`}</td>
                     <td>
                       {a.missed} / {a.extra}
