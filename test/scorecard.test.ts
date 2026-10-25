@@ -168,3 +168,31 @@ describe("helpers", () => {
     expect(sc.periods.mtd.book.liveTrades).toBe(2);
   });
 });
+
+describe("inferStrategy", () => {
+  const mk = (strategy: string, time: string, premium: number, legs: string) =>
+    toBacktest(bt({ strategy, dateOpened: "2026-09-01", timeOpened: time, premium, pl: 100, contracts: 10, legs }))!;
+  const icLegs = "10 Sep 1 7600 P STO 1 | 10 Sep 1 7700 C STO 1 | 10 Sep 1 7500 P BTO 0.1 | 10 Sep 1 7800 C BTO 0.1";
+  const history = [
+    mk("! SPX 0DTE 5d IC 100-wide 1:30+2:30pm SL300", "13:30:00", 80, icLegs),
+    mk("! SPX 0DTE 5d IC 100-wide 1:30+2:30pm SL300", "14:30:00", 120, icLegs),
+    mk("! SPX 0 DTE 8SMA IC +costs", "13:30:00", 850, icLegs),
+    mk("! SPX 0DTE $8 IC 1:35 10SMA", "13:35:00", 1500, icLegs),
+  ];
+  const D3 = "2026-10-22";
+  const live = (orderId: number, iso: string, px: [number, number, number, number]) =>
+    buildLiveTrades(normalizeTransactions(order(orderId, iso, [
+      [sym(D3, "P", 7600), -9, px[0]], [sym(D3, "C", 7700), -9, px[1]], [sym(D3, "P", 7500), 9, px[2]], [sym(D3, "C", 7800), 9, px[3]],
+    ], "OPENING"), 0.88), D3)[0];
+  const rows = scoreTrades(
+    [live(1, "2026-10-22T17:30:03+0000", [0.6, 0.5, 0.05, 0.05]), live(2, "2026-10-22T17:30:05+0000", [5, 4, 0.5, 0.4]), live(3, "2026-10-22T17:35:12+0000", [8, 7.5, 0.3, 0.2])],
+    history, D3, "2026-10-21",
+  );
+  it("tells 5d IC, 8SMA IC and $8 IC apart by time and credit", () => {
+    const byOrder = Object.fromEntries(rows.map((r) => [r.live!.orderId, r]));
+    expect(byOrder["1"].strategy).toBe("5d IC");
+    expect(byOrder["2"].strategy).toBe("8SMA IC");
+    expect(byOrder["3"].strategy).toBe("$8 IC");
+    expect(rows.every((r) => r.strategyInferred && r.status === "awaiting")).toBe(true);
+  });
+});

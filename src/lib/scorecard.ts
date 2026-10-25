@@ -200,6 +200,53 @@ export function toBacktest(t: OOTrade): BacktestTrade | null {
   };
 }
 
+interface Profile {
+  signatures: Set<string>;
+  /** Distinct entry times seen in the backtest (minutes of day). */
+  times: number[];
+  creditLo: number;
+  creditHi: number;
+}
+
+/** Per-strategy fingerprint learned from the whole backtest history. */
+export function buildProfiles(backtest: BacktestTrade[]): Map<string, Profile> {
+  const by = new Map<string, BacktestTrade[]>();
+  for (const b of backtest) by.set(b.strategy, [...(by.get(b.strategy) ?? []), b]);
+  const out = new Map<string, Profile>();
+  for (const [s, bs] of by) {
+    const credits = bs.map((b) => b.credit).sort((a, b) => a - b);
+    const q = (p: number) => credits[Math.min(credits.length - 1, Math.max(0, Math.floor(p * (credits.length - 1))))];
+    out.set(s, {
+      signatures: new Set(bs.map((b) => b.signature)),
+      times: [...new Set(bs.map((b) => Math.round(hhmmToMin(b.time))))],
+      creditLo: q(0.05),
+      creditHi: q(0.95),
+    });
+  }
+  return out;
+}
+
+export const MAX_INFER_MINUTES = 30;
+
+/**
+ * Best-guess strategy for a live trade with no same-day backtest twin: same structure and DTE,
+ * nearest typical entry time (≤ 30 min), and a credit inside the strategy's usual range.
+ */
+export function inferStrategy(l: LiveTrade, profiles: Map<string, Profile>): string | null {
+  const t = minutesET(l.time);
+  let best: { s: string; score: number } | null = null;
+  for (const [s, p] of profiles) {
+    if (!p.signatures.has(l.signature)) continue;
+    const dt = Math.min(...p.times.map((x) => Math.abs(t - x)));
+    if (dt > MAX_INFER_MINUTES) continue;
+    const width = Math.max(p.creditHi - p.creditLo, 0.1);
+    const outside = l.credit < p.creditLo ? (p.creditLo - l.credit) / width : l.credit > p.creditHi ? (l.credit - p.creditHi) / width : 0;
+    const score = dt + 10 * outside;
+    if (!best || score < best.score) best = { s, score };
+  }
+  return best?.s ?? null;
+}
+
 export type Category = "expired" | "profit" | "time" | "stop" | "other";
 
 export interface ScoreTrade {
@@ -207,6 +254,8 @@ export interface ScoreTrade {
   date: string;
   entryTime: string;
   strategy: string;
+  /** True when the strategy was inferred (no same-day backtest twin). */
+  strategyInferred: boolean;
   rawStrategy: string | null;
   status: "matched" | "extra" | "missed" | "awaiting";
   live: LiveTrade | null;
@@ -238,6 +287,7 @@ function category(live: LiveTrade, bt: BacktestTrade | null): { category: Catego
 /** Match each live trade to the same day's backtest trade (same structure, nearest entry time). */
 export function scoreTrades(live: LiveTrade[], backtest: BacktestTrade[], since: string, coverageEnd: string | null): ScoreTrade[] {
   const bt = backtest.filter((b) => b.date >= since);
+  const profiles = buildProfiles(backtest);
   const pairs: { l: LiveTrade; b: BacktestTrade; score: number }[] = [];
   for (const l of live) {
     for (const b of bt) {
@@ -273,11 +323,13 @@ export function scoreTrades(live: LiveTrade[], backtest: BacktestTrade[], since:
     if ((entrySlip ?? 0) >= BIG_MISS) flags.push("Entry ≥ $1.00 worse than backtest");
     if ((exitSlip ?? 0) >= BIG_MISS) flags.push("Exit ≥ $1.00 worse than backtest");
     if (!b && !awaiting) flags.push("Extra entry (live only)");
+    const inferredStrategy = b ? null : inferStrategy(l, profiles);
     out.push({
       id: `L${l.orderId}`,
       date: l.date,
       entryTime: etTime(l.time),
-      strategy: b?.strategy ?? "Unmatched",
+      strategy: b?.strategy ?? inferredStrategy ?? "Unmatched",
+      strategyInferred: !b && inferredStrategy !== null,
       rawStrategy: b?.rawStrategy ?? null,
       status: b ? "matched" : awaiting ? "awaiting" : "extra",
       live: l,
@@ -298,6 +350,7 @@ export function scoreTrades(live: LiveTrade[], backtest: BacktestTrade[], since:
       date: b.date,
       entryTime: b.time,
       strategy: b.strategy,
+      strategyInferred: false,
       rawStrategy: b.rawStrategy,
       status: "missed",
       live: null,

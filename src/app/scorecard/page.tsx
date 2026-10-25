@@ -250,7 +250,10 @@ export default function ScorecardPage() {
                       <td>
                         {t.date} <span className="text-muted">{t.entryTime.slice(0, 5)}</span>
                       </td>
-                      <td title={t.rawStrategy ?? undefined}>{t.strategy}</td>
+                      <td title={t.rawStrategy ?? undefined}>
+                        {t.strategy}
+                        {t.strategyInferred && <span className="text-xs text-muted"> (inferred)</span>}
+                      </td>
                       <td className={STATUS[t.status].cls}>
                         {t.live?.status === "open" ? "Open · " : ""}
                         {STATUS[t.status].label}
@@ -300,7 +303,9 @@ export default function ScorecardPage() {
         <p>
           Live trades = Schwab opening orders (all legs of one order); exits are matched by FIFO, expirations via Schwab&apos;s posted
           settlement. Matching = same day, same structure (types, sides, ratios, DTE), nearest entry time within 15 min. Backtest closing
-          debit is derived from P/L and fees. Live fees are Schwab&apos;s reported fees. Exit type comes from the backtest; when only the
+          debit is derived from P/L and fees. Live trades without a same-day backtest twin get an inferred strategy (structure, usual
+          entry time and credit range from the backtest history) so they count toward stop rate and live P/L, but not slippage. Live
+          fees are Schwab&apos;s reported fees. Exit type comes from the backtest; when only the
           live trade was closed by an order it is inferred (loss → stop).
         </p>
       </section>
