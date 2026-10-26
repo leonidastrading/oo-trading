@@ -154,7 +154,7 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
 
       <ExpiryChart analysis={a} underlying={underlying} />
 
-      <details className="group" open>
+      <details className="group" open={!data.settled}>
         <summary className="cursor-pointer text-sm text-ink-2">P/L at expiration, 5-pt steps (±50)</summary>
         <div className="mt-2 overflow-x-auto">
           <table className="data w-full text-sm">
