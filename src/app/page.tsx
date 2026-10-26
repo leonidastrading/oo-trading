@@ -80,14 +80,13 @@ export default function LivePage() {
       {otherExpiry.map((e) => (
         <section key={e.key} className="card p-4">
           <h2 className="mb-2 font-semibold text-accent">{e.underlying} expiring today</h2>
-          {e.settled ? (
-            <p className="text-sm">
+          {e.settled && (
+            <p className="mb-2 text-sm">
               Settled at <span className="num">{num(e.spot)}</span> · final P/L{" "}
               <span className={plClass(e.analysis.pnlAtSpot)}>{money(e.analysis.pnlAtSpot, { sign: true })}</span>
             </p>
-          ) : (
-            <ExpiryChart analysis={e.analysis} underlying={e.underlying} />
           )}
+          <ExpiryChart analysis={e.analysis} underlying={e.underlying} />
         </section>
       ))}
 

@@ -34,28 +34,27 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
   const underlying = data.underlying;
   const singleBestRow = a.table.filter((r) => r.isBest).length === 1;
 
-  if (data.settled) {
-    return (
-      <section className="card space-y-1 p-4 md:p-5">
-        <h2 className="text-lg font-bold text-accent">Today&apos;s {underlying} expirations</h2>
-        <p className="text-xl font-bold md:text-2xl">
-          Settled at <span className="num">{num(a.spot)}</span> · final P/L{" "}
-          <span className={plClass(a.pnlAtSpot)}>{money(a.pnlAtSpot, { sign: true })}</span>
-        </p>
-        <p className="text-xs text-muted">
-          Cash-settled at the 4:00 PM close. Schwab posts the settlement overnight (~1:45 AM ET).
-        </p>
-      </section>
-    );
-  }
-
   return (
     <section className="card space-y-4 p-4 md:p-5">
-      <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-lg font-bold text-accent">Best {underlying} close</h2>
-        <span className="text-xs text-muted">at 4:00 PM settlement; today&apos;s expirations only</span>
-      </header>
+      {data.settled ? (
+        <header className="space-y-1">
+          <h2 className="text-lg font-bold text-accent">Today&apos;s {underlying} expirations</h2>
+          <p className="text-xl font-bold md:text-2xl">
+            Settled at <span className="num">{num(a.spot)}</span> · final P/L{" "}
+            <span className={plClass(a.pnlAtSpot)}>{money(a.pnlAtSpot, { sign: true })}</span>
+          </p>
+          <p className="text-xs text-muted">
+            Cash-settled at the 4:00 PM close. Schwab posts the settlement overnight (~1:45 AM ET). Chart stays up until midnight.
+          </p>
+        </header>
+      ) : (
+        <header className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-bold text-accent">Best {underlying} close</h2>
+          <span className="text-xs text-muted">at 4:00 PM settlement; today&apos;s expirations only</span>
+        </header>
+      )}
 
+      {!data.settled && (
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
         <Stat
           label="Best close"
@@ -151,10 +150,11 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
           }
         />
       </div>
+      )}
 
       <ExpiryChart analysis={a} underlying={underlying} />
 
-      <details className="group" open>
+      <details className="group" open={!data.settled}>
         <summary className="cursor-pointer text-sm text-ink-2">P/L at expiration, 5-pt steps (±50)</summary>
         <div className="mt-2 overflow-x-auto">
           <table className="data w-full text-sm">
@@ -162,7 +162,7 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
               <tr>
                 <th>{underlying} close</th>
                 <th>P/L at expiry</th>
-                <th>vs now</th>
+                <th>vs {data.settled ? "settle" : "now"}</th>
               </tr>
             </thead>
             <tbody>
@@ -174,7 +174,7 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
                 >
                   <td className="num">
                     {strike(r.price)}
-                    {r.isCurrent && <span className="ml-2 text-xs text-spot">● now</span>}
+                    {r.isCurrent && <span className="ml-2 text-xs text-spot">● {data.settled ? "settled" : "now"}</span>}
                     {r.isBest && singleBestRow && <span className="ml-2 text-xs text-gain">★ best</span>}
                   </td>
                   <td className={plClass(r.pnl)}>{money(r.pnl, { sign: true })}</td>
