@@ -113,7 +113,9 @@ describe("today's book (best SPX close)", () => {
     expect(a.table.find((r) => r.isCurrent)!.price).toBe(7720);
     expect(a.table.find((r) => r.isBest)!.price).toBe(7720);
     expect(a.worst.pnl).toBeLessThan(-100000);
-    expect(a.worst.atEdge).toBe(true);
+    // 90 short vs 90 long puts below 7580: the loss is a capped floor, not still falling.
+    expect(a.worst.atEdge).toBe(false);
+    expect(a.worst.edge).toBe("below");
   });
 });
 
@@ -141,5 +143,32 @@ describe("open-ended upside (orphan long calls)", () => {
   });
   it("does not mark a flat ±50 table as all-best", () => {
     expect(a.table.filter((r) => r.isBest).length).toBeLessThan(a.table.length);
+  });
+});
+
+describe("put credit spread (flat max running to the range edge)", () => {
+  // Live 2026-10-26: −33 P7670 @3.70, +33 P7570 @0.15 → credit 3.55 = $11,715
+  const pcs = [leg(-33, "P", 7670, 3.7), leg(33, "P", 7570, 0.15)];
+  const a = analyzeClose(pcs, 7681.27)!;
+
+  it("treats the max as a plateau at or above the short strike, not 'keeps rising'", () => {
+    expect(a.best.pnl).toBeCloseTo(11715, 2);
+    expect(a.best.atEdge).toBe(false);
+    expect(a.best.edge).toBe("above");
+    expect(a.best.range!.low).toBe(7670);
+    expect(a.best.range!.high).toBe(a.hi);
+  });
+
+  it("treats the max loss below the long strike as capped", () => {
+    expect(a.worst.pnl).toBeCloseTo(-(100 * 33 * 100) + 11715, 2);
+    expect(a.worst.atEdge).toBe(false);
+    expect(a.worst.edge).toBe("below");
+    expect(a.worst.range!.high).toBe(7570);
+  });
+
+  it("still flags genuinely open-ended exposure", () => {
+    const longCall = analyzeClose([leg(10, "C", 7700, 1)], 7681)!;
+    expect(longCall.best.atEdge).toBe(true);
+    expect(longCall.best.edge).toBe("above");
   });
 });

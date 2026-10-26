@@ -62,10 +62,14 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
           value={
             a.best.atEdge ? (
               <span>
-                {a.best.price > a.spot ? "↑ " : "↓ "}
+                {a.best.edge === "above" ? "↑ " : "↓ "}
                 {strike(a.best.price)}
-                {a.best.price > a.spot ? "+" : "−"}
+                {a.best.edge === "above" ? "+" : "−"}
               </span>
+            ) : a.best.range && a.best.edge === "above" ? (
+              `≥ ${strike(a.best.range.low)}`
+            ) : a.best.range && a.best.edge === "below" ? (
+              `≤ ${strike(a.best.range.high)}`
             ) : (
               priceRange(a.best.range, a.best.price)
             )
@@ -73,8 +77,13 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
           sub={
             <>
               <span className={plClass(a.best.pnl)}>{money(a.best.pnl, { sign: true })}</span>
+              {!a.best.atEdge && a.best.range && a.best.edge && (
+                <span className="block">
+                  max anywhere {a.best.edge === "above" ? `at or above ${strike(a.best.range.low)}` : `at or below ${strike(a.best.range.high)}`}
+                </span>
+              )}
               {a.best.atEdge && (
-                <span className="block">keeps {a.best.price > a.spot ? "rising above" : "rising below"} the ±3% range</span>
+                <span className="block">keeps rising {a.best.edge === "above" ? "above" : "below"} the ±3% range</span>
               )}
               {a.best.atEdge && a.spotZone && (
                 <span className="block">
@@ -132,7 +141,11 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
           value={<span className={plClass(a.worst.pnl)}>{money(a.worst.pnl, { sign: true })}</span>}
           sub={
             <>
-              at {a.worst.range ? `${strike(a.worst.range.low)}–${strike(a.worst.range.high)}` : strike(a.worst.price)}
+              {a.worst.range && a.worst.edge === "below"
+                ? `at or below ${strike(a.worst.range.high)} (capped)`
+                : a.worst.range && a.worst.edge === "above"
+                  ? `at or above ${strike(a.worst.range.low)} (capped)`
+                  : `at ${a.worst.range ? `${strike(a.worst.range.low)}–${strike(a.worst.range.high)}` : strike(a.worst.price)}`}
               {a.worst.atEdge ? " (edge of range — may extend further)" : ""}
             </>
           }
