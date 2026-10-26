@@ -330,6 +330,7 @@ export default function ScorecardPage() {
                       </td>
                       <td title={t.rawStrategy ?? undefined}>
                         {t.strategy}
+                        {/dip/i.test(t.rawStrategy ?? "") && <span className="text-xs text-muted"> · Dip add-on</span>}
                         {t.strategyInferred && <span className="text-xs text-muted"> (inferred)</span>}
                       </td>
                       <td className={STATUS[t.status].cls}>

@@ -280,3 +280,13 @@ describe("fixes: shared-strike exits, multi-day extras, pre-live missed, fees, s
     expect(p.strategies.find((s) => s.name === "Long")!.lights.stopRate).toBe("few");
   });
 });
+
+describe("book scope", () => {
+  it("maps the VIX strategy and ignores non-book strategies for missed entries", () => {
+    expect(canonicalStrategy("! SPX 1DTE VIX up ≥5% 1DTE put spread 3:50pm")).toBe("VIX 1DTE");
+    const vix = toBacktest(bt({ strategy: "! SPX 1DTE VIX up ≥5% 1DTE put spread 3:50pm", dateOpened: "2026-10-22", timeOpened: "15:50:00",
+      premium: 640, pl: 638, contracts: 1, legs: "1 Oct 23 7600 P STO 7.0 | 1 Oct 23 7500 P BTO 0.6" }))!;
+    expect(scoreTrades([], [vix], "2026-10-19", "2026-10-23", "2026-10-19", new Set(Object.keys(EXPECTED)))).toHaveLength(0);
+    expect(scoreTrades([], [vix], "2026-10-19", "2026-10-23")).toHaveLength(1);
+  });
+});

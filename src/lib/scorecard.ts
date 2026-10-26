@@ -22,6 +22,7 @@ export const STRATEGIES = Object.keys(EXPECTED);
 /** Map an OO strategy name to the book's short name. */
 export function canonicalStrategy(name: string): string {
   const n = name.toLowerCase();
+  if (/vix/.test(n)) return "VIX 1DTE";
   if (/2\s*dte/.test(n)) return "2DTE";
   if (/bwb|butterfly|fly/.test(n)) return "BWB";
   if (/5d\s*ic/.test(n)) return "5d IC";
@@ -389,6 +390,8 @@ export function scoreTrades(
   since: string,
   coverageEnd: string | null,
   missedFrom: string = since,
+  /** Strategies the live book runs; backtest-only trades of other strategies aren't "missed". */
+  book?: Set<string>,
 ): ScoreTrade[] {
   const bt = backtest.filter((b) => b.date >= since);
   const profiles = buildProfiles(backtest);
@@ -452,6 +455,7 @@ export function scoreTrades(
   }
   for (const b of bt) {
     if (usedB.has(b.key) || b.date < missedFrom || (coverageEnd !== null && b.date > coverageEnd)) continue;
+    if (book && !book.has(b.strategy)) continue;
     out.push({
       id: `B${b.key}`,
       date: b.date,
@@ -663,7 +667,7 @@ export function buildScorecard(fills: Fill[], ooTrades: OOTrade[], inception: st
   const coverageEnd = backtest.length ? backtest.reduce((m, b) => (b.date > m ? b.date : m), "") : null;
   const live = buildLiveTrades(fills, inception);
   const firstLiveDay = live.length ? live[0].date : null;
-  const trades = scoreTrades(live, backtest, inception, coverageEnd, firstLiveDay ?? inception);
+  const trades = scoreTrades(live, backtest, inception, coverageEnd, firstLiveDay ?? inception, new Set(STRATEGIES));
   const today = todayET(now);
   const monthStart = today.slice(0, 8) + "01" > inception ? today.slice(0, 8) + "01" : inception;
   const expectedFor = (s: string) => EXPECTED[s];
