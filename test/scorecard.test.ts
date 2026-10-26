@@ -290,3 +290,18 @@ describe("book scope", () => {
     expect(scoreTrades([], [vix], "2026-10-19", "2026-10-23")).toHaveLength(1);
   });
 });
+
+describe("tie-break by size", () => {
+  it("matches a 6-lot live IC to the regular $8 IC, not its 1-lot Dip add-on", () => {
+    const D5 = "2026-10-21";
+    const legs = "{n} Oct 21 7765 P STO 6.62 | {n} Oct 21 7760 C STO 6.77 | {n} Oct 21 7715 P BTO 0.27 | {n} Oct 21 7810 C BTO 0.07";
+    const regular = toBacktest(bt({ strategy: "! SPX 0DTE $8 IC 1:35 10SMA", dateOpened: D5, timeOpened: "13:35:00", premium: 1310, pl: -1717 * 5, contracts: 5, legs: legs.replace(/\{n\}/g, "5") }))!;
+    const dip = toBacktest(bt({ strategy: "! SPX 0DTE $8 IC 1:35 10SMA - Dip Add-On", dateOpened: D5, timeOpened: "13:35:00", premium: 1310, pl: -1717, contracts: 1, legs: legs.replace(/\{n\}/g, "1") }))!;
+    const live = buildLiveTrades(normalizeTransactions(order(1, "2026-10-21T17:35:12+0000", [
+      [sym(D5, "P", 7765), -6, 6.62], [sym(D5, "C", 7760), -6, 6.77], [sym(D5, "P", 7715), 6, 0.27], [sym(D5, "C", 7810), 6, 0.07],
+    ], "OPENING"), 0.88), D5);
+    const rows = scoreTrades(live, [dip, regular], D5, D5);
+    expect(rows.find((r) => r.status === "matched")!.rawStrategy).toBe("! SPX 0DTE $8 IC 1:35 10SMA");
+    expect(rows.find((r) => r.status === "missed")!.rawStrategy).toContain("Dip");
+  });
+});

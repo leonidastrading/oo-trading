@@ -418,8 +418,9 @@ export default function ScorecardPage() {
           backtest price: $0 means “exactly as assumed”. Lights: green ≤ assumption, yellow ≤ 1.5×, red above that or any flagged fill.
         </p>
         <p>
-          Live trades = Schwab opening orders (all legs of one order); exits are matched by FIFO, expirations via Schwab&apos;s posted
-          settlement. Matching = same day, same structure (types, sides, ratios, DTE), nearest entry time within 15 min. Backtest closing
+          Live trades = Schwab opening orders (all legs of one order). Each closing order is credited to the entry whose open legs it
+          matches (expand “Exit fills” to check); expirations use Schwab&apos;s posted settlement. Matching = same day, same structure
+          (types, sides, ratios, DTE), nearest entry time within 15 min, then closest strikes and contract count. Backtest closing
           debit is derived from P/L and fees. Live trades without a same-day backtest twin get an inferred strategy (structure, usual
           entry time and credit range from the backtest history) so they count toward stop rate and live P/L, but not slippage. Live
           fees are Schwab&apos;s reported fees. Exit type comes from the backtest; when only the

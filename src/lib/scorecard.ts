@@ -404,7 +404,9 @@ export function scoreTrades(
       const ls = sortLegs(l.legs);
       const bs = sortLegs(b.legs);
       const strikeDist = ls.reduce((s, x, i) => s + Math.abs(x.strike - bs[i].strike), 0) / ls.length;
-      pairs.push({ l, b, score: dt + strikeDist / 10 });
+      // Tie-break identical setups (e.g. $8 IC vs its 1-lot Dip add-on) by closest contract count.
+      const sizeGap = Math.abs(Math.log(l.units / b.units));
+      pairs.push({ l, b, score: dt + strikeDist / 10 + sizeGap / 2 });
     }
   }
   pairs.sort((a, b) => a.score - b.score);
