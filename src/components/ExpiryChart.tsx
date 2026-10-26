@@ -137,10 +137,6 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <p className="mt-1 text-xs text-muted">
-        <span className="text-spot">│</span> current price · ○ breakeven
-        {best.pnl > 0 ? (best.range ? " · shaded = max-profit range" : " · ● max profit") : ""}
-      </p>
     </div>
   );
 }

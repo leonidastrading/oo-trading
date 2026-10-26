@@ -32,7 +32,6 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
   const zone = a.profitZone;
   const inZone = zone && (zone.lower === null || a.spot >= zone.lower) && (zone.upper === null || a.spot <= zone.upper);
   const underlying = data.underlying;
-  const singleBestRow = a.table.filter((r) => r.isBest).length === 1;
 
   return (
     <section className="card space-y-4 p-4 md:p-5">
@@ -42,9 +41,6 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
           <p className="text-xl font-bold md:text-2xl">
             Settled at <span className="num">{num(a.spot)}</span> · final P/L{" "}
             <span className={plClass(a.pnlAtSpot)}>{money(a.pnlAtSpot, { sign: true })}</span>
-          </p>
-          <p className="text-xs text-muted">
-            Cash-settled at the 4:00 PM close. Schwab posts the settlement overnight (~1:45 AM ET). Chart stays up until midnight.
           </p>
         </header>
       ) : (
@@ -153,41 +149,6 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
       )}
 
       <ExpiryChart analysis={a} underlying={underlying} />
-
-      <details className="group" open={!data.settled}>
-        <summary className="cursor-pointer text-sm text-ink-2">P/L at expiration, 5-pt steps (±50)</summary>
-        <div className="mt-2 overflow-x-auto">
-          <table className="data w-full text-sm">
-            <thead>
-              <tr>
-                <th>{underlying} close</th>
-                <th>P/L at expiry</th>
-                <th>vs {data.settled ? "settle" : "now"}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {a.table.map((r) => (
-                <tr
-                  key={r.price}
-                  className={r.isCurrent ? "bg-spot/15" : r.isBest ? "bg-gain/15" : undefined}
-                  aria-current={r.isCurrent ? "true" : undefined}
-                >
-                  <td className="num">
-                    {strike(r.price)}
-                    {r.isCurrent && <span className="ml-2 text-xs text-spot">● {data.settled ? "settled" : "now"}</span>}
-                    {r.isBest && singleBestRow && <span className="ml-2 text-xs text-gain">★ best</span>}
-                  </td>
-                  <td className={plClass(r.pnl)}>{money(r.pnl, { sign: true })}</td>
-                  <td className="text-muted">{r.price - Math.round(a.spot / 5) * 5 >= 0 ? "+" : ""}{r.price - Math.round(a.spot / 5) * 5}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
-      <p className="text-xs text-muted">
-        Cash-settled payoff using Schwab average cost: net {a.netCost >= 0 ? "debit" : "credit"} {money(Math.abs(a.netCost))}.
-      </p>
     </section>
   );
 }
