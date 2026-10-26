@@ -1,7 +1,7 @@
 // Fills & Health Scorecard: live Schwab fills vs the same day's OO backtest trades.
 // Read-only reporting. All prices are per share ($/share); "per contract" = × 100.
 import { parseLegs, type OOTrade } from "./ooCsv";
-import { matchLots, type Fill } from "./realized";
+import type { Fill } from "./realized";
 import { etParts, todayET } from "./time";
 
 /** Costs the backtests assume ($/share, except fees which are $/contract/side). */
@@ -87,9 +87,100 @@ export interface LiveTrade {
   /** Contract-sides traded (opening contracts + contracts closed by orders). */
   contractSides: number;
   plPerCt: number | null;
+  /** Every fill that closed part of this entry (for the drill-down). */
+  exits: ExitFill[];
 }
 
-/** Group opening fills by Schwab order into live trades and attach their closes (FIFO). */
+export interface ExitFill {
+  symbol: string;
+  putCall: "P" | "C" | null;
+  strike: number | null;
+  /** Contracts of this entry closed by the fill. */
+  qty: number;
+  /** Side of the opening leg it closes (− short, + long). */
+  openSign: number;
+  price: number;
+  time: number;
+  via: "order" | "settlement";
+  orderId: string;
+  /** Schwab-reported fees for this quantity ($). */
+  fees: number;
+}
+
+interface Remaining {
+  orderId: string;
+  time: number;
+  /** Signed open quantity left per symbol. */
+  left: Map<string, number>;
+}
+
+/**
+ * Attribute every closing order to the entry it belongs to. An order closes the entry whose
+ * open legs it matches (all of its symbols, enough quantity, preferring an exact full close);
+ * only when no single entry fits are its legs split FIFO across entries. Plain per-symbol FIFO
+ * would misattribute exits whenever two strategies share a strike.
+ */
+function allocateExits(options: Fill[], entries: Remaining[]): Map<string, ExitFill[]> {
+  const out = new Map<string, ExitFill[]>(entries.map((e) => [e.orderId, []]));
+  const groups = new Map<string, Fill[]>();
+  for (const f of options) {
+    if (f.effect !== "CLOSING" && !f.settlement) continue;
+    groups.set(f.orderId, [...(groups.get(f.orderId) ?? []), f]);
+  }
+  const ordered = [...groups.values()].sort((a, b) => Math.min(...a.map((f) => f.time)) - Math.min(...b.map((f) => f.time)));
+  const push = (e: Remaining, f: Fill, q: number) => {
+    const openSign = Math.sign(e.left.get(f.symbol)!);
+    e.left.set(f.symbol, e.left.get(f.symbol)! - openSign * q);
+    out.get(e.orderId)!.push({
+      symbol: f.symbol,
+      putCall: f.putCall,
+      strike: f.strike,
+      qty: q,
+      openSign,
+      // Settlement value per share comes from Schwab's posted cash.
+      price: f.settlement ? Math.abs(f.cash) / Math.abs(f.qty) / 100 : f.price,
+      time: f.time,
+      via: f.settlement ? "settlement" : "order",
+      orderId: f.orderId,
+      fees: f.settlement ? 0 : (f.schwabFees / Math.abs(f.qty)) * q,
+    });
+  };
+  for (const g of ordered) {
+    const t = Math.min(...g.map((f) => f.time));
+    const legs = new Map<string, number>();
+    for (const f of g) legs.set(f.symbol, (legs.get(f.symbol) ?? 0) + f.qty);
+    const fits = (e: Remaining) =>
+      e.time <= t &&
+      [...legs].every(([s, q]) => {
+        const left = e.left.get(s) ?? 0;
+        return left !== 0 && Math.sign(left) !== Math.sign(q) && Math.abs(left) >= Math.abs(q);
+      });
+    const exact = (e: Remaining) =>
+      [...legs].every(([s, q]) => Math.abs(e.left.get(s) ?? 0) === Math.abs(q)) &&
+      [...e.left.values()].filter((v) => v !== 0).length === legs.size;
+    const candidates = entries.filter(fits).sort((a, b) => Number(exact(b)) - Number(exact(a)) || a.time - b.time);
+    if (candidates.length) {
+      const e = candidates[0];
+      for (const f of g) push(e, f, Math.abs(f.qty));
+      continue;
+    }
+    // Fallback: FIFO per leg across entries.
+    for (const f of g) {
+      let q = Math.abs(f.qty);
+      for (const e of [...entries].sort((a, b) => a.time - b.time)) {
+        if (q <= 0) break;
+        const left = e.left.get(f.symbol) ?? 0;
+        if (e.time > t || left === 0 || Math.sign(left) === Math.sign(f.qty)) continue;
+        const m = Math.min(q, Math.abs(left));
+        push(e, f, m);
+        q -= m;
+      }
+    }
+  }
+  return out;
+}
+
+/** Group opening fills by Schwab order into live trades and attach their exits. */
 export function buildLiveTrades(fills: Fill[], since: string): LiveTrade[] {
   const options = fills.filter((f) => f.assetType === "OPTION");
   const opens = new Map<string, Fill[]>();
@@ -97,7 +188,13 @@ export function buildLiveTrades(fills: Fill[], since: string): LiveTrade[] {
     if (f.effect === "CLOSING" || f.settlement || f.bookDate < since) continue;
     opens.set(f.orderId, [...(opens.get(f.orderId) ?? []), f]);
   }
-  const matches = matchLots(options);
+  const remaining: Remaining[] = [...opens].map(([orderId, fs]) => {
+    const left = new Map<string, number>();
+    for (const f of fs) left.set(f.symbol, (left.get(f.symbol) ?? 0) + f.qty);
+    return { orderId, time: Math.min(...fs.map((f) => f.time)), left };
+  });
+  const exits = allocateExits(options, remaining);
+
   const trades: LiveTrade[] = [];
   for (const [orderId, fs] of opens) {
     const bySymbol = new Map<string, Leg & { cost: number }>();
@@ -114,22 +211,18 @@ export function buildLiveTrades(fills: Fill[], since: string): LiveTrade[] {
     const openContracts = legs.reduce((s, l) => s + Math.abs(l.qty), 0);
     let fees = fs.reduce((s, f) => s + f.schwabFees, 0);
 
-    const closes = matches.filter((m) => m.openOrderId === orderId);
+    const xs = exits.get(orderId) ?? [];
     let closedQty = 0;
     let debitTotal = 0;
     let tradeClosed = 0;
     let closeTime: number | null = null;
-    for (const m of closes) {
-      const q = Math.abs(m.openQty);
-      const share = q / Math.abs(m.close.qty);
-      closedQty += q;
-      if (m.close.settlement) {
-        debitTotal += (-m.close.cash * share) / 100; // settlement value from Schwab's posted cash
-      } else {
-        debitTotal += -Math.sign(m.openQty) * m.close.price * q;
-        fees += m.close.schwabFees * share;
-        tradeClosed += q;
-        closeTime = Math.max(closeTime ?? 0, m.close.time);
+    for (const x of xs) {
+      closedQty += x.qty;
+      debitTotal += -x.openSign * x.price * x.qty;
+      fees += x.fees;
+      if (x.via === "order") {
+        tradeClosed += x.qty;
+        closeTime = Math.max(closeTime ?? 0, x.time);
       }
     }
     const closed = closedQty >= openContracts;
@@ -149,6 +242,7 @@ export function buildLiveTrades(fills: Fill[], since: string): LiveTrade[] {
       fees: round2(fees),
       contractSides: openContracts + tradeClosed,
       plPerCt: debit === null ? null : round2((credit - debit) * 100 - fees / units),
+      exits: xs,
     });
   }
   return trades.sort((a, b) => a.time - b.time);
@@ -285,7 +379,17 @@ function category(live: LiveTrade, bt: BacktestTrade | null): { category: Catego
 }
 
 /** Match each live trade to the same day's backtest trade (same structure, nearest entry time). */
-export function scoreTrades(live: LiveTrade[], backtest: BacktestTrade[], since: string, coverageEnd: string | null): ScoreTrade[] {
+/**
+ * @param missedFrom first day the account actually traded at Schwab; backtest trades before it
+ * aren't reported as missed (the book wasn't live at this broker yet).
+ */
+export function scoreTrades(
+  live: LiveTrade[],
+  backtest: BacktestTrade[],
+  since: string,
+  coverageEnd: string | null,
+  missedFrom: string = since,
+): ScoreTrade[] {
   const bt = backtest.filter((b) => b.date >= since);
   const profiles = buildProfiles(backtest);
   const pairs: { l: LiveTrade; b: BacktestTrade; score: number }[] = [];
@@ -317,7 +421,10 @@ export function scoreTrades(live: LiveTrade[], backtest: BacktestTrade[], since:
     const { category: cat, inferred } = category(l, b);
     const entrySlip = b ? round4(b.credit - l.credit) : null;
     const exitSlip = b && l.debit !== null ? round4(l.debit - b.debit) : null;
-    const awaiting = !b && (coverageEnd === null || l.date > coverageEnd);
+    // OO logs only contain closed trades, so a multi-day trade can't be called "extra" until
+    // the log covers its expiration.
+    const lastDay = l.legs.reduce((m, x) => (x.expiration > m ? x.expiration : m), l.date);
+    const awaiting = !b && (coverageEnd === null || lastDay > coverageEnd);
     const flags: string[] = [];
     if (cat === "stop" && l.closeTime && minutesET(l.closeTime) >= LATE_STOP_MIN) flags.push("Stop filled ≥ 15:55 ET");
     if ((entrySlip ?? 0) >= BIG_MISS) flags.push("Entry ≥ $1.00 worse than backtest");
@@ -344,7 +451,7 @@ export function scoreTrades(live: LiveTrade[], backtest: BacktestTrade[], since:
     });
   }
   for (const b of bt) {
-    if (usedB.has(b.key) || (coverageEnd !== null && b.date > coverageEnd)) continue;
+    if (usedB.has(b.key) || b.date < missedFrom || (coverageEnd !== null && b.date > coverageEnd)) continue;
     out.push({
       id: `B${b.key}`,
       date: b.date,
@@ -417,8 +524,28 @@ export interface Aggregate {
   extra: number;
   maxMissedExtraInMonth: number;
   feePerSide: number | null;
+  /** Live fees minus fees at the assumed rate ($; + = paid more than assumed). */
+  feeExcess: number;
+  contractSides: number;
+  /** Rolling stop-rate window (last ≤ 20 closed trades). */
+  stopWindow: number;
+  stopWindowStops: number;
   flaggedFills: number;
-  lights: { slippage: Light; stopRate: Light; missedExtra: Light; gap: Light };
+  lights: { slippage: Light; fees: Light; stopRate: Light; missedExtra: Light; gap: Light };
+}
+
+export const FEE_YELLOW = 1.05;
+export const FEE_RED = 1.25;
+
+function feeLight(perSide: number | null): Light {
+  if (perSide === null) return "none";
+  const r = perSide / ASSUMPTIONS.feePerSide;
+  return r <= FEE_YELLOW ? "green" : r <= FEE_RED ? "yellow" : "red";
+}
+
+function stopLightFor(rate: number | null, expected: number | null): Light {
+  if (rate === null || !expected) return "none";
+  return rate > 2 * expected ? "red" : rate > 1.5 * expected ? "yellow" : "green";
 }
 
 export const MIN_TRADES_TO_JUDGE = 10;
@@ -466,11 +593,8 @@ export function aggregate(name: string, trades: ScoreTrade[], expectedFor: (stra
   const flaggedFills = trades.filter((t) => t.flags.some((f) => f.startsWith("Stop filled") || f.includes("$1.00 worse"))).length;
 
   const stopRateRolling20 = last20.length ? last20.filter((t) => t.category === "stop").length / last20.length : null;
-  let stopLight: Light = "none";
-  if (closed.length < MIN_TRADES_TO_JUDGE) stopLight = closed.length ? "few" : "none";
-  else if (expectedStopRate && stopRateRolling20 !== null) {
-    stopLight = stopRateRolling20 > 2 * expectedStopRate ? "red" : stopRateRolling20 > 1.5 * expectedStopRate ? "yellow" : "green";
-  }
+  const stopLight: Light =
+    closed.length < MIN_TRADES_TO_JUDGE ? (closed.length ? "few" : "none") : stopLightFor(stopRateRolling20, expectedStopRate);
   const gapPct = btPl ? ((livePl - btPl) / Math.abs(btPl)) * 100 : null;
   let gapLight: Light = "none";
   if (matchedClosed.length < MIN_TRADES_TO_JUDGE) gapLight = matchedClosed.length ? "few" : "none";
@@ -501,9 +625,14 @@ export function aggregate(name: string, trades: ScoreTrade[], expectedFor: (stra
     extra,
     maxMissedExtraInMonth,
     feePerSide: sides ? round4(fees / sides) : null,
+    feeExcess: round2(fees - ASSUMPTIONS.feePerSide * sides),
+    contractSides: sides,
+    stopWindow: last20.length,
+    stopWindowStops: last20.filter((t) => t.category === "stop").length,
     flaggedFills,
     lights: {
       slippage: flaggedFills > 0 ? "red" : slippage,
+      fees: feeLight(sides ? fees / sides : null),
       stopRate: stopLight,
       missedExtra:
         trades.filter((t) => t.status !== "awaiting").length === 0
@@ -523,26 +652,45 @@ export interface Scorecard {
   inception: string;
   monthStart: string;
   coverageEnd: string | null;
+  /** First day with any Schwab fill (missed entries are only counted from here). */
+  firstLiveDay: string | null;
   trades: ScoreTrade[];
-  periods: Record<"mtd" | "inception", { book: Aggregate; strategies: Aggregate[] }>;
+  periods: Record<"mtd" | "inception", { book: Aggregate; strategies: Aggregate[]; qualifyingForStops: string[] }>;
 }
 
 export function buildScorecard(fills: Fill[], ooTrades: OOTrade[], inception: string, now = Date.now()): Scorecard {
   const backtest = ooTrades.map(toBacktest).filter((b) => b !== null);
   const coverageEnd = backtest.length ? backtest.reduce((m, b) => (b.date > m ? b.date : m), "") : null;
-  const trades = scoreTrades(buildLiveTrades(fills, inception), backtest, inception, coverageEnd);
+  const live = buildLiveTrades(fills, inception);
+  const firstLiveDay = live.length ? live[0].date : null;
+  const trades = scoreTrades(live, backtest, inception, coverageEnd, firstLiveDay ?? inception);
   const today = todayET(now);
   const monthStart = today.slice(0, 8) + "01" > inception ? today.slice(0, 8) + "01" : inception;
   const expectedFor = (s: string) => EXPECTED[s];
   const period = (from: string) => {
     const ts = trades.filter((t) => t.date >= from);
     const names = [...STRATEGIES, ...new Set(ts.map((t) => t.strategy).filter((s) => !EXPECTED[s]))];
-    return {
-      book: aggregate("Book", ts, expectedFor),
-      strategies: names.map((n) => aggregate(n, ts.filter((t) => t.strategy === n), expectedFor)),
-    };
+    const strategies = names.map((n) => aggregate(n, ts.filter((t) => t.strategy === n), expectedFor));
+    const book = aggregate("Book", ts, expectedFor);
+    // Book stop rate: only strategies with enough trades, expected rate weighted by their trades.
+    const qualifying = strategies.filter((a) => a.closedTrades >= MIN_TRADES_TO_JUDGE && a.expectedStopRate !== null);
+    const n = qualifying.reduce((s, a) => s + a.stopWindow, 0);
+    book.stopWindow = n;
+    book.stopWindowStops = qualifying.reduce((s, a) => s + a.stopWindowStops, 0);
+    book.stopRateRolling20 = n ? book.stopWindowStops / n : null;
+    book.expectedStopRate = n ? qualifying.reduce((s, a) => s + a.expectedStopRate! * a.stopWindow, 0) / n : null;
+    book.lights.stopRate = n ? stopLightFor(book.stopRateRolling20, book.expectedStopRate) : book.closedTrades ? "few" : "none";
+    return { book, strategies, qualifyingForStops: qualifying.map((a) => a.name) };
   };
-  return { asOf: now, inception, monthStart, coverageEnd, trades, periods: { mtd: period(monthStart), inception: period(inception) } };
+  return {
+    asOf: now,
+    inception,
+    firstLiveDay,
+    monthStart,
+    coverageEnd,
+    trades,
+    periods: { mtd: period(monthStart), inception: period(inception) },
+  };
 }
 
 function etTime(ms: number): string {

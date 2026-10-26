@@ -16,6 +16,7 @@ export interface Store {
   incr(key: string, expireSeconds: number): Promise<number>;
   hgetall<T>(key: string): Promise<Record<string, T>>;
   hset(key: string, field: string, value: unknown): Promise<void>;
+  hdel(key: string, ...fields: string[]): Promise<void>;
   /** Set fields only if absent; returns how many were added. */
   hsetnxMany(key: string, entries: [string, unknown][]): Promise<number>;
   hlen(key: string): Promise<number>;
@@ -49,6 +50,9 @@ class RedisStore implements Store {
   }
   async hset(key: string, field: string, value: unknown) {
     await this.r.hset(key, { [field]: value });
+  }
+  async hdel(key: string, ...fields: string[]) {
+    for (let i = 0; i < fields.length; i += 500) await this.r.hdel(key, ...fields.slice(i, i + 500));
   }
   async hsetnxMany(key: string, entries: [string, unknown][]) {
     let added = 0;
@@ -106,6 +110,10 @@ class MemoryStore implements Store {
   }
   async hset(key: string, field: string, value: unknown) {
     this.hash(key)[field] = structuredClone(value);
+  }
+  async hdel(key: string, ...fields: string[]) {
+    const h = this.hash(key);
+    for (const f of fields) delete h[f];
   }
   async hsetnxMany(key: string, entries: [string, unknown][]) {
     const h = this.hash(key);

@@ -1,15 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { money, num } from "@/components/format";
 import { Banner, StatusBar, type StatusMeta } from "@/components/StatusBar";
+import { UploadTrades } from "@/components/UploadTrades";
 import { usePoll } from "@/components/usePoll";
+import { formatDateTimeET, formatTimeET, lastSessionDate } from "@/lib/time";
 import { ASSUMPTIONS, type Aggregate, type Dist, type Light, type Scorecard, type ScoreTrade } from "@/lib/scorecard";
 
 type Data = Scorecard & {
   meta: StatusMeta;
   fetchedAt: number | null;
-  sources: { schwabFills: string | null; backtestTrades: number; backtestCoverageEnd: string | null };
+  sources: {
+    schwabFills: string | null;
+    backtestTrades: number;
+    backtestCoverageEnd: string | null;
+    backtestUploadedAt: number | null;
+    autoRefreshedAt: number | null;
+    accountLast4: string | null;
+  };
 };
 
 const LIGHTS: Record<Light, { icon: string; cls: string; label: string }> = {
@@ -47,6 +56,12 @@ function DistCell({ d }: { d: Dist }) {
   );
 }
 
+/** Dollar cost where + = live worse (cost), − = live better (saved). */
+function Cost({ v }: { v: number }) {
+  const cls = v > 0.5 ? "text-loss" : v < -0.5 ? "text-gain" : "text-ink-2";
+  return <span className={cls}>{`${v > 0.5 ? "+" : v < -0.5 ? "−" : ""}$${Math.abs(Math.round(v)).toLocaleString("en-US")}`}</span>;
+}
+
 const pct = (v: number | null, digits = 0) => (v === null ? "—" : `${(v * 100).toFixed(digits)}%`);
 const perShare = (v: number | null | undefined) => (v === null || v === undefined ? "—" : num(v));
 
@@ -62,6 +77,15 @@ export default function ScorecardPage() {
   const { data, error, loading, refresh } = usePoll<Data>("/api/scorecard");
   const [periodKey, setPeriodKey] = useState<"mtd" | "inception">("mtd");
   const [strategy, setStrategy] = useState("All");
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [showUpload, setShowUpload] = useState(false);
+  const toggle = (id: string) =>
+    setOpen((o) => {
+      const n = new Set(o);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
   const period = data?.periods[periodKey];
   const book = period?.book;
   const from = periodKey === "mtd" ? data?.monthStart : data?.inception;
@@ -102,19 +126,50 @@ export default function ScorecardPage() {
         Read-only report. The book went live {data?.inception ?? "2026-10-16"}, so samples are still small; stop-rate and P/L-gap
         lights wait for {10}+ trades per strategy.
       </Banner>
-      {data && (!data.sources.backtestCoverageEnd || data.trades.some((t) => t.status === "awaiting")) && (
-        <Banner tone="warn">
-          Backtest trade log covers through {data.sources.backtestCoverageEnd ?? "—"}. Live trades after that show as “Awaiting backtest”
-          — upload a fresh OO backtest trade log (Settings → Upload) to score them.
+      {data && data.firstLiveDay && data.firstLiveDay > data.inception && (
+        <Banner tone="info">
+          Schwab shows no fills before {data.firstLiveDay} in account ••{data.sources.accountLast4} (the only account on this login), so backtest entries before
+          then aren&apos;t counted as missed. If those days traded elsewhere they can&apos;t be scored here.
         </Banner>
       )}
+      {data && (() => {
+        const coverage = data.sources.backtestCoverageEnd;
+        const lastSession = lastSessionDate(data.asOf);
+        const stale = !coverage || coverage < lastSession;
+        const weekOld = !coverage || Date.parse(lastSession) - Date.parse(coverage) >= 7 * 86_400_000;
+        return (
+          <div className={`rounded-lg border px-3 py-2 text-sm ${stale ? (weekOld ? "border-loss/40 bg-loss/10" : "border-warn/40 bg-warn/10") : "border-border bg-surface-2"}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={stale ? (weekOld ? "text-loss" : "text-warn") : "text-ink-2"}>
+                {stale ? (weekOld ? "■" : "▲") : "●"} Backtest log covers through <strong>{coverage ?? "—"}</strong>
+                {stale ? ` — last session was ${lastSession}; trades after ${coverage ?? "—"} show as “Awaiting backtest”.` : " — up to date."}
+              </span>
+              <span className="text-xs text-muted">
+                {data.sources.backtestUploadedAt ? `Last upload ${formatDateTimeET(data.sources.backtestUploadedAt)}.` : ""}{" "}
+                {data.sources.autoRefreshedAt
+                  ? `Auto-refreshed from OO ${formatDateTimeET(data.sources.autoRefreshedAt)}.`
+                  : "Upload a fresh OO portfolio trade log at least weekly."}
+              </span>
+              <button onClick={() => setShowUpload((v) => !v)} className="ml-auto rounded-lg border border-border px-3 py-1 text-ink hover:bg-surface-2">
+                {showUpload ? "Hide upload" : "Upload trade log"}
+              </button>
+            </div>
+            {showUpload && (
+              <div className="mt-2">
+                <UploadTrades compact onDone={refresh} />
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {book && (
-        <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
           <div className="rounded-2xl border border-border bg-surface p-4">
             <div className="text-sm text-ink-2">Slippage cost ({periodKey === "mtd" ? "MTD" : "since inception"})</div>
-            <div className={`mt-1 text-2xl font-bold ${book.slippageCost > 0 ? "text-loss" : "text-gain"}`}>
-              {money(-book.slippageCost, { sign: true })}
+            <div className="mt-1 text-2xl font-bold">
+              <Cost v={book.slippageCost} />
+              <span className="ml-1 text-xs font-normal text-muted">{book.slippageCost < -0.5 ? "saved" : "+ = cost"}</span>
             </div>
             <div className="mt-1 text-sm text-ink-2">
               {book.slippagePctOfBt === null || book.btPl <= 0
@@ -124,8 +179,15 @@ export default function ScorecardPage() {
           </div>
           {(
             [
-              ["Slippage", book.lights.slippage, book.flaggedFills ? `${book.flaggedFills} flagged fill(s)` : `entry avg ${book.entry.mean === null ? "—" : money(book.entry.mean, { cents: true, sign: true })}/ct`],
-              ["Stop rate (last 20)", book.lights.stopRate, `${pct(book.stopRateRolling20)} vs ~${pct(book.expectedStopRate)} expected`],
+              ["Slippage", book.lights.slippage, book.flaggedFills ? `${book.flaggedFills} flagged fill(s)` : `entry avg ${book.entry.mean === null ? "—" : `${book.entry.mean > 0 ? "+" : book.entry.mean < 0 ? "−" : ""}$${Math.abs(book.entry.mean).toFixed(2)}`}/ct (+ = live worse)`],
+              ["Fees", book.lights.fees, book.feePerSide === null ? "—" : `$${book.feePerSide.toFixed(2)} vs $${ASSUMPTIONS.feePerSide.toFixed(2)}/side · ${book.feeExcess >= 0 ? "+" : "−"}$${Math.abs(Math.round(book.feeExcess)).toLocaleString("en-US")}`],
+              [
+                "Stop rate (last 20)",
+                book.lights.stopRate,
+                period.qualifyingForStops.length
+                  ? `${pct(book.stopRateRolling20)} vs ${pct(book.expectedStopRate)} expected (${period.qualifyingForStops.join(", ")})`
+                  : "needs 10+ trades in a strategy",
+              ],
               ["Missed / extra", book.lights.missedExtra, `${book.missed} missed · ${book.extra} extra`],
               ["Live vs backtest P/L", book.lights.gap, book.gapPct === null ? "—" : `${book.gapPct > 0 ? "+" : ""}${book.gapPct.toFixed(1)}%`],
             ] as const
@@ -145,7 +207,8 @@ export default function ScorecardPage() {
         <section>
           <h2 className="mb-1 text-lg font-bold text-accent">By strategy</h2>
           <p className="mb-2 text-xs text-muted">
-            Slippage in $/contract as mean · median · worst 5%. Positive = live worse than backtest.
+            Slippage in $/contract as mean · median · worst 5%. <strong>+ = live worse</strong> than backtest, − = better. Stop-rate and P/L
+            lights need {10}+ trades in the strategy.
           </p>
           <div className="card overflow-x-auto">
             <table className="data w-full text-sm">
@@ -153,18 +216,20 @@ export default function ScorecardPage() {
                 <tr>
                   <th>Strategy</th>
                   <th>Trades</th>
-                  <th>Entry slip</th>
-                  <th>Normal exit slip</th>
-                  <th>Stop slip</th>
-                  <th>Slip cost</th>
+                  <th>Entry slip (+ worse)</th>
+                  <th>Normal exit slip (+ worse)</th>
+                  <th>Stop slip (+ worse)</th>
+                  <th>Slip cost (+ = cost)</th>
                   <th>Stop rate (20)</th>
                   <th title="All closed live trades">Live $/ct</th>
                   <th>Expected $/ct</th>
                   <th title="Same-day matched trades only">Matched: live / bt $/ct</th>
                   <th>P/L gap</th>
                   <th>Missed / extra</th>
-                  <th>Fees $/side</th>
+                  <th>Fees $/side vs ${ASSUMPTIONS.feePerSide.toFixed(2)}</th>
+                  <th>Fee excess</th>
                   <th>Slip</th>
+                  <th>Fees</th>
                   <th>Stops</th>
                   <th>Entries</th>
                   <th>Gap</th>
@@ -186,11 +251,15 @@ export default function ScorecardPage() {
                     <td><DistCell d={a.normalExit} /></td>
                     <td><DistCell d={a.stop} /></td>
                     <td>
-                      <span className={a.slippageCost > 0 ? "text-loss" : a.slippageCost < 0 ? "text-gain" : "text-ink-2"}>{money(-a.slippageCost, { sign: true })}</span>
+                      <Cost v={a.slippageCost} />
                       {a.slippagePctOfBt !== null && <span className="text-xs text-muted"> {a.slippagePctOfBt.toFixed(1)}%</span>}
                     </td>
                     <td>
-                      {pct(a.stopRateRolling20)} <span className="text-xs text-muted">vs {pct(a.expectedStopRate)}</span>
+                      {pct(a.stopRateRolling20)}{" "}
+                      <span className="text-xs text-muted">
+                        vs {pct(a.expectedStopRate)}
+                        {a.stopWindow ? ` · ${a.stopWindowStops}/${a.stopWindow}` : ""}
+                      </span>
                     </td>
                     <td>{money(a.livePerCt, { cents: true, sign: true })}</td>
                     <td className="text-ink-2">{money(a.expectedPerCt, { sign: true })}</td>
@@ -205,7 +274,9 @@ export default function ScorecardPage() {
                     <td className={a.feePerSide !== null && a.feePerSide > ASSUMPTIONS.feePerSide + 0.005 ? "text-loss" : "text-ink-2"}>
                       {a.feePerSide === null ? "—" : `$${a.feePerSide.toFixed(2)}`}
                     </td>
+                    <td>{a.contractSides ? <Cost v={a.feeExcess} /> : <span className="text-muted">—</span>}</td>
                     <td><Lamp light={a.lights.slippage} title="Slippage" /></td>
+                    <td><Lamp light={a.lights.fees} title="Fees" /></td>
                     <td><Lamp light={a.lights.stopRate} title="Stop rate" /></td>
                     <td><Lamp light={a.lights.missedExtra} title="Missed/extra" /></td>
                     <td><Lamp light={a.lights.gap} title="P/L gap" /></td>
@@ -239,19 +310,21 @@ export default function ScorecardPage() {
                     <th>Strategy</th>
                     <th>Status</th>
                     <th>Entry live / bt</th>
-                    <th>Entry slip $/ct</th>
+                    <th>Entry slip $/ct (+ worse)</th>
                     <th>Exit</th>
                     <th>Exit live / bt</th>
-                    <th>Exit slip $/ct</th>
+                    <th>Exit slip $/ct (+ worse)</th>
                     <th>Fees $/side</th>
                     <th>P/L $/ct live / bt</th>
-                    <th>Diff</th>
+                    <th>Diff (+ worse)</th>
+                    <th>Exit fills</th>
                     <th>Flags</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((t) => (
-                    <tr key={t.id}>
+                    <Fragment key={t.id}>
+                    <tr>
                       <td>
                         {t.date} <span className="text-muted">{t.entryTime.slice(0, 5)}</span>
                       </td>
@@ -283,8 +356,46 @@ export default function ScorecardPage() {
                         <span className="text-muted">/ {money(t.bt?.plPerCt, { cents: true, sign: true })}</span>
                       </td>
                       <td><Slip v={t.plDiffPerCt === null ? null : -t.plDiffPerCt} /></td>
+                      <td>
+                        {t.live?.exits.length ? (
+                          <button onClick={() => toggle(t.id)} className="text-link" aria-expanded={open.has(t.id)}>
+                            {open.has(t.id) ? "▾" : "▸"} {t.live.exits.length}
+                          </button>
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
+                      </td>
                       <td className="whitespace-normal text-xs text-warn">{t.flags.join(" · ")}</td>
                     </tr>
+                    {open.has(t.id) && t.live && (
+                      <tr>
+                        <td colSpan={13} className="bg-surface-2">
+                          <div className="text-xs text-ink-2">
+                            Entry order {t.live.orderId}: {t.live.legs.map((l) => `${l.qty > 0 ? "+" : "−"}${Math.abs(l.qty)} ${l.strike}${l.putCall} @ ${l.price.toFixed(2)}`).join(" · ")}
+                          </div>
+                          <table className="mt-1 text-xs">
+                            <tbody>
+                              {t.live.exits.map((x, i) => (
+                                <tr key={i}>
+                                  <td className="pr-4 text-left">{x.via === "settlement" ? "Settlement" : formatTimeET(x.time)}</td>
+                                  <td className="pr-4 text-left">
+                                    {x.openSign < 0 ? "Buy" : "Sell"} {x.qty} {x.strike}
+                                    {x.putCall}
+                                  </td>
+                                  <td className="pr-4">@ {x.price.toFixed(2)}</td>
+                                  <td className="pr-4 text-muted">{x.via === "order" ? `order ${x.orderId}` : "expired"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <div className="mt-1 text-xs text-muted">
+                            Closed {t.live.exits.reduce((s, x) => s + x.qty, 0)} of {t.live.legs.reduce((s, l) => s + Math.abs(l.qty), 0)} contracts
+                            {t.live.debit !== null ? ` · net closing debit ${t.live.debit.toFixed(2)}/share per unit (${t.live.units} units)` : ""}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

@@ -154,7 +154,6 @@ interface Lot {
 function runFifo(
   fills: Fill[],
   onClose?: (f: Fill, matched: number, realized: number, unmatched: number) => void,
-  onMatch?: (lot: Lot, close: Fill, qty: number) => void,
 ): Map<string, Lot[]> {
   const lots = new Map<string, Lot[]>();
   for (const f of [...fills].sort((a, b) => a.time - b.time)) {
@@ -173,7 +172,6 @@ function runFifo(
     while (remaining > 0 && queue.length && Math.sign(queue[0].qty) !== Math.sign(f.qty)) {
       const lot = queue[0];
       const m = Math.min(remaining, Math.abs(lot.qty));
-      onMatch?.(lot, f, m);
       realized += (lot.cashPerUnit + closeCashPerUnit) * m;
       matched += m;
       remaining -= m;
@@ -196,24 +194,6 @@ export function realizedOn(fills: Fill[], date: string): ClosedLeg[] {
     if (matched > 0) out.push({ fill: f, closedQty: matched, realized: round2(realized) });
     if (remaining > 0) out.push({ fill: f, closedQty: remaining, realized: null });
   });
-  return out;
-}
-
-export interface LotMatch {
-  /** Order that opened the lot. */
-  openOrderId: string;
-  symbol: string;
-  /** Signed quantity of the opening side (− short, + long) that this close matched. */
-  openQty: number;
-  close: Fill;
-}
-
-/** Every FIFO pairing of a closing fill (trade or settlement) with the lot it closed. */
-export function matchLots(fills: Fill[]): LotMatch[] {
-  const out: LotMatch[] = [];
-  runFifo(fills, undefined, (lot, close, qty) =>
-    out.push({ openOrderId: lot.orderId, symbol: close.symbol, openQty: Math.sign(lot.qty) * qty, close }),
-  );
   return out;
 }
 

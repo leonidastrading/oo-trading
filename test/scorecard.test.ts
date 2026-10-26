@@ -196,3 +196,87 @@ describe("inferStrategy", () => {
     expect(rows.every((r) => r.strategyInferred && r.status === "awaiting")).toBe(true);
   });
 });
+
+describe("fixes: shared-strike exits, multi-day extras, pre-live missed, fees, stop-rate weighting", () => {
+  const D4 = "2026-10-21";
+  const S4 = (pc: "P" | "C", k: number) => sym(D4, pc, k);
+
+  it("attributes a closing order to the entry it matches, not FIFO by symbol (#7)", () => {
+    // $8 IC opened 13:35 (short 6× 7765P); BWB opened 13:50 (short 18× 7765P).
+    // The BWB's stop (14:05) buys back 18× 7765P first; the IC's own stop (15:10) closes its 4 legs.
+    const icLegs: [string, number, number][] = [[S4("P", 7765), -6, 6.62], [S4("C", 7760), -6, 6.77], [S4("P", 7715), 6, 0.27], [S4("C", 7810), 6, 0.07]];
+    const bwbLegs: [string, number, number][] = [[S4("P", 7795), 9, 29.03], [S4("P", 7765), -18, 4.35], [S4("P", 7720), 9, 0.22]];
+    const bwbStop: [string, number, number][] = [[S4("P", 7795), -9, 35], [S4("P", 7765), 18, 9], [S4("P", 7720), -9, 0.3]];
+    const icStop: [string, number, number][] = [[S4("P", 7765), 6, 20], [S4("C", 7760), 6, 10.6], [S4("P", 7715), -6, 1.5], [S4("C", 7810), -6, 0.5]];
+    const f = normalizeTransactions(
+      [
+        ...order(401, "2026-10-21T17:35:12+0000", icLegs, "OPENING"),
+        ...order(402, "2026-10-21T17:50:10+0000", bwbLegs, "OPENING"),
+        ...order(403, "2026-10-21T18:05:00+0000", bwbStop, "CLOSING"),
+        ...order(404, "2026-10-21T19:10:00+0000", icStop, "CLOSING"),
+      ],
+      0.88,
+    );
+    const [ic, bwb] = buildLiveTrades(f, D4);
+    expect(ic.orderId).toBe("401");
+    expect(new Set(ic.exits.map((x) => x.orderId))).toEqual(new Set(["404"]));
+    expect(ic.exits.reduce((s, x) => s + x.qty, 0)).toBe(24); // all 4 legs, full quantity
+    expect(ic.debit).toBeCloseTo(20 + 10.6 - 1.5 - 0.5, 4);
+    expect(new Set(bwb.exits.map((x) => x.orderId))).toEqual(new Set(["403"]));
+  });
+
+  it("does not flag a multi-day trade as extra before the log covers its expiration (#3)", () => {
+    const t = normalizeTransactions(
+      order(501, "2026-10-19T19:30:04+0000", [[sym("2026-10-21", "P", 7585), -11, 5.2], [sym("2026-10-21", "P", 7510), 11, 2.3]], "OPENING"),
+      0.88,
+    );
+    const [row] = scoreTrades(buildLiveTrades(t, "2026-10-19"), [], "2026-10-19", "2026-10-19");
+    expect(row.status).toBe("awaiting");
+    const [later] = scoreTrades(buildLiveTrades(t, "2026-10-19"), [], "2026-10-19", "2026-10-21");
+    expect(later.status).toBe("extra");
+  });
+
+  it("only counts missed entries from the first day with Schwab fills (#2)", () => {
+    const lateFills = normalizeTransactions(order(601, "2026-10-19T17:30:02+0000", ic(7600, 7700, 7500, 7800, [1, 1, 0.2, 0.2]).map(([s, q, p]) => [s.replace("261016", "261019"), q, p]), "OPENING"), 0.88);
+    const sc = buildScorecard(lateFills, backtest, "2026-10-16", Date.parse("2026-10-25T15:00:00Z"));
+    expect(sc.firstLiveDay).toBe("2026-10-19");
+    expect(sc.trades.filter((t) => t.status === "missed")).toHaveLength(0);
+  });
+
+  it("lights fees against $0.88/side and reports the $ excess (#4)", () => {
+    const a = aggregate("5d IC", scoreTrades(buildLiveTrades(fills, D), backtest.map((b) => toBacktest(b)!), D, D), (s) => EXPECTED[s]);
+    expect(a.feePerSide).toBeCloseTo(1.13, 4);
+    expect(a.lights.fees).toBe("red"); // +28%
+    expect(a.feeExcess).toBeCloseTo((1.13 - 0.88) * 144, 2); // 2 ICs × 4 legs × 18 contracts, opening side only
+  });
+
+  it("book stop rate uses only strategies with 10+ trades, trade-weighted (#5)", () => {
+    // 12 expired 5d ICs (0 stops) + 3 Long trades stopped: Long has too few trades to count.
+    const days = Array.from({ length: 12 }, (_, i) => `2026-10-${String(1 + i).padStart(2, "0")}`);
+    const tx: SchwabTransaction[] = [];
+    const bts: OOTrade[] = [];
+    days.forEach((d, i) => {
+      const legs: [string, number, number][] = [[sym(d, "P", 7600), -1, 0.6], [sym(d, "C", 7700), -1, 0.5], [sym(d, "P", 7500), 1, 0.05], [sym(d, "C", 7800), 1, 0.05]];
+      tx.push(...order(700 + i, `${d}T17:30:00+0000`, legs, "OPENING"));
+      tx.push(...settle(`${d}T21:00:00+0000`, legs.map(([s, q]) => [s, -q, 0])));
+      const md = `Oct ${Number(d.slice(8))}`;
+      bts.push(bt({ dateOpened: d, timeOpened: "13:30:00", premium: 100, pl: 100, contracts: 1,
+        legs: `1 ${md} 7600 P STO 0.6 | 1 ${md} 7700 C STO 0.5 | 1 ${md} 7500 P BTO 0.05 | 1 ${md} 7800 C BTO 0.05` }));
+    });
+    days.slice(0, 3).forEach((d, i) => {
+      const legs: [string, number, number][] = [[sym(d, "P", 7700), -1, 6], [sym(d, "P", 7600), 1, 0.3]];
+      tx.push(...order(800 + i, `${d}T15:00:00+0000`, legs, "OPENING"));
+      tx.push(...order(900 + i, `${d}T17:00:00+0000`, [[legs[0][0], 1, 15], [legs[1][0], -1, 1]], "CLOSING"));
+      const md = `Oct ${Number(d.slice(8))}`;
+      bts.push(bt({ strategy: "! SPX 0 DTE - Long (sell puts) +costs", dateOpened: d, timeOpened: "11:00:00", premium: 570, pl: -900, contracts: 1,
+        reason: "Stop Loss", legs: `1 ${md} 7700 P STO 6 | 1 ${md} 7600 P BTO 0.3` }));
+    });
+    const sc = buildScorecard(normalizeTransactions(tx, 0.88), bts, "2026-10-01", Date.parse("2026-10-20T15:00:00Z"));
+    const p = sc.periods.inception;
+    expect(p.qualifyingForStops).toEqual(["5d IC"]);
+    expect(p.book.stopRateRolling20).toBe(0);
+    expect(p.book.expectedStopRate).toBeCloseTo(0.11, 6);
+    expect(p.book.lights.stopRate).toBe("green");
+    expect(p.strategies.find((s) => s.name === "Long")!.lights.stopRate).toBe("few");
+  });
+});

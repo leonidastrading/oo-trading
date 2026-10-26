@@ -5,7 +5,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { isAllowedEmail } from "@/lib/allowed";
 import { sessionsValidAfter } from "@/lib/sessionEpoch";
 
-const PUBLIC_PREFIXES = ["/login", "/api/auth/", "/api/cron/"];
+// /api/ingest/ checks its own bearer token (write-only backtest refresh).
+const PUBLIC_PREFIXES = ["/login", "/api/auth/", "/api/cron/", "/api/ingest/"];
 
 export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;

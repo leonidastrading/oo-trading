@@ -21,11 +21,12 @@ export async function GET(req: NextRequest) {
   const wantsForce = req.nextUrl.searchParams.get("force") === "1";
   const force = wantsForce && (await takeManualRefresh("scorecard", MANUAL_REFRESH_MIN_MS));
   const token = await tokenStatus();
-  const [fills, oo] = await Promise.all([
+  const [fills, oo, ooMeta] = await Promise.all([
     token.connected
       ? cachedFillsSince(inception(), session.phase === "closed" ? 6 * 3600_000 : 5 * 60_000, force)
       : Promise.resolve({ fills: null, fetchedAt: null, errors: [token.lastError ?? "Schwab is not connected"], windows: [] }),
     kv().hgetall<OOTrade>(KEYS.ooTrades),
+    kv().get<{ updatedAt?: number; autoRefreshedAt?: number }>(KEYS.ooMeta),
   ]);
   errors.push(...fills.errors);
   const ooTrades = Object.values(oo);
@@ -46,6 +47,9 @@ export async function GET(req: NextRequest) {
         schwabWindows: fills.windows,
         backtestTrades: ooTrades.length,
         backtestCoverageEnd: sc.coverageEnd,
+        backtestUploadedAt: ooMeta?.updatedAt ?? null,
+        autoRefreshedAt: ooMeta?.autoRefreshedAt ?? null,
+        accountLast4: process.env.SCHWAB_ACCOUNT_LAST4 ?? null,
         fillsByDay: Object.entries(
           (fills.fills ?? []).reduce<Record<string, Record<string, number>>>((m, f) => {
             const day = (m[f.bookDate] ??= {});
