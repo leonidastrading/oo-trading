@@ -5,7 +5,7 @@ import { KEYS, kv } from "@/lib/kv";
 import type { OOTrade } from "@/lib/ooCsv";
 import { cachedFillsSince } from "@/lib/schwab/data";
 import { tokenStatus } from "@/lib/schwab/tokens";
-import { buildScorecard } from "@/lib/scorecard";
+import { buildScorecard, type Annotation } from "@/lib/scorecard";
 import { MANUAL_REFRESH_MIN_MS, marketSession } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
@@ -21,16 +21,17 @@ export async function GET(req: NextRequest) {
   const wantsForce = req.nextUrl.searchParams.get("force") === "1";
   const force = wantsForce && (await takeManualRefresh("scorecard", MANUAL_REFRESH_MIN_MS));
   const token = await tokenStatus();
-  const [fills, oo, ooMeta] = await Promise.all([
+  const [fills, oo, ooMeta, annotations] = await Promise.all([
     token.connected
       ? cachedFillsSince(inception(), session.phase === "closed" ? 6 * 3600_000 : 5 * 60_000, force)
       : Promise.resolve({ fills: null, fetchedAt: null, errors: [token.lastError ?? "Schwab is not connected"], windows: [] }),
     kv().hgetall<OOTrade>(KEYS.ooTrades),
     kv().get<{ updatedAt?: number; autoRefreshedAt?: number }>(KEYS.ooMeta),
+    kv().hgetall<Annotation>(KEYS.annotations),
   ]);
   errors.push(...fills.errors);
   const ooTrades = Object.values(oo);
-  const sc = buildScorecard(fills.fills ?? [], ooTrades, inception());
+  const sc = buildScorecard(fills.fills ?? [], ooTrades, inception(), Date.now(), annotations);
   return NextResponse.json(
     {
       meta: {

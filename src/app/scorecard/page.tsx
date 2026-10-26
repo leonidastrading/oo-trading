@@ -6,7 +6,7 @@ import { Banner, StatusBar, type StatusMeta } from "@/components/StatusBar";
 import { UploadTrades } from "@/components/UploadTrades";
 import { usePoll } from "@/components/usePoll";
 import { formatDateTimeET, formatTimeET, lastSessionDate } from "@/lib/time";
-import { ASSUMPTIONS, type Aggregate, type Dist, type Light, type Scorecard, type ScoreTrade } from "@/lib/scorecard";
+import { ASSUMPTIONS, STRATEGIES, type Aggregate, type Dist, type Light, type Scorecard, type ScoreTrade } from "@/lib/scorecard";
 
 type Data = Scorecard & {
   meta: StatusMeta;
@@ -73,12 +73,61 @@ const STATUS: Record<ScoreTrade["status"], { label: string; cls: string }> = {
   awaiting: { label: "Awaiting backtest", cls: "text-muted" },
 };
 
+function ManualControl({
+  trade,
+  busy,
+  onMark,
+  onUnmark,
+}: {
+  trade: ScoreTrade;
+  busy: boolean;
+  onMark: (strategy: string) => void;
+  onUnmark: () => void;
+}) {
+  const [choice, setChoice] = useState(STRATEGIES.includes(trade.strategy) ? trade.strategy : STRATEGIES[0]);
+  if (trade.manual) {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-link">Manual entry for {trade.strategy}</span>
+        <span className="text-muted">matched to that day&apos;s backtest trade regardless of time; excluded from slippage stats.</span>
+        <button disabled={busy} onClick={onUnmark} className="rounded border border-border px-2 py-0.5 text-ink hover:bg-surface disabled:opacity-50">
+          Remove manual mark
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+      <span className="text-ink-2">Entered by hand?</span>
+      <select value={choice} onChange={(e) => setChoice(e.target.value)} className="rounded border border-border bg-surface px-1 py-0.5 text-ink">
+        {STRATEGIES.map((s) => (
+          <option key={s}>{s}</option>
+        ))}
+      </select>
+      <button disabled={busy} onClick={() => onMark(choice)} className="rounded border border-border px-2 py-0.5 text-ink hover:bg-surface disabled:opacity-50">
+        Mark as manual entry
+      </button>
+    </div>
+  );
+}
+
 export default function ScorecardPage() {
   const { data, error, loading, refresh } = usePoll<Data>("/api/scorecard");
   const [periodKey, setPeriodKey] = useState<"mtd" | "inception">("mtd");
   const [strategy, setStrategy] = useState("All");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [showUpload, setShowUpload] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
+  async function markManual(orderId: string, manual: boolean, strategyName?: string) {
+    setSaving(orderId);
+    await fetch("/api/scorecard/annotate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderId, manual, strategy: strategyName }),
+    }).catch(() => {});
+    setSaving(null);
+    refresh();
+  }
   const toggle = (id: string) =>
     setOpen((o) => {
       const n = new Set(o);
@@ -188,7 +237,7 @@ export default function ScorecardPage() {
                   ? `${pct(book.stopRateRolling20)} vs ${pct(book.expectedStopRate)} expected (${period.qualifyingForStops.join(", ")})`
                   : "needs 10+ trades in a strategy",
               ],
-              ["Missed / extra", book.lights.missedExtra, `${book.missed} missed · ${book.extra} extra`],
+              ["Missed / extra", book.lights.missedExtra, `${book.missed} missed · ${book.extra} extra${book.manual ? ` · ${book.manual} manual` : ""}`],
               ["Live vs backtest P/L", book.lights.gap, book.gapPct === null ? "—" : `${book.gapPct > 0 ? "+" : ""}${book.gapPct.toFixed(1)}%`],
             ] as const
           ).map(([label, light, sub]) => (
@@ -270,6 +319,7 @@ export default function ScorecardPage() {
                     <td>{a.gapPct === null ? "—" : `${a.gapPct > 0 ? "+" : ""}${a.gapPct.toFixed(1)}%`}</td>
                     <td>
                       {a.missed} / {a.extra}
+                      {a.manual ? <span className="text-xs text-muted"> · {a.manual} manual</span> : null}
                     </td>
                     <td className={a.feePerSide !== null && a.feePerSide > ASSUMPTIONS.feePerSide + 0.005 ? "text-loss" : "text-ink-2"}>
                       {a.feePerSide === null ? "—" : `$${a.feePerSide.toFixed(2)}`}
@@ -334,8 +384,9 @@ export default function ScorecardPage() {
                         {t.strategyInferred && <span className="text-xs text-muted"> (inferred)</span>}
                       </td>
                       <td className={STATUS[t.status].cls}>
+                        {t.manual && <span className="mr-1 rounded bg-link/20 px-1.5 py-0.5 text-xs text-link">Manual</span>}
                         {t.live?.status === "open" ? "Open · " : ""}
-                        {STATUS[t.status].label}
+                        {t.manual && t.status === "extra" ? "No backtest twin" : STATUS[t.status].label}
                       </td>
                       <td>
                         {perShare(t.live?.credit)} <span className="text-muted">/ {perShare(t.bt?.credit)}</span>
@@ -358,9 +409,9 @@ export default function ScorecardPage() {
                       </td>
                       <td><Slip v={t.plDiffPerCt === null ? null : -t.plDiffPerCt} /></td>
                       <td>
-                        {t.live?.exits.length ? (
+                        {t.live ? (
                           <button onClick={() => toggle(t.id)} className="text-link" aria-expanded={open.has(t.id)}>
-                            {open.has(t.id) ? "▾" : "▸"} {t.live.exits.length}
+                            {open.has(t.id) ? "▾" : "▸"} {t.live.exits.length || "details"}
                           </button>
                         ) : (
                           <span className="text-muted">—</span>
@@ -389,6 +440,12 @@ export default function ScorecardPage() {
                               ))}
                             </tbody>
                           </table>
+                          <ManualControl
+                            trade={t}
+                            busy={saving === t.live.orderId}
+                            onMark={(s) => markManual(t.live!.orderId, true, s)}
+                            onUnmark={() => markManual(t.live!.orderId, false)}
+                          />
                           <div className="mt-1 text-xs text-muted">
                             Closed {t.live.exits.reduce((s, x) => s + x.qty, 0)} of {t.live.legs.reduce((s, l) => s + Math.abs(l.qty), 0)} contracts
                             {t.live.debit !== null ? ` · net closing debit ${t.live.debit.toFixed(2)}/share per unit (${t.live.units} units)` : ""}
@@ -418,6 +475,8 @@ export default function ScorecardPage() {
           backtest price: $0 means “exactly as assumed”. Lights: green ≤ assumption, yellow ≤ 1.5×, red above that or any flagged fill.
         </p>
         <p>
+          Manual entries (marked in a trade&apos;s details) are matched to that day&apos;s backtest trade of the chosen strategy whatever the
+          entry time, count in P/L and stop rate, and are left out of slippage stats and missed/extra.
           Live trades = Schwab opening orders (all legs of one order). Each closing order is credited to the entry whose open legs it
           matches (expand “Exit fills” to check); expirations use Schwab&apos;s posted settlement. Matching = same day, same structure
           (types, sides, ratios, DTE), nearest entry time within 15 min, then closest strikes and contract count. Backtest closing

@@ -171,5 +171,6 @@ export const KEYS = {
   manual: (name: string) => `manual:${name}`,
   ooTrades: "oo:trades",
   ooMeta: "oo:meta",
+  annotations: "scorecard:annotations",
   eod: "eod:snapshots",
 } as const;

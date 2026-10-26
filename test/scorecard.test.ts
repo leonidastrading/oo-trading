@@ -305,3 +305,35 @@ describe("tie-break by size", () => {
     expect(rows.find((r) => r.status === "missed")!.rawStrategy).toContain("Dip");
   });
 });
+
+describe("manual entries", () => {
+  const D6 = "2026-10-26";
+  // Bot missed the 11:00 Long entry; user sold the spread by hand at 12:24 for a better credit.
+  const live = buildLiveTrades(
+    normalizeTransactions(order(1, "2026-10-26T16:24:33+0000", [[sym(D6, "P", 7670), -33, 3.7], [sym(D6, "P", 7570), 33, 0.15]], "OPENING"), 0.88),
+    D6,
+  );
+  const btLong = toBacktest(bt({ strategy: "! SPX 0 DTE - Long (sell puts) +costs", dateOpened: D6, timeOpened: "11:00:00", premium: 320, pl: 300 * 30, contracts: 30,
+    legs: "30 Oct 26 7680 P STO 3.50 | 30 Oct 26 7580 P BTO 0.25" }))!;
+  const book = new Set(Object.keys(EXPECTED));
+
+  it("without a mark: an extra live trade and a missed backtest entry", () => {
+    const rows = scoreTrades(live, [btLong], D6, D6, D6, book);
+    expect(rows.map((r) => r.status).sort()).toEqual(["extra", "missed"]);
+  });
+
+  it("marked manual: matched to the strategy's backtest trade, price difference shown, kept out of slippage and missed/extra", () => {
+    const rows = scoreTrades(live, [btLong], D6, D6, D6, book, { "1": { manual: true, strategy: "Long", at: 0 } });
+    expect(rows).toHaveLength(1);
+    const [r] = rows;
+    expect(r.status).toBe("matched");
+    expect(r.manual).toBe(true);
+    expect(r.strategy).toBe("Long");
+    expect(r.entrySlip).toBeCloseTo(3.2 - 3.55, 4); // live got $0.35 more credit
+    expect(r.flags).toEqual(["Manual entry"]);
+    const a = aggregate("Long", rows, (s) => EXPECTED[s]);
+    expect(a.entry.n).toBe(0);
+    expect(a.slippageCost).toBe(0);
+    expect([a.missed, a.extra, a.manual]).toEqual([0, 0, 1]);
+  });
+});

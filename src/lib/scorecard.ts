@@ -342,6 +342,16 @@ export function inferStrategy(l: LiveTrade, profiles: Map<string, Profile>): str
   return best?.s ?? null;
 }
 
+/** User annotation on a live entry (keyed by Schwab opening orderId). */
+export interface Annotation {
+  /** Entered by hand (e.g. after the bot missed); matched by strategy, not entry time. */
+  manual: boolean;
+  /** Book strategy the entry belongs to. */
+  strategy: string;
+  note?: string;
+  at: number;
+}
+
 export type Category = "expired" | "profit" | "time" | "stop" | "other";
 
 export interface ScoreTrade {
@@ -351,6 +361,8 @@ export interface ScoreTrade {
   strategy: string;
   /** True when the strategy was inferred (no same-day backtest twin). */
   strategyInferred: boolean;
+  /** Marked as a manual entry: shown and counted in P/L, kept out of slippage stats and missed/extra. */
+  manual: boolean;
   rawStrategy: string | null;
   status: "matched" | "extra" | "missed" | "awaiting";
   live: LiveTrade | null;
@@ -392,6 +404,7 @@ export function scoreTrades(
   missedFrom: string = since,
   /** Strategies the live book runs; backtest-only trades of other strategies aren't "missed". */
   book?: Set<string>,
+  annotations: Record<string, Annotation> = {},
 ): ScoreTrade[] {
   const bt = backtest.filter((b) => b.date >= since);
   const profiles = buildProfiles(backtest);
@@ -399,14 +412,17 @@ export function scoreTrades(
   for (const l of live) {
     for (const b of bt) {
       if (b.date !== l.date || b.signature !== l.signature) continue;
+      const manual = annotations[l.orderId]?.manual ? annotations[l.orderId] : null;
+      if (manual && b.strategy !== manual.strategy) continue;
       const dt = Math.abs(minutesET(l.time) - hhmmToMin(b.time));
-      if (dt > MAX_MATCH_MINUTES) continue;
+      // A manual entry is matched to its strategy's backtest trade whatever the entry time.
+      if (!manual && dt > MAX_MATCH_MINUTES) continue;
       const ls = sortLegs(l.legs);
       const bs = sortLegs(b.legs);
       const strikeDist = ls.reduce((s, x, i) => s + Math.abs(x.strike - bs[i].strike), 0) / ls.length;
       // Tie-break identical setups (e.g. $8 IC vs its 1-lot Dip add-on) by closest contract count.
       const sizeGap = Math.abs(Math.log(l.units / b.units));
-      pairs.push({ l, b, score: dt + strikeDist / 10 + sizeGap / 2 });
+      pairs.push({ l, b, score: (manual ? 0 : dt) + strikeDist / 10 + sizeGap / 2 });
     }
   }
   pairs.sort((a, b) => a.score - b.score);
@@ -434,14 +450,18 @@ export function scoreTrades(
     if (cat === "stop" && l.closeTime && minutesET(l.closeTime) >= LATE_STOP_MIN) flags.push("Stop filled ≥ 15:55 ET");
     if ((entrySlip ?? 0) >= BIG_MISS) flags.push("Entry ≥ $1.00 worse than backtest");
     if ((exitSlip ?? 0) >= BIG_MISS) flags.push("Exit ≥ $1.00 worse than backtest");
-    if (!b && !awaiting) flags.push("Extra entry (live only)");
-    const inferredStrategy = b ? null : inferStrategy(l, profiles);
+    const ann = annotations[l.orderId];
+    const manual = !!ann?.manual;
+    if (manual) flags.push("Manual entry");
+    else if (!b && !awaiting) flags.push("Extra entry (live only)");
+    const inferredStrategy = b || ann ? null : inferStrategy(l, profiles);
     out.push({
       id: `L${l.orderId}`,
       date: l.date,
       entryTime: etTime(l.time),
-      strategy: b?.strategy ?? inferredStrategy ?? "Unmatched",
-      strategyInferred: !b && inferredStrategy !== null,
+      strategy: b?.strategy ?? ann?.strategy ?? inferredStrategy ?? "Unmatched",
+      strategyInferred: !b && !ann && inferredStrategy !== null,
+      manual,
       rawStrategy: b?.rawStrategy ?? null,
       status: b ? "matched" : awaiting ? "awaiting" : "extra",
       live: l,
@@ -464,6 +484,7 @@ export function scoreTrades(
       entryTime: b.time,
       strategy: b.strategy,
       strategyInferred: false,
+      manual: false,
       rawStrategy: b.rawStrategy,
       status: "missed",
       live: null,
@@ -528,6 +549,8 @@ export interface Aggregate {
   gapPct: number | null;
   missed: number;
   extra: number;
+  /** Manual entries (not counted as missed/extra; excluded from slippage stats). */
+  manual: number;
   maxMissedExtraInMonth: number;
   feePerSide: number | null;
   /** Live fees minus fees at the assumed rate ($; + = paid more than assumed). */
@@ -575,11 +598,14 @@ export function aggregate(name: string, trades: ScoreTrade[], expectedFor: (stra
   const closed = live.filter((t) => t.live!.status === "closed");
   const matched = trades.filter((t) => t.status === "matched");
   const matchedClosed = matched.filter((t) => t.live!.status === "closed");
-  const entry = dist(matched.map((t) => t.entrySlip!));
-  const normalExit = dist(matchedClosed.filter((t) => t.category === "profit" || t.category === "time").map((t) => t.exitSlip!));
-  const stop = dist(matchedClosed.filter((t) => t.category === "stop").map((t) => t.exitSlip!));
+  // Fill quality only: manual entries were placed at a different time than the backtest.
+  const auto = matched.filter((t) => !t.manual);
+  const autoClosed = auto.filter((t) => t.live!.status === "closed");
+  const entry = dist(auto.map((t) => t.entrySlip!));
+  const normalExit = dist(autoClosed.filter((t) => t.category === "profit" || t.category === "time").map((t) => t.exitSlip!));
+  const stop = dist(autoClosed.filter((t) => t.category === "stop").map((t) => t.exitSlip!));
   const units = (t: ScoreTrade) => t.live!.units;
-  const slippageCost = matched.reduce((s, t) => s + ((t.entrySlip ?? 0) + (t.exitSlip ?? 0)) * 100 * units(t), 0);
+  const slippageCost = auto.reduce((s, t) => s + ((t.entrySlip ?? 0) + (t.exitSlip ?? 0)) * 100 * units(t), 0);
   const btPl = matchedClosed.reduce((s, t) => s + t.bt!.plPerCt * units(t), 0);
   const livePl = matchedClosed.reduce((s, t) => s + t.live!.plPerCt! * units(t), 0);
   const stops = closed.filter((t) => t.category === "stop").length;
@@ -590,13 +616,14 @@ export function aggregate(name: string, trades: ScoreTrade[], expectedFor: (stra
   const expectedStopRate = own?.stopRate ?? (strategies.length ? strategies.reduce((s, e) => s + e.stopRate, 0) / strategies.length : null);
   const expectedPerCt = own?.avgPl ?? (strategies.length ? strategies.reduce((s, e) => s + e.avgPl, 0) / strategies.length : null);
   const missed = trades.filter((t) => t.status === "missed").length;
-  const extra = trades.filter((t) => t.status === "extra").length;
+  const extra = trades.filter((t) => t.status === "extra" && !t.manual).length;
+  const manual = trades.filter((t) => t.manual).length;
   const perMonth = new Map<string, number>();
-  for (const t of trades) if (t.status === "missed" || t.status === "extra") perMonth.set(t.date.slice(0, 7), (perMonth.get(t.date.slice(0, 7)) ?? 0) + 1);
+  for (const t of trades) if (t.status === "missed" || (t.status === "extra" && !t.manual)) perMonth.set(t.date.slice(0, 7), (perMonth.get(t.date.slice(0, 7)) ?? 0) + 1);
   const maxMissedExtraInMonth = Math.max(0, ...perMonth.values());
   const fees = live.reduce((s, t) => s + t.live!.fees, 0);
   const sides = live.reduce((s, t) => s + t.live!.contractSides, 0);
-  const flaggedFills = trades.filter((t) => t.flags.some((f) => f.startsWith("Stop filled") || f.includes("$1.00 worse"))).length;
+  const flaggedFills = trades.filter((t) => !t.manual && t.flags.some((f) => f.startsWith("Stop filled") || f.includes("$1.00 worse"))).length;
 
   const stopRateRolling20 = last20.length ? last20.filter((t) => t.category === "stop").length / last20.length : null;
   const stopLight: Light =
@@ -629,6 +656,7 @@ export function aggregate(name: string, trades: ScoreTrade[], expectedFor: (stra
     gapPct: gapPct === null ? null : round2(gapPct),
     missed,
     extra,
+    manual,
     maxMissedExtraInMonth,
     feePerSide: sides ? round4(fees / sides) : null,
     feeExcess: round2(fees - ASSUMPTIONS.feePerSide * sides),
@@ -664,12 +692,18 @@ export interface Scorecard {
   periods: Record<"mtd" | "inception", { book: Aggregate; strategies: Aggregate[]; qualifyingForStops: string[] }>;
 }
 
-export function buildScorecard(fills: Fill[], ooTrades: OOTrade[], inception: string, now = Date.now()): Scorecard {
+export function buildScorecard(
+  fills: Fill[],
+  ooTrades: OOTrade[],
+  inception: string,
+  now = Date.now(),
+  annotations: Record<string, Annotation> = {},
+): Scorecard {
   const backtest = ooTrades.map(toBacktest).filter((b) => b !== null);
   const coverageEnd = backtest.length ? backtest.reduce((m, b) => (b.date > m ? b.date : m), "") : null;
   const live = buildLiveTrades(fills, inception);
   const firstLiveDay = live.length ? live[0].date : null;
-  const trades = scoreTrades(live, backtest, inception, coverageEnd, firstLiveDay ?? inception, new Set(STRATEGIES));
+  const trades = scoreTrades(live, backtest, inception, coverageEnd, firstLiveDay ?? inception, new Set(STRATEGIES), annotations);
   const today = todayET(now);
   const monthStart = today.slice(0, 8) + "01" > inception ? today.slice(0, 8) + "01" : inception;
   const expectedFor = (s: string) => EXPECTED[s];
