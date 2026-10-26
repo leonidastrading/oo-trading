@@ -27,7 +27,7 @@ const compact = (v: number) =>
 export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis; underlying: string }) {
   const [win, setWin] = useState(1);
   const gid = useId().replace(/:/g, "");
-  const { spot, best, breakevens } = analysis;
+  const { spot, best, breakevens, pnlAtSpot } = analysis;
 
   const data = useMemo(() => {
     const w = WINDOWS[win].pts;
@@ -36,7 +36,10 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
 
   const max = Math.max(...data.map((d) => d.pnl), 0);
   const min = Math.min(...data.map((d) => d.pnl), 0);
-  const zero = max === min ? 0.5 : max / (max - min);
+  // When the wings dwarf the max profit, clip them so the profit tent stays readable (tooltip keeps real values).
+  const floor = max > 0 && min < -6 * max ? -6 * max : min;
+  const clipped = floor > min;
+  const zero = max === floor ? 0.5 : max / (max - floor);
   const first = data[0]?.price ?? 0;
   const last = data[data.length - 1]?.price ?? 0;
   const tickStep = last - first <= 120 ? 10 : last - first <= 250 ? 25 : 50;
@@ -91,6 +94,8 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
               tickLine={false}
               axisLine={false}
               width={52}
+              domain={[floor, "auto"]}
+              allowDataOverflow={clipped}
             />
             <ReferenceLine y={0} stroke="var(--axis)" />
             {best.pnl > 0 && best.range && inView(best.range.low) && (
@@ -110,8 +115,16 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
                 x={spot}
                 stroke="var(--spot)"
                 strokeWidth={2}
-                label={{ value: `${underlying} ${strike(Math.round(spot * 100) / 100)}`, position: "top", fill: "var(--spot)", fontSize: 11 }}
+                label={{
+                  value: `${underlying} ${strike(Math.round(spot * 100) / 100)} · ${money(pnlAtSpot, { sign: true })}`,
+                  position: "top",
+                  fill: "var(--spot)",
+                  fontSize: 11,
+                }}
               />
+            )}
+            {inView(spot) && pnlAtSpot >= floor && (
+              <ReferenceDot x={spot} y={pnlAtSpot} r={5} fill="var(--spot)" stroke="var(--surface)" strokeWidth={2} />
             )}
             {best.pnl > 0 && !best.range && inView(best.price) && (
               <ReferenceDot
@@ -140,6 +153,7 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
       <p className="mt-1 text-xs text-muted">
         <span className="text-spot">│</span> current price · ○ breakeven
         {best.pnl > 0 ? (best.range ? " · shaded = max-profit range" : " · ● max profit") : ""}
+        {clipped ? " · losses beyond the bottom edge are clipped (hover for values)" : ""}
       </p>
     </div>
   );
