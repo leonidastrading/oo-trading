@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { BestClosePanel } from "@/components/BestClosePanel";
+import { ClosedPnlChart } from "@/components/ClosedPnlChart";
 import { money, num, openPositionsLabel, plClass, signed } from "@/components/format";
 import { PositionGroups } from "@/components/PositionGroups";
 import { StatusBar } from "@/components/StatusBar";
@@ -89,6 +90,8 @@ export default function LivePage() {
           <ExpiryChart analysis={e.analysis} underlying={e.underlying} />
         </section>
       ))}
+
+      <ClosedPnlChart points={data?.closedCurve ?? []} />
 
       <section>
         <h2 className="mb-2 text-lg font-bold text-accent">Expiring today</h2>

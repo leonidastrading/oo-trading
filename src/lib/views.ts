@@ -6,8 +6,8 @@ import { analyzeClose, type CloseAnalysis } from "./options";
 import { countOpenEntries, feesOn, groupClosesByOrder, openLots, realizedOn, type ClosedOrder, type Fill } from "./realized";
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
 import { tokenStatus, type TokenStatus } from "./schwab/tokens";
-import { groupSpreads, splitByEntry, toLeg, type Position, type SpreadGroup } from "./spreads";
-import { etParts, lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
+import { classifySpread, groupSpreads, splitByEntry, toLeg, type Position, type SpreadGroup } from "./spreads";
+import { etMidnightUtc, etParts, lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
 
 export interface Meta {
   now: number;
@@ -30,6 +30,28 @@ export interface ExpiryChart {
   settled: boolean;
 }
 
+/** One closed trade (Schwab order, or today's expirations at settlement) on the cumulative closed-P/L line. */
+export interface ClosedPoint {
+  time: number;
+  label: string;
+  realized: number;
+  cum: number;
+  expired: boolean;
+}
+
+/** Today's closed orders in close order with a running total; ends at pl.closed. */
+export function closedCurve(orders: ClosedOrder[], settleTime: number): ClosedPoint[] {
+  let cum = 0;
+  return orders
+    .map((o) => ({ o, time: o.pending ? settleTime : o.time }))
+    .sort((a, b) => a.time - b.time)
+    .map(({ o, time }) => {
+      cum = Math.round((cum + o.realized) * 100) / 100;
+      const legs = o.legs.map((l) => ({ putCall: l.fill.putCall, strike: l.fill.strike, qty: -Math.sign(l.fill.qty) * l.closedQty }));
+      return { time, label: `${o.underlying} ${o.pending ? "expired" : classifySpread(legs)}`, realized: o.realized, cum, expired: !!o.pending };
+    });
+}
+
 export interface LiveData {
   meta: Meta;
   fetchedAt: number | null;
@@ -40,6 +62,7 @@ export interface LiveData {
   groups: SpreadGroup[];
   /** Today's expirations, one chart per underlying. */
   expiring: ExpiryChart[];
+  closedCurve: ClosedPoint[];
 }
 
 async function baseMeta(force: boolean) {
@@ -108,7 +131,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
   };
   if (!token.connected) {
     meta.errors.push(token.lastError ?? "Schwab is not connected — connect it in Settings.");
-    return { meta, fetchedAt: null, account: null, spx: null, pl: null, groups: [], expiring: [] };
+    return { meta, fetchedAt: null, account: null, spx: null, pl: null, groups: [], expiring: [], closedCurve: [] };
   }
 
   const sessionDate = lastSessionDate(now);
@@ -175,6 +198,10 @@ export async function getLiveData(force = false): Promise<LiveData> {
     pl,
     groups: groupSpreads(splitByEntry(expired.open, openLots(fills.data ?? [])), today),
     expiring,
+    closedCurve: closedCurve(
+      [...groupClosesByOrder(closes), ...expired.orders],
+      etMidnightUtc(sessionDate).getTime() + (session.closeMin - 15) * 60000,
+    ),
   };
 }
 
