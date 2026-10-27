@@ -11,7 +11,7 @@ export interface WeekRow {
   /** Net deposits (+) / withdrawals (−) during the week; excluded from P/L. */
   transfers: number;
   pl: number;
-  /** P/L as a fraction of the start-of-week equity. */
+  /** P/L as a fraction of start-of-week equity plus any money added during the week. */
   plPct: number | null;
   /** Some closes in the chain were back-filled from realized P/L rather than a Schwab snapshot. */
   estimated: boolean;
@@ -94,6 +94,11 @@ export function weeklyRows(input: WeeklyInput): WeekRow[] {
       estimated ||= last.estimated;
       i++;
     }
+    // A back-filled start of ~0 in the week the account was funded means it was empty: use exactly 0.
+    if (rows.length === 0 && prev.estimated && transfers > 0 && Math.abs(prev.equity) < 0.01 * transfers) {
+      prev = { ...prev, equity: 0, estimated: false };
+      estimated = last.estimated;
+    }
     const pl = round2(last.equity - prev.equity - transfers);
     rows.push({
       week,
@@ -102,7 +107,7 @@ export function weeklyRows(input: WeeklyInput): WeekRow[] {
       endEquity: round2(last.equity),
       transfers: round2(transfers),
       pl,
-      plPct: prev.equity > 0 ? pl / prev.equity : null,
+      plPct: prev.equity + Math.max(transfers, 0) > 0 ? pl / (prev.equity + Math.max(transfers, 0)) : null,
       estimated,
       current: week === mondayOf(input.today),
     });

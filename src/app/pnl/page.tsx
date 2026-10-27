@@ -24,7 +24,8 @@ export default function PnlPage() {
   const first = weeks[0];
   const last = weeks[weeks.length - 1];
   const totalPl = weeks.reduce((s, w) => s + w.pl, 0);
-  const totalPct = first && first.startEquity > 0 ? totalPl / first.startEquity : null;
+  const invested = (first?.startEquity ?? 0) + weeks.reduce((s, w) => s + Math.max(w.transfers, 0), 0);
+  const totalPct = invested > 0 ? totalPl / invested : null;
   const hasTransfers = weeks.some((w) => w.transfers !== 0);
   const anyEstimated = weeks.some((w) => w.estimated);
 
@@ -136,7 +137,7 @@ export default function PnlPage() {
       </section>
       <p className="text-xs text-muted">
         Equity is Schwab net liquidation at each week&apos;s last close (live for the current week). P/L = change in equity minus deposits and
-        withdrawals; % is of the start-of-week equity.
+        withdrawals; % is of start-of-week equity plus any deposits that week.
         {anyEstimated && " * Some closes before the daily 4:30 PM snapshots began are back-filled from realized trade P/L."}
       </p>
     </div>
