@@ -1,6 +1,7 @@
 import { requireKv } from "@/lib/apiGuard";
 import { NextResponse } from "next/server";
 import { cachedFills, cachedMinuteBars, type Bar } from "@/lib/schwab/data";
+import { groupClosesByOrder, realizedOn } from "@/lib/realized";
 import { classifySpread } from "@/lib/spreads";
 import { lastSessionDate, marketSession } from "@/lib/time";
 
@@ -16,11 +17,21 @@ export interface EntryMarker {
   price: number;
 }
 
+export interface ExitMarker {
+  orderId: string;
+  time: number;
+  label: string;
+  contracts: number;
+  /** Realized P/L of the closing order, net of fees (null if the opening fill is outside the lookback). */
+  realized: number | null;
+}
+
 export interface SpxDayData {
   meta: { pollMs: number | null; errors: string[] };
   date: string;
   bars: Bar[];
   entries: EntryMarker[];
+  exits: ExitMarker[];
 }
 
 const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
@@ -65,11 +76,27 @@ export async function GET() {
   }
   entries.sort((a, b) => a.time - b.time);
 
+  // Closing orders placed during the session (stops / early exits); expirations settle at 4:00 and are not shown.
+  const closes = realizedOn(fills.data ?? [], date).filter((c) => !c.fill.settlement && c.fill.underlying === "SPX");
+  const exits: ExitMarker[] = groupClosesByOrder(closes)
+    .map((o) => {
+      const legs = o.legs.map((l) => ({ putCall: l.fill.putCall, strike: l.fill.strike, qty: -Math.sign(l.fill.qty) * l.closedQty }));
+      return {
+        orderId: o.orderId,
+        time: Math.floor(o.time / 1000),
+        label: classifySpread(legs),
+        contracts: legs.map((l) => Math.abs(l.qty)).reduce(gcd),
+        realized: o.unknownBasis ? null : o.realized,
+      };
+    })
+    .sort((a, b) => a.time - b.time);
+
   const body: SpxDayData = {
     meta: { pollMs: live ? 60_000 : null, errors: [bars.error, fills.error].filter((e): e is string => !!e) },
     date,
     bars: bars.data ?? [],
     entries,
+    exits,
   };
   return NextResponse.json(body, { headers: { "Cache-Control": "no-store" } });
 }
