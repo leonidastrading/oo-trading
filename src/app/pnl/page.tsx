@@ -37,7 +37,7 @@ export default function PnlPage() {
           {loading ? "Refreshing…" : "Refresh"}
         </button>
       </header>
-      {(error || data?.meta.errors.length) && (
+      {(error || (data?.meta.errors.length ?? 0) > 0) && (
         <p className="rounded-lg border border-loss/40 bg-loss/10 px-3 py-2 text-sm text-loss">{error ?? data?.meta.errors.join(" · ")}</p>
       )}
 
@@ -103,9 +103,9 @@ export default function PnlPage() {
           <thead>
             <tr>
               <th>Week</th>
-              <th>Start equity</th>
-              <th>End equity</th>
-              {hasTransfers && <th>Deposits / withdrawals</th>}
+              <th className="hidden md:table-cell">Start equity</th>
+              <th>Equity</th>
+              {hasTransfers && <th className="hidden md:table-cell">Deposits / withdrawals</th>}
               <th>P/L $</th>
               <th>P/L %</th>
             </tr>
@@ -113,14 +113,15 @@ export default function PnlPage() {
           <tbody>
             {[...weeks].reverse().map((w) => (
               <tr key={w.week}>
-                <td className="whitespace-nowrap">
-                  {weekLabel(w.week, w.end)}
-                  {w.current && <span className="ml-2 text-xs text-spot">● this week</span>}
+                <td>
+                  <span className="whitespace-nowrap">{weekLabel(w.week, w.end)}</span>
                   {w.estimated && <span className="ml-1 text-xs text-muted">*</span>}
+                  {w.current && <span className="block text-xs text-spot">● this week</span>}
+                  {w.transfers !== 0 && <span className="block text-xs text-muted md:hidden">{money(w.transfers, { sign: true })} deposited</span>}
                 </td>
-                <td className="num">{money(w.startEquity)}</td>
+                <td className="num hidden md:table-cell">{money(w.startEquity)}</td>
                 <td className="num">{money(w.endEquity)}</td>
-                {hasTransfers && <td className="num">{w.transfers ? money(w.transfers, { sign: true }) : "—"}</td>}
+                {hasTransfers && <td className="num hidden md:table-cell">{w.transfers ? money(w.transfers, { sign: true }) : "—"}</td>}
                 <td className={plClass(w.pl)}>{money(w.pl, { sign: true })}</td>
                 <td className={plClass(w.pl)}>{signedPct(w.plPct)}</td>
               </tr>
