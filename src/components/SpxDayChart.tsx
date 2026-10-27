@@ -20,7 +20,6 @@ const ABBR: Record<string, string> = {
 const abbr = (label: string) => ABBR[label] ?? label;
 /** A loss closed before 3:45 PM is a stop; closes in the last 15 minutes are scheduled time exits. */
 const isStop = (x: { time: number; realized: number | null }) => (x.realized ?? 0) < 0 && etParts(x.time * 1000).minutesOfDay < 15 * 60 + 45;
-const compactMoney = (v: number) => `${v < 0 ? "−" : "+"}$${Math.abs(v) >= 1000 ? `${(Math.abs(v) / 1000).toFixed(1)}k` : Math.round(Math.abs(v))}`;
 const priceText = (p: number) => `${p >= 0 ? "cr" : "db"} ${Math.abs(p).toFixed(2)}`;
 
 const css = (name: string, fallback: string) =>
@@ -43,7 +42,8 @@ export function SpxDayChart() {
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: css("--muted", "#898781"), fontSize: 14 },
       grid: { vertLines: { visible: false }, horzLines: { color: css("--axis", "#4a4a46") + "55" } },
       rightPriceScale: { borderVisible: false },
-      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+      // Room after the last bar so labels near the close aren't clipped.
+      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, rightOffset: 12 },
       crosshair: { mode: 0 },
     });
     chartRef.current = chart;
@@ -56,26 +56,46 @@ export function SpxDayChart() {
     });
     series.setData(data.bars.map((b) => ({ ...b, time: (b.time + shift) as UTCTimestamp })));
     const minute = (t: number) => (Math.floor((t + shift) / 60) * 60) as UTCTimestamp;
-    const markers = [
-      ...data.entries.map((e) => ({
-        time: minute(e.time),
-        position: "belowBar" as const,
-        shape: "arrowUp" as const,
-        color: e.price >= 0 ? css("--accent", "#e0b73b") : css("--spot", "#3987e5"),
-        text: `${abbr(e.label)} ${e.contracts}`,
-        size: 1.4,
-      })),
-      ...(data.exits ?? []).map((x) => ({
-        time: minute(x.time),
-        position: "aboveBar" as const,
-        shape: "arrowDown" as const,
-        color: isStop(x) ? loss : (x.realized ?? 0) < 0 ? css("--muted", "#898781") : gain,
-        text: `${isStop(x) ? "Stop" : "Exit"} ${abbr(x.label)} ${x.contracts}${x.realized !== null ? ` ${compactMoney(x.realized)}` : ""}`,
-        size: 1.4,
-      })),
-    ].sort((a, b) => a.time - b.time);
+    // One marker per minute and kind, with a short label; details live in the tables below.
+    type Kind = "credit" | "debit" | "stop" | "win" | "timeLoss";
+    const groups = new Map<string, { time: UTCTimestamp; kind: Kind; texts: string[] }>();
+    const add = (t: number, kind: Kind, text: string) => {
+      const time = minute(t);
+      const g = groups.get(`${time}|${kind}`) ?? { time, kind, texts: [] };
+      g.texts.push(text);
+      groups.set(`${time}|${kind}`, g);
+    };
+    for (const e of data.entries) add(e.time, e.price >= 0 ? "credit" : "debit", `${abbr(e.label)} ${e.contracts}`);
+    for (const x of data.exits ?? []) add(x.time, isStop(x) ? "stop" : (x.realized ?? 0) < 0 ? "timeLoss" : "win", abbr(x.label));
+    const colors: Record<Kind, string> = {
+      credit: css("--accent", "#e0b73b"),
+      debit: css("--spot", "#3987e5"),
+      stop: loss,
+      win: gain,
+      timeLoss: css("--muted", "#898781"),
+    };
+    const label = (g: { kind: Kind; texts: string[] }) => {
+      if (g.kind === "credit" || g.kind === "debit") return g.texts.join(" · ");
+      const n = g.texts.length;
+      if (g.kind === "stop") return n === 1 ? `Stop ${g.texts[0]}` : `Stop ×${n}`;
+      return n === 1 ? "Exit" : `Exit ×${n}`;
+    };
+    const markers = [...groups.values()]
+      .sort((x, y) => x.time - y.time)
+      .map((g) => {
+        const exit = g.kind === "stop" || g.kind === "win" || g.kind === "timeLoss";
+        return {
+          time: g.time,
+          position: exit ? ("aboveBar" as const) : ("belowBar" as const),
+          shape: exit ? ("arrowDown" as const) : ("arrowUp" as const),
+          color: colors[g.kind],
+          text: label(g),
+          size: 1.2,
+        };
+      });
     createSeriesMarkers(series, markers);
     chart.timeScale().fitContent();
+    chart.timeScale().applyOptions({ rightOffset: 12 });
     return () => {
       chart.remove();
       chartRef.current = null;
