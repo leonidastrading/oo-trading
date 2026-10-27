@@ -106,8 +106,8 @@ export default function PnlPage() {
               <th className="hidden md:table-cell">Start equity</th>
               <th>Equity</th>
               {hasTransfers && <th className="hidden md:table-cell">Deposits / withdrawals</th>}
-              <th>P/L $</th>
-              <th>P/L %</th>
+              <th>P/L</th>
+              <th className="hidden md:table-cell">P/L %</th>
             </tr>
           </thead>
           <tbody>
@@ -122,8 +122,11 @@ export default function PnlPage() {
                 <td className="num hidden md:table-cell">{money(w.startEquity)}</td>
                 <td className="num">{money(w.endEquity)}</td>
                 {hasTransfers && <td className="num hidden md:table-cell">{w.transfers ? money(w.transfers, { sign: true }) : "—"}</td>}
-                <td className={plClass(w.pl)}>{money(w.pl, { sign: true })}</td>
-                <td className={plClass(w.pl)}>{signedPct(w.plPct)}</td>
+                <td className={plClass(w.pl)}>
+                  {money(w.pl, { sign: true })}
+                  <span className="block text-xs md:hidden">{signedPct(w.plPct)}</span>
+                </td>
+                <td className={`hidden md:table-cell ${plClass(w.pl)}`}>{signedPct(w.plPct)}</td>
               </tr>
             ))}
             {weeks.length === 0 && (
