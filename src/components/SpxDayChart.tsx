@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import type { SpxDayData } from "@/app/api/spx-day/route";
 import { money } from "./format";
 import { usePoll } from "./usePoll";
-import { etOffsetMinutes, formatTimeET } from "@/lib/time";
+import { etOffsetMinutes, etParts, formatTimeET } from "@/lib/time";
 
 const ABBR: Record<string, string> = {
   "Iron condor": "IC",
@@ -18,6 +18,8 @@ const ABBR: Record<string, string> = {
   "Long straddle": "Straddle",
 };
 const abbr = (label: string) => ABBR[label] ?? label;
+/** A loss closed before 3:45 PM is a stop; closes in the last 15 minutes are scheduled time exits. */
+const isStop = (x: { time: number; realized: number | null }) => (x.realized ?? 0) < 0 && etParts(x.time * 1000).minutesOfDay < 15 * 60 + 45;
 const compactMoney = (v: number) => `${v < 0 ? "−" : "+"}$${Math.abs(v) >= 1000 ? `${(Math.abs(v) / 1000).toFixed(1)}k` : Math.round(Math.abs(v))}`;
 const priceText = (p: number) => `${p >= 0 ? "cr" : "db"} ${Math.abs(p).toFixed(2)}`;
 
@@ -67,8 +69,8 @@ export function SpxDayChart() {
         time: minute(x.time),
         position: "aboveBar" as const,
         shape: "arrowDown" as const,
-        color: (x.realized ?? 0) < 0 ? loss : gain,
-        text: `${(x.realized ?? 0) < 0 ? "Stop" : "Exit"} ${abbr(x.label)} ${x.contracts}${x.realized !== null ? ` ${compactMoney(x.realized)}` : ""}`,
+        color: isStop(x) ? loss : (x.realized ?? 0) < 0 ? css("--muted", "#898781") : gain,
+        text: `${isStop(x) ? "Stop" : "Exit"} ${abbr(x.label)} ${x.contracts}${x.realized !== null ? ` ${compactMoney(x.realized)}` : ""}`,
         size: 1.4,
       })),
     ].sort((a, b) => a.time - b.time);
@@ -88,7 +90,7 @@ export function SpxDayChart() {
         <h2 className="text-lg font-bold text-accent">SPX · 1-minute</h2>
         <span className="text-xs text-muted">
           {dateLabel}
-          {data ? ` · ${data.entries.length} entr${data.entries.length === 1 ? "y" : "ies"} · ${(data.exits ?? []).filter((x) => (x.realized ?? 0) < 0).length} stopped` : ""}
+          {data ? ` · ${data.entries.length} entr${data.entries.length === 1 ? "y" : "ies"} · ${(data.exits ?? []).filter(isStop).length} stopped` : ""}
         </span>
       </header>
       {(error || (data?.meta.errors.length ?? 0) > 0) && <p className="text-sm text-loss">{error ?? data?.meta.errors.join(" · ")}</p>}
@@ -137,7 +139,7 @@ export function SpxDayChart() {
                 <tr key={x.orderId}>
                   <td className="whitespace-nowrap">
                     {formatTimeET(x.time * 1000).replace(" ET", "")}
-                    {(x.realized ?? 0) < 0 && <span className="ml-2 text-xs text-loss">stop</span>}
+                    {isStop(x) && <span className="ml-2 text-xs text-loss">stop</span>}
                   </td>
                   <td>{x.label}</td>
                   <td className="num">{x.contracts}</td>
@@ -153,7 +155,8 @@ export function SpxDayChart() {
       <p className="text-xs text-muted">
         Markers sit on the minute of each opening order (all legs of one Schwab order = one entry);{" "}
         <span className="text-accent">▲</span> credit entry, <span className="text-spot">▲</span> debit entry,{" "}
-        <span className="text-loss">▼</span> stop (closed at a loss), <span className="text-gain">▼</span> exit at a gain. Expirations aren&apos;t marked. Times ET.
+        <span className="text-loss">▼</span> stop (closed at a loss before 3:45 PM), <span className="text-gain">▼</span> exit at a gain,{" "}
+        <span className="text-muted">▼</span> time exit at a loss. Expirations aren&apos;t marked. Times ET.
       </p>
     </section>
   );
