@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { BestClosePanel } from "@/components/BestClosePanel";
 import { ClosedPnlChart } from "@/components/ClosedPnlChart";
+import { SpxDayChart } from "@/components/SpxDayChart";
 import { money, num, openPositionsLabel, plClass, signed } from "@/components/format";
 import { PositionGroups } from "@/components/PositionGroups";
 import { StatusBar } from "@/components/StatusBar";
@@ -92,6 +93,8 @@ export default function LivePage() {
       ))}
 
       <ClosedPnlChart points={data?.closedCurve ?? []} />
+
+      <SpxDayChart />
 
       <section>
         <h2 className="mb-2 text-lg font-bold text-accent">Expiring today</h2>
