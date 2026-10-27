@@ -83,7 +83,7 @@ export function SpxDayChart() {
       {data && !data.bars.length ? (
         <p className="text-sm text-muted">No bars for this session yet.</p>
       ) : (
-        <div ref={box} className="h-72 w-full md:h-96" />
+        <div ref={box} className="h-[36rem] w-full md:h-[48rem]" />
       )}
       {data && data.entries.length > 0 && (
         <div className="overflow-x-auto">
