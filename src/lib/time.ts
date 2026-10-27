@@ -179,3 +179,13 @@ export function lastSessionDate(now: Date | number = Date.now()): string {
   }
   return p.date;
 }
+
+/** Latest date a backtest can cover: the last trading day before today (ET). OO never runs the current day. */
+export function lastBacktestableDate(now: Date | number = Date.now()): string {
+  let d = etParts(now).date;
+  for (let i = 0; i < 10; i++) {
+    d = addDays(d, -1);
+    if (isTradingDay(d)) return d;
+  }
+  return d;
+}

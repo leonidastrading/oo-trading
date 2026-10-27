@@ -5,7 +5,7 @@ import { money, num } from "@/components/format";
 import { Banner, StatusBar, type StatusMeta } from "@/components/StatusBar";
 import { UploadTrades } from "@/components/UploadTrades";
 import { usePoll } from "@/components/usePoll";
-import { formatDateTimeET, formatTimeET, lastSessionDate } from "@/lib/time";
+import { formatDateTimeET, formatTimeET, lastBacktestableDate } from "@/lib/time";
 import { ASSUMPTIONS, STRATEGIES, type Aggregate, type Dist, type Light, type Scorecard, type ScoreTrade } from "@/lib/scorecard";
 
 type Data = Scorecard & {
@@ -183,7 +183,7 @@ export default function ScorecardPage() {
       )}
       {data && (() => {
         const coverage = data.sources.backtestCoverageEnd;
-        const lastSession = lastSessionDate(data.asOf);
+        const lastSession = lastBacktestableDate(data.asOf);
         const stale = !coverage || coverage < lastSession;
         const weekOld = !coverage || Date.parse(lastSession) - Date.parse(coverage) >= 7 * 86_400_000;
         return (
@@ -191,7 +191,7 @@ export default function ScorecardPage() {
             <div className="flex flex-wrap items-center gap-2">
               <span className={stale ? (weekOld ? "text-loss" : "text-warn") : "text-ink-2"}>
                 {stale ? (weekOld ? "■" : "▲") : "●"} Backtest log covers through <strong>{coverage ?? "—"}</strong>
-                {stale ? ` — last session was ${lastSession}; trades after ${coverage ?? "—"} show as “Awaiting backtest”.` : " — up to date."}
+                {stale ? ` — latest available is ${lastSession}; trades after ${coverage ?? "—"} show as “Awaiting backtest”.` : " — up to date."}
               </span>
               <span className="text-xs text-muted">
                 {data.sources.backtestUploadedAt ? `Last upload ${formatDateTimeET(data.sources.backtestUploadedAt)}.` : ""}{" "}
