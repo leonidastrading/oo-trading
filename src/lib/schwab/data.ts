@@ -85,6 +85,41 @@ export async function fetchQuotes(symbols: string[]): Promise<Record<string, Quo
   return out;
 }
 
+export interface Bar {
+  /** Bar open time, epoch seconds. */
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+/** Regular-session 1-minute bars for one ET date. */
+export async function fetchMinuteBars(symbol: string, date: string): Promise<Bar[]> {
+  const start = etMidnightUtc(date).getTime();
+  const raw = await schwabGet<{ candles?: { open: number; high: number; low: number; close: number; datetime: number }[] }>(
+    "/marketdata/v1/pricehistory",
+    {
+      symbol,
+      periodType: "day",
+      frequencyType: "minute",
+      frequency: "1",
+      startDate: String(start),
+      endDate: String(start + 86_400_000),
+      needExtendedHoursData: "false",
+    },
+  );
+  return (raw.candles ?? [])
+    .filter((c) => c.datetime >= start && c.datetime < start + 86_400_000)
+    .map((c) => ({ time: Math.floor(c.datetime / 1000), open: c.open, high: c.high, low: c.low, close: c.close }));
+}
+
+export function cachedMinuteBars(symbol: string, date: string, maxAgeMs: number): Promise<CacheResult<Bar[]>> {
+  return cached(`bars1m:v1:${symbol}:${date}`, maxAgeMs, () => fetchMinuteBars(symbol, date), {
+    keepSeconds: date < todayET() ? 7 * 86_400 : undefined,
+  });
+}
+
 /** Schwab quote symbol for an underlying (indexes need a "$" prefix). */
 export function quoteSymbol(underlying: string): string {
   return ["SPX", "NDX", "RUT", "XSP", "VIX", "DJX"].includes(underlying) ? `$${underlying}` : underlying;

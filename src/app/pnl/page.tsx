@@ -2,6 +2,7 @@
 
 import { Bar, BarChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { money, plClass } from "@/components/format";
+import { SpxDayChart } from "@/components/SpxDayChart";
 import { Tile, toneOf } from "@/components/Tile";
 import { usePoll } from "@/components/usePoll";
 import type { PnlData } from "@/app/api/pnl/route";
@@ -97,6 +98,8 @@ export default function PnlPage() {
           </div>
         </section>
       )}
+
+      <SpxDayChart />
 
       <section className="card overflow-x-auto">
         <table className="data w-full text-sm">
