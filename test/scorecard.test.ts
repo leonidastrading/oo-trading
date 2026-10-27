@@ -282,12 +282,12 @@ describe("fixes: shared-strike exits, multi-day extras, pre-live missed, fees, s
 });
 
 describe("book scope", () => {
-  it("maps the VIX strategy and ignores non-book strategies for missed entries", () => {
-    expect(canonicalStrategy("! SPX 1DTE VIX up ≥5% 1DTE put spread 3:50pm")).toBe("VIX 1DTE");
+  it("counts the VIX-up strategy in the book and ignores non-book strategies for missed entries", () => {
+    expect(canonicalStrategy("! SPX 1DTE VIX up ≥5% 1DTE put spread 3:50pm")).toBe("VIX-up PS");
     const vix = toBacktest(bt({ strategy: "! SPX 1DTE VIX up ≥5% 1DTE put spread 3:50pm", dateOpened: "2026-10-22", timeOpened: "15:50:00",
       premium: 640, pl: 638, contracts: 1, legs: "1 Oct 23 7600 P STO 7.0 | 1 Oct 23 7500 P BTO 0.6" }))!;
-    expect(scoreTrades([], [vix], "2026-10-19", "2026-10-23", "2026-10-19", new Set(Object.keys(EXPECTED)))).toHaveLength(0);
-    expect(scoreTrades([], [vix], "2026-10-19", "2026-10-23")).toHaveLength(1);
+    expect(scoreTrades([], [vix], "2026-10-19", "2026-10-23", "2026-10-19", new Set(Object.keys(EXPECTED)))).toHaveLength(1);
+    expect(scoreTrades([], [vix], "2026-10-19", "2026-10-23", "2026-10-19", new Set(["Long"]))).toHaveLength(0);
   });
 });
 
@@ -335,5 +335,24 @@ describe("manual entries", () => {
     expect(a.entry.n).toBe(0);
     expect(a.slippageCost).toBe(0);
     expect([a.missed, a.extra, a.manual]).toEqual([0, 0, 1]);
+  });
+});
+
+describe("canonicalStrategy: Schwab Port 2026 names", () => {
+  it("maps every portfolio strategy to its scorecard row", () => {
+    const names: Record<string, string> = {
+      "! SPX 0 DTE - Long (sell puts) +costs": "Long",
+      "! SPX 0 DTE - Short (sell calls) RE-TUNED +costs": "Short",
+      "! SPX 0 DTE 8SMA IC +costs": "8SMA IC",
+      "! SPX 0DTE $8 IC 1:35 10SMA": "$8 IC",
+      "! SPX 0DTE $8 IC 1:35 10SMA - Dip Add-On": "$8 IC",
+      "! SPX 0DTE - FOMC 2:35pm long straddle 0.5%": "FOMC",
+      "! SPX 0DTE 5d IC 100-wide 1:30+2:30pm SL300": "5d IC",
+      "! SPX 0DTE Put BWB Fly - 3 Entries Above 5SMA": "BWB",
+      "! SPX 1DTE Vix >30 1:30pm ": "VIX>30 1DTE",
+      "! SPX 1DTE VIX up ≥5% 1DTE put spread 3:50pm": "VIX-up PS",
+      "! SPX 2DTE Down-Trend Put Spread - 11D 75w (tested)": "2DTE",
+    };
+    for (const [name, row] of Object.entries(names)) expect(canonicalStrategy(name)).toBe(row);
   });
 });

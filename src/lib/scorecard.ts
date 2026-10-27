@@ -16,13 +16,18 @@ export const EXPECTED: Record<string, { avgPl: number; stopRate: number; note?: 
   "5d IC": { avgPl: 32.5, stopRate: 0.11, note: "~$30–35" },
   BWB: { avgPl: 102, stopRate: 0.18 },
   "2DTE": { avgPl: 178, stopRate: 0.08 },
+  "VIX>30 1DTE": { avgPl: 258, stopRate: 0, note: "rare: VIX above 30" },
+  "VIX-up PS": { avgPl: 952, stopRate: 0, note: "1DTE put spread at 3:50 PM on VIX up ≥5%" },
+  FOMC: { avgPl: 370, stopRate: 0, note: "long straddle at 2:35 PM on FOMC days" },
 };
 export const STRATEGIES = Object.keys(EXPECTED);
 
 /** Map an OO strategy name to the book's short name. */
 export function canonicalStrategy(name: string): string {
   const n = name.toLowerCase();
-  if (/vix/.test(n)) return "VIX 1DTE";
+  if (/fomc|straddle/.test(n)) return "FOMC";
+  if (/vix\s*up/.test(n)) return "VIX-up PS";
+  if (/vix/.test(n)) return "VIX>30 1DTE";
   if (/2\s*dte/.test(n)) return "2DTE";
   if (/bwb|butterfly|fly/.test(n)) return "BWB";
   if (/5d\s*ic/.test(n)) return "5d IC";
