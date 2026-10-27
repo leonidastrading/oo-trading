@@ -172,7 +172,7 @@ export default function ScorecardPage() {
       />
 
       <Banner tone="info">
-        Read-only report. The book went live {data?.inception ?? "2026-10-16"}, so samples are still small; stop-rate and P/L-gap
+        Read-only report. Scored from {data?.inception ?? "2026-10-27"} (reset after the fee change and account fix), so samples are still small; stop-rate and P/L-gap
         lights wait for {10}+ trades per strategy.
       </Banner>
       {data && data.firstLiveDay && data.firstLiveDay > data.inception && (

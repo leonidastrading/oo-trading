@@ -11,7 +11,7 @@ import { MANUAL_REFRESH_MIN_MS, marketSession } from "@/lib/time";
 export const dynamic = "force-dynamic";
 
 /** First live day of the book. */
-const inception = () => process.env.LIVE_SINCE ?? "2026-10-16";
+const inception = () => process.env.LIVE_SINCE ?? "2026-10-27";
 
 export async function GET(req: NextRequest) {
   const missing = requireKv();
