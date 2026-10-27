@@ -22,6 +22,8 @@ export interface ExitMarker {
   time: number;
   label: string;
   contracts: number;
+  /** Order ids of today's entries this exit closes (by matching symbols). */
+  closes: string[];
   /** Realized P/L of the closing order, net of fees (null if the opening fill is outside the lookback). */
   realized: number | null;
 }
@@ -97,6 +99,7 @@ export async function GET() {
         orderId: o.orderId,
         time: Math.floor(o.time / 1000),
         label: labels.length ? labels.join(" / ") : classifySpread(legs),
+        closes: opened.map((e) => e.orderId),
         contracts: legs.map((l) => Math.abs(l.qty)).reduce(gcd),
         realized: o.unknownBasis ? null : o.realized,
       };

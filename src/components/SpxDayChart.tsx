@@ -56,17 +56,22 @@ export function SpxDayChart() {
     });
     series.setData(data.bars.map((b) => ({ ...b, time: (b.time + shift) as UTCTimestamp })));
     const minute = (t: number) => (Math.floor((t + shift) / 60) * 60) as UTCTimestamp;
-    // One marker per minute and kind, with a short label; details live in the tables below.
+    // Short numbered labels (matching the # column below); markers in the same minute are merged.
+    const num = new Map(data.entries.map((e, i) => [e.orderId, i + 1]));
     type Kind = "credit" | "debit" | "stop" | "win" | "timeLoss";
     const groups = new Map<string, { time: UTCTimestamp; kind: Kind; texts: string[] }>();
     const add = (t: number, kind: Kind, text: string) => {
       const time = minute(t);
       const g = groups.get(`${time}|${kind}`) ?? { time, kind, texts: [] };
-      g.texts.push(text);
+      if (!g.texts.includes(text)) g.texts.push(text);
       groups.set(`${time}|${kind}`, g);
     };
-    for (const e of data.entries) add(e.time, e.price >= 0 ? "credit" : "debit", `${abbr(e.label)} ${e.contracts}`);
-    for (const x of data.exits ?? []) add(x.time, isStop(x) ? "stop" : (x.realized ?? 0) < 0 ? "timeLoss" : "win", abbr(x.label));
+    for (const e of data.entries) add(e.time, e.price >= 0 ? "credit" : "debit", String(num.get(e.orderId)));
+    for (const x of data.exits ?? []) {
+      const kind: Kind = isStop(x) ? "stop" : (x.realized ?? 0) < 0 ? "timeLoss" : "win";
+      const ids = (x.closes ?? []).map((id) => num.get(id)).filter((n): n is number => n !== undefined);
+      add(x.time, kind, ids.length ? ids.join(",") : "?");
+    }
     const colors: Record<Kind, string> = {
       credit: css("--accent", "#e0b73b"),
       debit: css("--spot", "#3987e5"),
@@ -74,22 +79,17 @@ export function SpxDayChart() {
       win: gain,
       timeLoss: css("--muted", "#898781"),
     };
-    const label = (g: { kind: Kind; texts: string[] }) => {
-      if (g.kind === "credit" || g.kind === "debit") return g.texts.join(" · ");
-      const n = g.texts.length;
-      if (g.kind === "stop") return n === 1 ? `Stop ${g.texts[0]}` : `Stop ×${n}`;
-      return n === 1 ? "Exit" : `Exit ×${n}`;
-    };
     const markers = [...groups.values()]
       .sort((x, y) => x.time - y.time)
       .map((g) => {
         const exit = g.kind === "stop" || g.kind === "win" || g.kind === "timeLoss";
+        const ids = g.texts.join(",");
         return {
           time: g.time,
           position: exit ? ("aboveBar" as const) : ("belowBar" as const),
           shape: exit ? ("arrowDown" as const) : ("arrowUp" as const),
           color: colors[g.kind],
-          text: label(g),
+          text: g.kind === "stop" ? `S${ids}` : exit ? `x${ids}` : ids,
           size: 1.2,
         };
       });
@@ -124,6 +124,7 @@ export function SpxDayChart() {
           <table className="data w-full text-sm">
             <thead>
               <tr>
+                <th>#</th>
                 <th>Entry</th>
                 <th>Trade</th>
                 <th>Size</th>
@@ -131,10 +132,14 @@ export function SpxDayChart() {
               </tr>
             </thead>
             <tbody>
-              {data.entries.map((e) => (
+              {data.entries.map((e, i) => (
                 <tr key={e.orderId}>
+                  <td className={e.price >= 0 ? "text-accent" : "text-spot"}>{i + 1}</td>
                   <td className="whitespace-nowrap">{formatTimeET(e.time * 1000).replace(" ET", "")}</td>
-                  <td>{e.label}</td>
+                  <td>
+                    <span className="md:hidden">{abbr(e.label)}</span>
+                    <span className="hidden md:inline">{e.label}</span>
+                  </td>
                   <td className="num">{e.contracts}</td>
                   <td className="num">{priceText(e.price)}</td>
                 </tr>
@@ -148,6 +153,7 @@ export function SpxDayChart() {
           <table className="data w-full text-sm">
             <thead>
               <tr>
+                <th>#</th>
                 <th>Exit</th>
                 <th>Trade</th>
                 <th>Size</th>
@@ -157,11 +163,18 @@ export function SpxDayChart() {
             <tbody>
               {data.exits.map((x) => (
                 <tr key={x.orderId}>
+                  <td className={isStop(x) ? "text-loss" : "text-muted"}>
+                    {(isStop(x) ? "S" : "x") +
+                      ((x.closes ?? []).map((id) => data.entries.findIndex((e) => e.orderId === id) + 1).filter((n) => n > 0).join(",") || "?")}
+                  </td>
                   <td className="whitespace-nowrap">
                     {formatTimeET(x.time * 1000).replace(" ET", "")}
                     {isStop(x) && <span className="ml-2 text-xs text-loss">stop</span>}
                   </td>
-                  <td>{x.label}</td>
+                  <td>
+                    <span className="md:hidden">{abbr(x.label)}</span>
+                    <span className="hidden md:inline">{x.label}</span>
+                  </td>
                   <td className="num">{x.contracts}</td>
                   <td className={x.realized === null ? "text-muted" : x.realized < 0 ? "text-loss" : "text-gain"}>
                     {x.realized === null ? "—" : money(x.realized, { sign: true })}
@@ -173,7 +186,7 @@ export function SpxDayChart() {
         </div>
       )}
       <p className="text-xs text-muted">
-        Markers sit on the minute of each opening order (all legs of one Schwab order = one entry);{" "}
+        Numbers match the # column: ▲ under a bar is an entry (one Schwab opening order), ▼ above is an exit of that entry (S = stop).{" "}
         <span className="text-accent">▲</span> credit entry, <span className="text-spot">▲</span> debit entry,{" "}
         <span className="text-loss">▼</span> stop (closed at a loss before 3:45 PM), <span className="text-gain">▼</span> exit at a gain,{" "}
         <span className="text-muted">▼</span> time exit at a loss. Expirations aren&apos;t marked. Times ET.
