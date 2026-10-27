@@ -54,7 +54,9 @@ export async function GET() {
     byOrder.set(f.orderId, [...(byOrder.get(f.orderId) ?? []), f]);
   }
   const entries: EntryMarker[] = [];
+  const entrySymbols = new Map<string, Set<string>>();
   for (const [orderId, fs] of byOrder) {
+    entrySymbols.set(orderId, new Set(fs.map((f) => f.symbol)));
     // Net quantity per symbol, then the order's unit size (e.g. 13 for a 13-lot IC, 6 for a 6:12:6 BWB).
     const legs = new Map<string, { putCall: "P" | "C" | null; strike: number | null; qty: number; cash: number }>();
     for (const f of fs) {
@@ -80,11 +82,21 @@ export async function GET() {
   const closes = realizedOn(fills.data ?? [], date).filter((c) => !c.fill.settlement && c.fill.underlying === "SPX");
   const exits: ExitMarker[] = groupClosesByOrder(closes)
     .map((o) => {
-      const legs = o.legs.map((l) => ({ putCall: l.fill.putCall, strike: l.fill.strike, qty: -Math.sign(l.fill.qty) * l.closedQty }));
+      // Partial fills of one leg arrive separately: net them per symbol first.
+      const bySym = new Map<string, { putCall: "P" | "C" | null; strike: number | null; qty: number }>();
+      for (const l of o.legs) {
+        const v = bySym.get(l.fill.symbol) ?? { putCall: l.fill.putCall, strike: l.fill.strike, qty: 0 };
+        v.qty += -Math.sign(l.fill.qty) * l.closedQty;
+        bySym.set(l.fill.symbol, v);
+      }
+      const legs = [...bySym.values()];
+      // Name it after the entry it closes (e.g. a stop that buys back an IC's short strikes is "Iron condor").
+      const opened = entries.filter((e) => [...bySym.keys()].every((sym) => entrySymbols.get(e.orderId)?.has(sym)));
+      const labels = [...new Set(opened.map((e) => e.label))];
       return {
         orderId: o.orderId,
         time: Math.floor(o.time / 1000),
-        label: classifySpread(legs),
+        label: labels.length ? labels.join(" / ") : classifySpread(legs),
         contracts: legs.map((l) => Math.abs(l.qty)).reduce(gcd),
         realized: o.unknownBasis ? null : o.realized,
       };
