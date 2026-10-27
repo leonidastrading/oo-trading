@@ -135,7 +135,7 @@ export function SpxDayChart() {
               {data.entries.map((e, i) => (
                 <tr key={e.orderId}>
                   <td className={e.price >= 0 ? "text-accent" : "text-spot"}>{i + 1}</td>
-                  <td className="whitespace-nowrap">{formatTimeET(e.time * 1000).replace(" ET", "")}</td>
+                  <td className="whitespace-nowrap">{formatTimeET(e.time * 1000).slice(0, 5)}</td>
                   <td>
                     <span className="md:hidden">{abbr(e.label)}</span>
                     <span className="hidden md:inline">{e.label}</span>
@@ -168,8 +168,7 @@ export function SpxDayChart() {
                       ((x.closes ?? []).map((id) => data.entries.findIndex((e) => e.orderId === id) + 1).filter((n) => n > 0).join(",") || "?")}
                   </td>
                   <td className="whitespace-nowrap">
-                    {formatTimeET(x.time * 1000).replace(" ET", "")}
-                    {isStop(x) && <span className="ml-2 text-xs text-loss">stop</span>}
+                    {formatTimeET(x.time * 1000).slice(0, 5)}
                   </td>
                   <td>
                     <span className="md:hidden">{abbr(x.label)}</span>
