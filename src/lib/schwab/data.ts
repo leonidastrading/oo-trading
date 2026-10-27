@@ -172,6 +172,56 @@ export async function cachedFillsSince(start: string, liveMaxAgeMs: number, forc
   return { fills: normalizeTransactions(unique, feePerContract()), fetchedAt, errors, windows };
 }
 
+/** Schwab transaction types that move money in or out of the account (not P/L). */
+const TRANSFER_TYPES = ["ACH_RECEIPT", "ACH_DISBURSEMENT", "CASH_RECEIPT", "CASH_DISBURSEMENT", "ELECTRONIC_FUND", "WIRE_IN", "WIRE_OUT", "JOURNAL"];
+
+export interface Transfer {
+  date: string;
+  amount: number;
+  type: string;
+  description: string;
+}
+
+/** Deposits (+) and withdrawals (−) from `start` to now, in cached 30-day windows (finished windows kept). */
+export async function cachedTransfersSince(start: string, liveMaxAgeMs: number): Promise<{ transfers: Transfer[]; errors: string[] }> {
+  const today = todayET();
+  const out: Transfer[] = [];
+  const errors: string[] = [];
+  const seen = new Set<string>();
+  for (let from = start; from <= today; ) {
+    const to = addDays(from, 30);
+    const done = to <= addDays(today, -1);
+    const res = await cached(
+      `xferwin:v1:${from}:${to}`,
+      done ? Infinity : liveMaxAgeMs,
+      async () => {
+        const hash = await getAccountHash();
+        const lists = await Promise.all(
+          TRANSFER_TYPES.map((types) =>
+            schwabGet<SchwabTransaction[]>(`/trader/v1/accounts/${hash}/transactions`, {
+              startDate: etMidnightUtc(from).toISOString(),
+              endDate: (to > today ? new Date() : etMidnightUtc(to)).toISOString(),
+              types,
+            }),
+          ),
+        );
+        return lists.flatMap((l) => (Array.isArray(l) ? l : []));
+      },
+      { keepSeconds: done ? 400 * 86_400 : undefined },
+    );
+    if (res.error && !errors.includes(res.error)) errors.push(res.error);
+    for (const t of res.data ?? []) {
+      const k = `${t.activityId ?? ""}|${t.time ?? ""}|${t.netAmount ?? ""}`;
+      if (seen.has(k) || !t.netAmount) continue;
+      seen.add(k);
+      const when = t.time ?? t.tradeDate;
+      out.push({ date: when ? todayET(Date.parse(when)) : from, amount: t.netAmount, type: t.type ?? "", description: t.description ?? "" });
+    }
+    from = to;
+  }
+  return { transfers: out.sort((a, b) => a.date.localeCompare(b.date)), errors };
+}
+
 export function cachedAccount(maxAgeMs: number, force = false): Promise<CacheResult<AccountSnapshot>> {
   return cached("account", maxAgeMs, fetchAccount, { force });
 }
