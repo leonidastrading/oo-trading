@@ -1,3 +1,4 @@
+import { uniqueEntries } from "@/lib/allocSim";
 import { NextResponse, type NextRequest } from "next/server";
 import { requireKv } from "@/lib/apiGuard";
 import { takeManualRefresh } from "@/lib/cache";
@@ -30,7 +31,8 @@ export async function GET(req: NextRequest) {
     kv().hgetall<Annotation>(KEYS.annotations),
   ]);
   errors.push(...fills.errors);
-  const ooTrades = Object.values(oo);
+  // One row per backtest entry even if two OO runs of it are stored.
+  const ooTrades = uniqueEntries(Object.values(oo));
   const sc = buildScorecard(fills.fills ?? [], ooTrades, inception(), Date.now(), annotations);
   return NextResponse.json(
     {

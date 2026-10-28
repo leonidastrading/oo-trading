@@ -1,7 +1,7 @@
 import { requireKv } from "@/lib/apiGuard";
 import { NextResponse, type NextRequest } from "next/server";
 import { KEYS, kv } from "@/lib/kv";
-import { isValidTrade, tradeKey, type OOTrade } from "@/lib/ooCsv";
+import { isValidTrade, tradeKey, tradeSlot, type OOTrade } from "@/lib/ooCsv";
 
 export const dynamic = "force-dynamic";
 
@@ -19,15 +19,16 @@ export async function POST(req: NextRequest) {
     return [key, { ...t, key }];
   });
   const store = kv();
-  const added = await store.hsetnxMany(KEYS.ooTrades, entries);
-  // Re-uploads fill in Margin Req. on trades stored before the log carried it (other fields stay as stored).
-  if (added < entries.length && entries.some(([, t]) => typeof t.margin === "number")) {
-    const stored = await store.hgetall<OOTrade>(KEYS.ooTrades);
-    for (const [key, t] of entries) {
-      const old = stored[key];
-      if (old && typeof t.margin === "number" && typeof old.margin !== "number") await store.hset(KEYS.ooTrades, key, { ...old, margin: t.margin });
-    }
-  }
+  // Latest upload wins: an entry already stored from another run (same strategy, date and time) is replaced.
+  const existing = await store.hgetall<OOTrade>(KEYS.ooTrades);
+  const slots = new Set(entries.map(([, t]) => tradeSlot(t)));
+  const keys = new Set(entries.map(([k]) => k));
+  const replaced = Object.entries(existing)
+    .filter(([k, t]) => slots.has(tradeSlot(t)) && !keys.has(k))
+    .map(([k]) => k);
+  if (replaced.length) await store.hdel(KEYS.ooTrades, ...replaced);
+  const added = entries.filter(([k]) => !(k in existing)).length;
+  await store.hsetMany(KEYS.ooTrades, entries);
   const meta = (await store.get<{ updatedAt: number; files: string[] }>(KEYS.ooMeta)) ?? { updatedAt: 0, files: [] };
   if (body.file && !meta.files.includes(body.file)) meta.files.push(body.file);
   meta.updatedAt = Date.now();
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
     received: body.trades.length,
     invalid: body.trades.length - valid.length,
     added,
+    replaced: replaced.length,
     duplicates: valid.length - added,
     total: await store.hlen(KEYS.ooTrades),
   });

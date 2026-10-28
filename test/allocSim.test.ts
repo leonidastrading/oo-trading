@@ -61,3 +61,12 @@ describe("allocation simulator", () => {
     expect(impliedAllocations(rows).PS).toEqual({ pct: 10, maxContracts: 50 });
   });
 });
+
+describe("duplicate runs", () => {
+  it("counts an entry once when two OO runs of it are stored", () => {
+    const a = t({ margin: 10_000, pl: 2000, contracts: 10 });
+    const b = t({ margin: 7_000, pl: 1400, contracts: 7, legs: "7 Mar 2 5000 P STO 3.00 | 7 Mar 2 4990 P BTO 1.00", strategy: "PS " });
+    const r = simulate(toSimTrades([a, b]), { PS: { pct: 10 } }, 100_000);
+    expect(r.trades).toBe(1);
+  });
+});

@@ -1,5 +1,5 @@
 // Allocation simulator: re-size OO backtest trades from per-strategy allocation % and compounding equity.
-import { parseLegs, type OOTrade } from "./ooCsv";
+import { parseLegs, tradeSlot, type OOTrade } from "./ooCsv";
 
 export interface StrategyAlloc {
   /** % of current equity committed to each new trade (sized on risk per contract, like OO). */
@@ -37,9 +37,20 @@ export function maxLossPerLot(t: Pick<OOTrade, "legs" | "dateOpened" | "contract
   return { risk: Math.max(0, -worst), premium };
 }
 
+/** One trade per entry slot (different OO runs of the same entry are the same trade), preferring rows with margin. */
+export function uniqueEntries(trades: OOTrade[]): OOTrade[] {
+  const by = new Map<string, OOTrade>();
+  for (const t of trades) {
+    const k = tradeSlot(t);
+    const cur = by.get(k);
+    if (!cur || (typeof cur.margin !== "number" && typeof t.margin === "number")) by.set(k, t);
+  }
+  return [...by.values()];
+}
+
 export function toSimTrades(trades: OOTrade[]): SimTrade[] {
   const out: SimTrade[] = [];
-  for (const t of trades) {
+  for (const t of uniqueEntries(trades)) {
     const n = Math.max(1, t.contracts || 1);
     const { risk, premium } = maxLossPerLot(t);
     const marginPerLot = typeof t.margin === "number" && t.margin > 0 ? t.margin / n : 0;
@@ -47,7 +58,7 @@ export function toSimTrades(trades: OOTrade[]): SimTrade[] {
     if (!(riskPerLot > 0)) continue;
     const closeDate = t.dateClosed ?? t.dateOpened;
     out.push({
-      strategy: t.strategy,
+      strategy: t.strategy.trim(),
       open: `${t.dateOpened} ${t.timeOpened}`,
       close: `${closeDate} ${t.timeClosed ?? "16:00:00"}`,
       closeDate,
@@ -67,17 +78,18 @@ export function toSimTrades(trades: OOTrade[]): SimTrade[] {
 export function impliedAllocations(trades: OOTrade[]): Record<string, StrategyAlloc> {
   const by = new Map<string, { ratios: number[]; contracts: number[] }>();
   // When a strategy's log carries Margin Req., trust only those rows (older uploads without it may be stale runs).
-  const withMargin = new Set(trades.filter((t) => typeof t.margin === "number" && t.margin > 0).map((t) => t.strategy));
-  for (const t of trades) {
-    if (withMargin.has(t.strategy) && !(typeof t.margin === "number" && t.margin > 0)) continue;
+  const withMargin = new Set(trades.filter((t) => typeof t.margin === "number" && t.margin > 0).map((t) => t.strategy.trim()));
+  for (const t of uniqueEntries(trades)) {
+    const name = t.strategy.trim();
+    if (withMargin.has(name) && !(typeof t.margin === "number" && t.margin > 0)) continue;
     if (t.fundsAtClose === null || !t.contracts) continue;
     const [sim] = toSimTrades([t]);
     const fundsAtOpen = t.fundsAtClose - t.pl;
     if (!sim || fundsAtOpen <= 0) continue;
-    const v = by.get(t.strategy) ?? { ratios: [], contracts: [] };
+    const v = by.get(name) ?? { ratios: [], contracts: [] };
     v.ratios.push((t.contracts * sim.riskPerLot) / fundsAtOpen);
     v.contracts.push(t.contracts);
-    by.set(t.strategy, v);
+    by.set(name, v);
   }
   const out: Record<string, StrategyAlloc> = {};
   const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];

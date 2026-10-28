@@ -97,6 +97,11 @@ export function parseTime(v: string | undefined): string | null {
   return `${String(h).padStart(2, "0")}:${m[2]}:${m[3] ?? "00"}`;
 }
 
+/** One backtest entry: a strategy opens at most once per minute-stamp. Re-runs of the same entry share a slot. */
+export function tradeSlot(t: Pick<OOTrade, "strategy" | "dateOpened" | "timeOpened">): string {
+  return `${t.strategy.trim()}|${t.dateOpened}|${t.timeOpened}`;
+}
+
 export function tradeKey(t: Pick<OOTrade, "strategy" | "dateOpened" | "timeOpened" | "legs">): string {
   return [t.strategy.trim(), t.dateOpened, t.timeOpened, t.legs.replace(/\s+/g, " ").trim()].join("|");
 }

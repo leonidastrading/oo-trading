@@ -50,7 +50,7 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
 
 export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; colorOf: (s: string) => string }) {
   const defaults = useMemo(() => impliedAllocations(trades), [trades]);
-  const strategies = useMemo(() => [...new Set(trades.map((t) => t.strategy))].sort(), [trades]);
+  const strategies = useMemo(() => [...new Set(trades.map((t) => t.strategy.trim()))].sort(), [trades]);
   const [equity, setEquity] = useState(1_000_000);
   const [range, setRange] = useState(0);
   const [alloc, setAlloc] = useState<Record<string, StrategyAlloc>>({});

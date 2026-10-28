@@ -5,7 +5,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { requireKv } from "@/lib/apiGuard";
 import { KEYS, kv } from "@/lib/kv";
-import { isValidTrade, tradeKey, type OOTrade } from "@/lib/ooCsv";
+import { isValidTrade, tradeKey, tradeSlot, type OOTrade } from "@/lib/ooCsv";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +17,7 @@ function authorized(req: NextRequest): boolean {
   return timingSafeEqual(h(token), h(given));
 }
 
-const slot = (t: Pick<OOTrade, "strategy" | "dateOpened" | "timeOpened">) => `${t.strategy.trim()}|${t.dateOpened}|${t.timeOpened}`;
+const slot = tradeSlot;
 
 export async function POST(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
