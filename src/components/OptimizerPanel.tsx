@@ -21,15 +21,16 @@ export function OptimizerPanel({
   trades,
   alloc,
   equity,
-  current,
+  baseline,
   strategies,
   label,
   onApply,
 }: {
   trades: SimTrade[];
+  /** Starting point for every run: the uploaded log's settings, never the sliders (which may hold an earlier result). */
   alloc: Record<string, StrategyAlloc>;
   equity: number;
-  current: SimResult;
+  baseline: SimResult;
   strategies: string[];
   label: (s: string) => string;
   onApply: (a: Record<string, StrategyAlloc>) => void;
@@ -57,7 +58,7 @@ export function OptimizerPanel({
         maxAvgMargin: num(maxAvg) === null ? null : num(maxAvg)! / 100,
         maxPeakMargin: num(maxPeak) === null ? null : num(maxPeak)! / 100,
         maxDrawdown: num(maxDd) === null ? null : num(maxDd)! / 100,
-        minPl: objective === "dd" ? (num(minPl) ?? current.pl) : null,
+        minPl: objective === "dd" ? (num(minPl) ?? baseline.pl) : null,
         maxPct: num(maxPct) ?? 20,
       },
       (runs) => setRunning({ runs }),
@@ -106,7 +107,7 @@ export function OptimizerPanel({
         {objective === "dd" && (
           <label className="space-y-1">
             <span className="block text-xs text-muted">Keep P/L at least $</span>
-            <input className={`${field} w-28`} value={minPl} onChange={(e) => setMinPl(e.target.value)} placeholder={String(Math.round(current.pl))} inputMode="decimal" />
+            <input className={`${field} w-28`} value={minPl} onChange={(e) => setMinPl(e.target.value)} placeholder={String(Math.round(baseline.pl))} inputMode="decimal" />
           </label>
         )}
         <label className="space-y-1">
@@ -123,7 +124,10 @@ export function OptimizerPanel({
       </div>
 
       <div>
-        <div className="mb-1 text-xs text-muted">Strategies in the sweep (unchecked ones keep their current allocation)</div>
+        <div className="mb-1 text-xs text-muted">
+          Every run starts from your OO settings on the uploaded log (not from the sliders or an earlier result). Unchecked strategies stay at
+          their OO setting.
+        </div>
         <div className="flex flex-wrap gap-2">
           {strategies.map((s) => {
             const on = !excluded.has(s);
@@ -161,7 +165,7 @@ export function OptimizerPanel({
                 <thead>
                   <tr>
                     <th>Strategy</th>
-                    <th>Now</th>
+                    <th>OO settings</th>
                     <th>Suggested</th>
                   </tr>
                 </thead>
@@ -185,7 +189,7 @@ export function OptimizerPanel({
                 <thead>
                   <tr>
                     <th>Metric</th>
-                    <th>Now</th>
+                    <th>OO settings</th>
                     <th>Suggested</th>
                   </tr>
                 </thead>
@@ -193,7 +197,7 @@ export function OptimizerPanel({
                   {rows.map(([k, f]) => (
                     <tr key={k}>
                       <td>{k}</td>
-                      <td>{f(current)}</td>
+                      <td>{f(baseline)}</td>
                       <td className="font-semibold">{f(result.result)}</td>
                     </tr>
                   ))}

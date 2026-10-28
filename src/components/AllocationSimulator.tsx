@@ -87,6 +87,8 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
     return toSimTrades(trades.filter((t) => t.dateOpened >= from));
   }, [trades, range]);
   const sim = useMemo(() => simulate(simTrades, effective, equity), [simTrades, effective, equity]);
+  // Reference run on the uploaded log at the OO settings (independent of the sliders).
+  const baselineSim = useMemo(() => simulate(simTrades, defaults, equity), [simTrades, defaults, equity]);
   const [showOpt, setShowOpt] = useState(false);
   // The backtest's own starting funds (first trade's funds at close minus its P/L), to compare with OO 1:1.
   const ooStart = useMemo(() => {
@@ -146,10 +148,11 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
 
       {showOpt && (
         <OptimizerPanel
+          key={`${range}|${equity}|${trades.length}`}
           trades={simTrades}
-          alloc={effective}
+          alloc={defaults}
           equity={equity}
-          current={sim}
+          baseline={baselineSim}
           strategies={strategies}
           label={shortName}
           onApply={(a) => setAlloc(a)}
