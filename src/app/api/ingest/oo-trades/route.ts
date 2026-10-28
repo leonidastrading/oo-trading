@@ -38,6 +38,11 @@ export async function POST(req: NextRequest) {
   if (replaced.length) await store.hdel(KEYS.ooTrades, ...replaced);
   const fresh = valid.filter((t) => !(t.key in existing));
   await store.hsetnxMany(KEYS.ooTrades, fresh.map((t) => [t.key, t] as [string, unknown]));
+  // Fill in Margin Req. on trades stored before the feed carried it.
+  for (const t of valid) {
+    const old = existing[t.key];
+    if (old && typeof t.margin === "number" && typeof old.margin !== "number") await store.hset(KEYS.ooTrades, t.key, { ...old, margin: t.margin });
+  }
 
   const meta = (await store.get<{ updatedAt: number; files: string[]; autoRefreshedAt?: number }>(KEYS.ooMeta)) ?? { updatedAt: 0, files: [] };
   const source = body.source ?? "OO auto-refresh";
