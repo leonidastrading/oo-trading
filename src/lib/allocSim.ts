@@ -1,11 +1,33 @@
 // Allocation simulator: re-size OO backtest trades from per-strategy allocation % and compounding equity.
 import { parseLegs, tradeSlot, type OOTrade } from "./ooCsv";
+import { canonicalStrategy } from "./scorecard";
 
 export interface StrategyAlloc {
   /** % of current equity committed to each new trade (sized on risk per contract, like OO). */
   pct: number;
   /** Optional cap on contracts per trade (e.g. 1 for an add-on); 0/undefined = no cap. */
   maxContracts?: number;
+}
+
+/** Schwab Port 2026 allocations in Option Omega (as of Oct 28, 2026), keyed by the scorecard's short names. */
+export const PORTFOLIO_ALLOC: Record<string, StrategyAlloc> = {
+  Long: { pct: 7.2 },
+  Short: { pct: 3.4 },
+  "8SMA IC": { pct: 5.4 },
+  FOMC: { pct: 0.5 },
+  "$8 IC": { pct: 0.9 },
+  "$8 IC Dip": { pct: 100, maxContracts: 1 },
+  "5d IC": { pct: 3 },
+  BWB: { pct: 0.5 },
+  "VIX>30 1DTE": { pct: 1 },
+  "VIX-up PS": { pct: 1 },
+  "2DTE": { pct: 3 },
+};
+
+/** The portfolio's setting for an OO strategy name, if it's one of the book's strategies. */
+export function portfolioAlloc(name: string): StrategyAlloc | undefined {
+  const key = /dip\s*add/i.test(name) ? "$8 IC Dip" : canonicalStrategy(name);
+  return PORTFOLIO_ALLOC[key];
 }
 
 export interface SimTrade {

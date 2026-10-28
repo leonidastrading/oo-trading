@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Area, ComposedChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { impliedAllocations, simulate, toSimTrades, type StrategyAlloc } from "@/lib/allocSim";
+import { impliedAllocations, portfolioAlloc, simulate, toSimTrades, type StrategyAlloc } from "@/lib/allocSim";
 import type { OOTrade } from "@/lib/ooCsv";
 import { addDays, todayET } from "@/lib/time";
 import { money, plClass } from "./format";
@@ -49,8 +49,12 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
 }
 
 export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; colorOf: (s: string) => string }) {
-  const defaults = useMemo(() => impliedAllocations(trades), [trades]);
   const strategies = useMemo(() => [...new Set(trades.map((t) => t.strategy.trim()))].sort(), [trades]);
+  // Your Schwab Port 2026 settings where the strategy is known; otherwise the sizing read from the log.
+  const defaults = useMemo(() => {
+    const implied = impliedAllocations(trades);
+    return Object.fromEntries(strategies.map((s) => [s, portfolioAlloc(s) ?? implied[s] ?? { pct: 1 }]));
+  }, [trades, strategies]);
   const [equity, setEquity] = useState(1_000_000);
   const [range, setRange] = useState(0);
   const [alloc, setAlloc] = useState<Record<string, StrategyAlloc>>({});
@@ -95,7 +99,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
           <h2 className="text-lg font-bold text-accent">Allocation simulator</h2>
           <p className="text-xs text-muted">
             Re-sizes every backtest trade from each strategy&apos;s allocation (% of current equity per trade, sized on OO&apos;s margin per contract),
-            compounding as trades close. Sliders start at the sizing OO used.
+            compounding as trades close. Sliders start at your Schwab Port 2026 settings in Option Omega.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -118,7 +122,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
             ))}
           </div>
           <button onClick={() => setAlloc({})} className="rounded-lg border border-border px-3 py-1 text-ink-2 hover:bg-surface-2">
-            Reset to OO sizing
+            Reset to my OO settings
           </button>
         </div>
       </div>

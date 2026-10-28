@@ -82,3 +82,20 @@ describe("mixed runs", () => {
     expect(impliedAllocations([...sized, ...other]).PS).toMatchObject({ pct: 10 });
   });
 });
+
+describe("portfolio settings", () => {
+  it("maps every Schwab Port 2026 strategy to its OO allocation", async () => {
+    const { portfolioAlloc } = await import("@/lib/allocSim");
+    expect(portfolioAlloc("! SPX 0 DTE - Long (sell puts) +costs")).toEqual({ pct: 7.2 });
+    expect(portfolioAlloc("! SPX 0 DTE - Short (sell calls) RE-TUNED +costs")).toEqual({ pct: 3.4 });
+    expect(portfolioAlloc("! SPX 0 DTE 8SMA IC +costs")).toEqual({ pct: 5.4 });
+    expect(portfolioAlloc("! SPX 0DTE - FOMC 2:35pm long straddle 0.5%")).toEqual({ pct: 0.5 });
+    expect(portfolioAlloc("! SPX 0DTE $8 IC 1:35 10SMA")).toEqual({ pct: 0.9 });
+    expect(portfolioAlloc("! SPX 0DTE $8 IC 1:35 10SMA - Dip Add-On")).toEqual({ pct: 100, maxContracts: 1 });
+    expect(portfolioAlloc("! SPX 0DTE 5d IC 100-wide 1:30+2:30pm SL300")).toEqual({ pct: 3 });
+    expect(portfolioAlloc("! SPX 0DTE Put BWB Fly - 3 Entries Above 5SMA")).toEqual({ pct: 0.5 });
+    expect(portfolioAlloc("! SPX 1DTE Vix >30 1:30pm")).toEqual({ pct: 1 });
+    expect(portfolioAlloc("! SPX 1DTE VIX up ≥5% 1DTE put spread 3:50pm")).toEqual({ pct: 1 });
+    expect(portfolioAlloc("! SPX 2DTE Down-Trend Put Spread - 11D 75w (tested)")).toEqual({ pct: 3 });
+  });
+});
