@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import {
   Area,
   ComposedChart,
@@ -26,6 +26,21 @@ const compact = (v: number) =>
 
 export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis; underlying: string }) {
   const [win, setWin] = useState(1);
+  // Remember the chosen window on this device (restored after hydration; storage may be blocked).
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      try {
+        const i = Number(localStorage.getItem("expiryChart.window"));
+        if (localStorage.getItem("expiryChart.window") !== null && Number.isInteger(i) && i >= 0 && i < WINDOWS.length) setWin(i);
+      } catch {}
+    });
+  }, []);
+  const choose = (i: number) => {
+    setWin(i);
+    try {
+      localStorage.setItem("expiryChart.window", String(i));
+    } catch {}
+  };
   const gid = useId().replace(/:/g, "");
   const { spot, best, breakevens } = analysis;
 
@@ -52,7 +67,7 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
           {WINDOWS.map((w, i) => (
             <button
               key={w.label}
-              onClick={() => setWin(i)}
+              onClick={() => choose(i)}
               className={`px-2.5 py-1 ${i === win ? "bg-surface-2 text-ink" : "text-muted"}`}
               aria-pressed={i === win}
             >
