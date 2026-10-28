@@ -256,6 +256,29 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
               );
             })}
           </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-border font-semibold">
+              <td>Total</td>
+              <td>
+                {strategies
+                  .filter((s) => !(effective[s].maxContracts && effective[s].pct >= 100))
+                  .reduce((t, s) => t + effective[s].pct, 0)
+                  .toFixed(2)}
+                % <span className="text-xs font-normal text-muted">per-trade allocations{strategies.some((s) => effective[s].maxContracts && effective[s].pct >= 100) ? " (+ add-on)" : ""}</span>
+              </td>
+              <td />
+              <td>{sim.trades.toLocaleString()}</td>
+              <td>{sim.trades ? "100%" : "—"}</td>
+              <td>{sim.trades ? (sim.strategies.reduce((t, r) => t + r.avgContracts * r.trades, 0) / sim.trades).toFixed(1) : "—"}</td>
+              <td className={plClass(sim.pl)}>{money(sim.pl, { sign: true })}</td>
+              <td>{sim.trades ? "100%" : "—"}</td>
+              <td>{p1(sim.winPct)}</td>
+              <td>{n2(sim.profitFactor)}</td>
+              <td>{n2(sim.riskReward)}</td>
+              <td className="text-loss" title="Whole account">{money(sim.maxDd)}</td>
+              <td className="text-loss" title="Whole account">{p1(sim.maxDdPct, 2)}</td>
+            </tr>
+          </tfoot>
         </table>
       </div>
 
