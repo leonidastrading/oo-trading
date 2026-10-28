@@ -90,6 +90,20 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   // Reference run on the uploaded log at the OO settings (independent of the sliders).
   const baselineSim = useMemo(() => simulate(simTrades, defaults, equity), [simTrades, defaults, equity]);
   const [showOpt, setShowOpt] = useState(false);
+  const [ddUnit, setDdUnit] = useState<"pct" | "usd">("pct");
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      try {
+        if (localStorage.getItem("allocSim.ddUnit") === "usd") setDdUnit("usd");
+      } catch {}
+    });
+  }, []);
+  const chooseDd = (u: "pct" | "usd") => {
+    setDdUnit(u);
+    try {
+      localStorage.setItem("allocSim.ddUnit", u);
+    } catch {}
+  };
   // The backtest's own starting funds (first trade's funds at close minus its P/L), to compare with OO 1:1.
   const ooStart = useMemo(() => {
     const first = [...trades].filter((t) => t.fundsAtClose !== null && t.source).sort((a, b) => `${a.dateClosed}${a.timeClosed}`.localeCompare(`${b.dateClosed}${b.timeClosed}`))[0];
@@ -97,7 +111,10 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   }, [trades]);
 
   const set = (s: string, patch: Partial<StrategyAlloc>) => setAlloc((a) => ({ ...a, [s]: { ...effective[s], ...patch } }));
-  const ddFloor = Math.min(-0.005, ...sim.equity.map((e) => e.dd));
+  // Drawdown in % of the peak or in $ below it.
+  const chartData = useMemo(() => withDollarDrawdown(sim.start, sim.equity), [sim]);
+  const ddKey = ddUnit === "usd" ? "ddUsd" : "dd";
+  const ddFloor = ddUnit === "usd" ? Math.min(-1, ...chartData.map((e) => e.ddUsd)) : Math.min(-0.005, ...sim.equity.map((e) => e.dd));
   const byName = new Map(sim.strategies.map((r) => [r.strategy, r]));
   const years = [...new Set(sim.months.map((m) => m.month.slice(0, 4)))].sort().reverse();
   const monthMap = new Map(sim.months.map((m) => [m.month, m]));
@@ -160,20 +177,32 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       )}
 
       {sim.equity.length > 1 && (
-        <div className="card h-96 p-3 md:h-[28rem]">
+        <div className="card relative h-96 p-3 md:h-[28rem]">
+          <div className="absolute right-3 top-3 z-10 flex rounded-lg border border-border bg-surface text-xs" role="group" aria-label="Drawdown units">
+            {(["pct", "usd"] as const).map((u) => (
+              <button
+                key={u}
+                onClick={() => chooseDd(u)}
+                aria-pressed={ddUnit === u}
+                className={`px-2.5 py-1 ${ddUnit === u ? "bg-surface-2 text-ink" : "text-muted"}`}
+              >
+                DD {u === "pct" ? "%" : "$"}
+              </button>
+            ))}
+          </div>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={sim.equity} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
+            <ComposedChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
               <XAxis dataKey="date" tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={{ stroke: "var(--axis)" }} minTickGap={40} />
               <YAxis yAxisId="eq" tickFormatter={compact} tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={false} width={56} domain={["auto", "auto"]} />
               {/* Drawdown on its own axis, zero a quarter of the way up so the red spikes hang along the bottom. */}
               <YAxis
                 yAxisId="dd"
                 orientation="right"
-                tickFormatter={(v: number) => (v < 0 ? `${(v * 100).toFixed(1)}%` : "")}
+                tickFormatter={(v: number) => (v < 0 ? (ddUnit === "usd" ? `−${compact(-v)}` : `${(v * 100).toFixed(1)}%`) : "")}
                 tick={{ fill: "var(--loss)", fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
-                width={44}
+                width={ddUnit === "usd" ? 56 : 44}
                 domain={[ddFloor, -ddFloor * 3]}
                 ticks={[ddFloor, ddFloor / 2, 0]}
               />
@@ -182,9 +211,11 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
                 contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
                 labelStyle={{ color: "var(--ink-2)" }}
                 itemStyle={{ color: "var(--ink)" }}
-                formatter={(v, name) => (name === "dd" ? [sp(Number(v), 2), "Drawdown"] : [money(Number(v)), "Equity"])}
+                formatter={(v, name) =>
+                  name === "dd" ? [sp(Number(v), 2), "Drawdown"] : name === "ddUsd" ? [money(Number(v)), "Drawdown"] : [money(Number(v)), "Equity"]
+                }
               />
-              <Area yAxisId="dd" type="linear" dataKey="dd" stroke="var(--loss)" strokeWidth={1} fill="var(--loss)" fillOpacity={0.35} isAnimationActive={false} />
+              <Area yAxisId="dd" type="linear" dataKey={ddKey} stroke="var(--loss)" strokeWidth={1} fill="var(--loss)" fillOpacity={0.35} isAnimationActive={false} />
               <Area yAxisId="eq" type="monotone" dataKey="equity" stroke="var(--spot)" strokeWidth={2} fill="var(--spot)" fillOpacity={0.12} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
@@ -372,6 +403,16 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       </div>
     </section>
   );
+}
+
+function withDollarDrawdown<T extends { equity: number }>(start: number, rows: T[]): (T & { ddUsd: number })[] {
+  const out: (T & { ddUsd: number })[] = [];
+  let peak = start;
+  for (const r of rows) {
+    peak = Math.max(peak, r.equity);
+    out.push({ ...r, ddUsd: r.equity - peak });
+  }
+  return out;
 }
 
 function compactSigned(v: number): string {
