@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, ComposedChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { impliedAllocations, simulate, toSimTrades, type StrategyAlloc } from "@/lib/allocSim";
 import type { OOTrade } from "@/lib/ooCsv";
 import { addDays, todayET } from "@/lib/time";
@@ -83,6 +83,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   }, [trades, effective, equity, range]);
 
   const set = (s: string, patch: Partial<StrategyAlloc>) => setAlloc((a) => ({ ...a, [s]: { ...effective[s], ...patch } }));
+  const ddFloor = Math.min(-0.005, ...sim.equity.map((e) => e.dd));
   const byName = new Map(sim.strategies.map((r) => [r.strategy, r]));
   const years = [...new Set(sim.months.map((m) => m.month.slice(0, 4)))].sort().reverse();
   const monthMap = new Map(sim.months.map((m) => [m.month, m]));
@@ -138,19 +139,33 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       </div>
 
       {sim.equity.length > 1 && (
-        <div className="card h-48 p-3 md:h-56">
+        <div className="card h-96 p-3 md:h-[28rem]">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={sim.equity} margin={{ top: 4, right: 8, bottom: 0, left: 4 }}>
+            <ComposedChart data={sim.equity} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
               <XAxis dataKey="date" tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={{ stroke: "var(--axis)" }} minTickGap={40} />
-              <YAxis tickFormatter={compact} tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={false} width={56} domain={["auto", "auto"]} />
+              <YAxis yAxisId="eq" tickFormatter={compact} tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={false} width={56} domain={["auto", "auto"]} />
+              {/* Drawdown on its own axis, zero a quarter of the way up so the red spikes hang along the bottom. */}
+              <YAxis
+                yAxisId="dd"
+                orientation="right"
+                tickFormatter={(v: number) => (v < 0 ? `${(v * 100).toFixed(1)}%` : "")}
+                tick={{ fill: "var(--loss)", fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                width={44}
+                domain={[ddFloor, -ddFloor * 3]}
+                ticks={[ddFloor, ddFloor / 2, 0]}
+              />
+              <ReferenceLine yAxisId="dd" y={0} stroke="var(--axis)" strokeDasharray="2 3" />
               <Tooltip
                 contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
                 labelStyle={{ color: "var(--ink-2)" }}
                 itemStyle={{ color: "var(--ink)" }}
-                formatter={(v) => [money(Number(v)), "Equity"]}
+                formatter={(v, name) => (name === "dd" ? [sp(Number(v), 2), "Drawdown"] : [money(Number(v)), "Equity"])}
               />
-              <Area type="monotone" dataKey="equity" stroke="var(--spot)" strokeWidth={2} fill="var(--spot)" fillOpacity={0.12} isAnimationActive={false} />
-            </AreaChart>
+              <Area yAxisId="dd" type="linear" dataKey="dd" stroke="var(--loss)" strokeWidth={1} fill="var(--loss)" fillOpacity={0.35} isAnimationActive={false} />
+              <Area yAxisId="eq" type="monotone" dataKey="equity" stroke="var(--spot)" strokeWidth={2} fill="var(--spot)" fillOpacity={0.12} isAnimationActive={false} />
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       )}
@@ -178,7 +193,8 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
             {strategies.map((s) => {
               const a = effective[s];
               const r = byName.get(s);
-              const max = Math.max(20, Math.ceil((defaults[s]?.pct ?? 1) * 2));
+              // 0–20% covers normal sizing; a capped add-on (100% × 1 contract) gets the full 0–100%.
+              const max = (defaults[s]?.pct ?? 0) > 20 ? 100 : 20;
               return (
                 <tr key={s} className={a.pct > 0 ? undefined : "opacity-50"}>
                   <td className="min-w-[12rem] whitespace-normal">
@@ -202,7 +218,8 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
                         min={0}
                         step={0.05}
                         value={a.pct}
-                        onChange={(e) => set(s, { pct: Math.max(0, Number(e.target.value) || 0) })}
+                        max={100}
+                        onChange={(e) => set(s, { pct: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })}
                         className="w-16 rounded border border-border bg-surface px-1 py-0.5 text-right text-ink"
                       />
                       <span className="text-muted">%</span>
