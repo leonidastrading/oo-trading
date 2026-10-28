@@ -231,6 +231,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     const barAt = new Map(bars.map((b) => [b.time, b]));
     const overlay = overlayRef.current;
     const els: HTMLDivElement[] = [];
+    const leaders: HTMLDivElement[] = [];
     if (overlay && !isDaily) {
       overlay.replaceChildren();
       for (const l of labels) {
@@ -243,8 +244,13 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         b2.textContent = l.tag;
         b2.className = "font-medium opacity-90";
         el.append(a, b2);
-        overlay.append(el);
+        // Thin connector from the arrow to a label that had to be pushed out of the way.
+        const lead = document.createElement("div");
+        lead.className = "absolute w-px opacity-50";
+        lead.style.background = l.color;
+        overlay.append(lead, el);
         els.push(el);
+        leaders.push(lead);
       }
     } else overlay?.replaceChildren();
     const GAP = 26; // px between the bar's high/low and its label, clear of the arrow
@@ -260,8 +266,10 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         const x = chart.timeScale().timeToCoordinate(l.time);
         const y = bar ? series.priceToCoordinate(l.exit ? bar.high : bar.low) : null;
         if (!el) return;
+        const lead = leaders[i];
         if (x === null || y === null) {
           el.style.display = "none";
+          if (lead) lead.style.display = "none";
           return;
         }
         el.style.display = "";
@@ -276,6 +284,13 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         const offset = GAP + ((arrowsOn.get(`${l.time}|${l.exit}`) ?? 1) - 1) * 20 + lane * (h + 4);
         el.style.left = `${left}px`;
         el.style.top = `${l.exit ? y - offset - h : y + offset}px`;
+        if (lead) {
+          const start = offset - lane * (h + 4) - 4; // just past the arrow
+          lead.style.display = lane > 0 ? "" : "none";
+          lead.style.left = `${x}px`;
+          lead.style.height = `${offset - start}px`;
+          lead.style.top = `${l.exit ? y - offset : y + start}px`;
+        }
       });
     };
     if (!isDaily) createSeriesMarkers(series, markers);
