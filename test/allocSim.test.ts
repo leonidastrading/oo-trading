@@ -70,3 +70,15 @@ describe("duplicate runs", () => {
     expect(r.trades).toBe(1);
   });
 });
+
+describe("mixed runs", () => {
+  it("keeps the newest copy of an entry and reads sizing from one run per strategy", () => {
+    const old = t({ margin: 10_000, pl: 2000, contracts: 10, uploadedAt: 1, source: "a" });
+    const fresh = t({ margin: 7_000, pl: 1400, contracts: 7, legs: "7 Mar 2 5000 P STO 3.00 | 7 Mar 2 4990 P BTO 1.00", uploadedAt: 2, source: "b" });
+    const r = simulate(toSimTrades([old, fresh]), { PS: { pct: 7 } }, 100_000);
+    expect(r.trades).toBe(1);
+    const sized = [1, 2, 3].map((i) => t({ dateOpened: `2026-03-0${i}`, source: "csv", margin: 10_000, contracts: 10, fundsAtClose: 100_000 + 2000 }));
+    const other = [4, 5, 6, 7].map((i) => t({ dateOpened: `2026-03-0${i}`, source: i === 4 ? "x" : `feed${i}`, margin: 50_000, contracts: 50, fundsAtClose: 100_000 + 2000 }));
+    expect(impliedAllocations([...sized, ...other]).PS).toMatchObject({ pct: 10 });
+  });
+});

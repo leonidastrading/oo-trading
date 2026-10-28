@@ -37,13 +37,18 @@ export function maxLossPerLot(t: Pick<OOTrade, "legs" | "dateOpened" | "contract
   return { risk: Math.max(0, -worst), premium };
 }
 
-/** One trade per entry slot (different OO runs of the same entry are the same trade), preferring rows with margin. */
+/** One trade per entry slot (different OO runs of the same entry are the same trade): newest upload first, then rows with margin. */
 export function uniqueEntries(trades: OOTrade[]): OOTrade[] {
   const by = new Map<string, OOTrade>();
+  const rank = (t: OOTrade) => [t.uploadedAt ?? 0, typeof t.margin === "number" ? 1 : 0];
   for (const t of trades) {
     const k = tradeSlot(t);
     const cur = by.get(k);
-    if (!cur || (typeof cur.margin !== "number" && typeof t.margin === "number")) by.set(k, t);
+    if (!cur) by.set(k, t);
+    else {
+      const [a, b] = [rank(t), rank(cur)];
+      if (a[0] > b[0] || (a[0] === b[0] && a[1] > b[1])) by.set(k, t);
+    }
   }
   return [...by.values()];
 }
@@ -73,10 +78,20 @@ export function toSimTrades(trades: OOTrade[]): SimTrade[] {
 
 /**
  * The sizing OO used, per strategy: a contract cap when many trades sit at the same maximum, and the
- * median of (contracts × risk) / funds at entry over the trades below that cap.
+ * allocation from (contracts × risk) / funds at entry over the trades below that cap. OO rounds contracts
+ * down, so that ratio sits just under the setting: take its 90th percentile.
  */
 export function impliedAllocations(trades: OOTrade[]): Record<string, StrategyAlloc> {
   const by = new Map<string, { ratios: number[]; contracts: number[] }>();
+  // Sizing differs between OO runs: read it from one run per strategy (the upload with the most of its rows).
+  const counts = new Map<string, Map<string, number>>();
+  for (const t of trades) {
+    const m = counts.get(t.strategy.trim()) ?? new Map<string, number>();
+    m.set(t.source ?? "", (m.get(t.source ?? "") ?? 0) + 1);
+    counts.set(t.strategy.trim(), m);
+  }
+  const mainSource = new Map([...counts].map(([k, m]) => [k, [...m].sort((a, b) => b[1] - a[1])[0][0]]));
+  trades = trades.filter((t) => (t.source ?? "") === mainSource.get(t.strategy.trim()));
   // When a strategy's log carries Margin Req., trust only those rows (older uploads without it may be stale runs).
   const withMargin = new Set(trades.filter((t) => typeof t.margin === "number" && t.margin > 0).map((t) => t.strategy.trim()));
   for (const t of uniqueEntries(trades)) {
@@ -92,7 +107,7 @@ export function impliedAllocations(trades: OOTrade[]): Record<string, StrategyAl
     by.set(name, v);
   }
   const out: Record<string, StrategyAlloc> = {};
-  const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const p90 = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * 0.9))];
   for (const [s, v] of by) {
     if (v.contracts.every((c) => c === 1)) {
       out[s] = { pct: 100, maxContracts: 1 };
@@ -101,7 +116,7 @@ export function impliedAllocations(trades: OOTrade[]): Record<string, StrategyAl
     const top = Math.max(...v.contracts);
     const capped = v.contracts.filter((c) => c === top).length >= Math.max(3, v.contracts.length * 0.3);
     const below = v.ratios.filter((_, i) => v.contracts[i] < top);
-    const r = capped ? (below.length ? median(below) : Math.max(...v.ratios)) : median(v.ratios);
+    const r = capped ? (below.length ? p90(below) : Math.max(...v.ratios)) : p90(v.ratios);
     out[s] = { pct: Math.round(r * 10_000) / 100, ...(capped ? { maxContracts: top } : {}) };
   }
   return out;

@@ -17,6 +17,9 @@ export interface OOTrade {
   closeFees: number;
   /** OO "Margin Req." for the whole position (buying power held), when the log has it. */
   margin?: number | null;
+  /** Upload/feed this row came from, and when it was stored (newest copy of an entry wins). */
+  source?: string;
+  uploadedAt?: number;
 }
 
 /** RFC 4180 CSV parser (quotes, escaped quotes, CRLF, BOM). */

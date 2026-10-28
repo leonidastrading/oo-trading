@@ -27,7 +27,8 @@ export async function POST(req: NextRequest) {
   if (!body || !Array.isArray(body.trades)) return NextResponse.json({ error: "Expected { trades: [] }" }, { status: 400 });
   if (body.trades.length > 5000) return NextResponse.json({ error: "Max 5000 trades per request" }, { status: 413 });
 
-  const valid = body.trades.filter(isValidTrade).map((t) => ({ ...t, key: tradeKey(t) }));
+  const now = Date.now();
+  const valid = body.trades.filter(isValidTrade).map((t) => ({ ...t, key: tradeKey(t), source: body.source ?? "OO auto-refresh", uploadedAt: now }));
   const store = kv();
   const existing = await store.hgetall<OOTrade>(KEYS.ooTrades);
   const incomingSlots = new Set(valid.map(slot));

@@ -14,9 +14,10 @@ export async function POST(req: NextRequest) {
   if (body.trades.length > 5000) return NextResponse.json({ error: "Max 5000 trades per request" }, { status: 413 });
 
   const valid = body.trades.filter(isValidTrade) as OOTrade[];
+  const now = Date.now();
   const entries: [string, OOTrade][] = valid.map((t) => {
     const key = tradeKey(t);
-    return [key, { ...t, key }];
+    return [key, { ...t, key, source: body.file ?? "upload", uploadedAt: now }];
   });
   const store = kv();
   // Latest upload wins: an entry already stored from another run (same strategy, date and time) is replaced.
