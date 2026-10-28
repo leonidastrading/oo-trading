@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { optimize, type Objective, type OptimizeResult, type SimResult, type SimTrade, type StrategyAlloc } from "@/lib/allocSim";
 import { money } from "./format";
 
@@ -12,6 +12,17 @@ const OBJECTIVES: { key: Objective; label: string }[] = [
   { key: "sortino", label: "Max Sortino" },
   { key: "dd", label: "Smallest drawdown" },
 ];
+
+const STORE = "optimizer.v1";
+interface Saved {
+  objective: Objective;
+  maxAvg: string;
+  maxPeak: string;
+  maxDd: string;
+  minPl: string;
+  maxPct: string;
+  excluded: string[];
+}
 
 const pct = (f: number | null | undefined, d = 1) => (f === null || f === undefined || !Number.isFinite(f) ? "—" : `${(f * 100).toFixed(d)}%`);
 const n2 = (v: number | null | undefined) => (v === null || v === undefined || !Number.isFinite(v) ? "—" : v.toFixed(2));
@@ -43,6 +54,33 @@ export function OptimizerPanel({
   const [maxPct, setMaxPct] = useState("20");
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState<{ runs: number } | null>(null);
+  const [restored, setRestored] = useState(false);
+
+  // Remember these inputs on this device (restored after hydration; storage may be blocked).
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      try {
+        const v = JSON.parse(localStorage.getItem(STORE) ?? "null") as Saved | null;
+        if (v) {
+          if (OBJECTIVES.some((o) => o.key === v.objective)) setObjective(v.objective);
+          setMaxAvg(v.maxAvg ?? "20");
+          setMaxPeak(v.maxPeak ?? "");
+          setMaxDd(v.maxDd ?? "");
+          setMinPl(v.minPl ?? "");
+          setMaxPct(v.maxPct ?? "20");
+          setExcluded(new Set(v.excluded ?? []));
+        }
+      } catch {}
+      setRestored(true);
+    });
+  }, []);
+  useEffect(() => {
+    if (!restored) return;
+    try {
+      const v: Saved = { objective, maxAvg, maxPeak, maxDd, minPl, maxPct, excluded: [...excluded] };
+      localStorage.setItem(STORE, JSON.stringify(v));
+    } catch {}
+  }, [restored, objective, maxAvg, maxPeak, maxDd, minPl, maxPct, excluded]);
   const [result, setResult] = useState<OptimizeResult | null>(null);
 
   async function run() {
