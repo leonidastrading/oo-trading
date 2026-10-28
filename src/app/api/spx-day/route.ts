@@ -2,7 +2,7 @@ import { requireKv } from "@/lib/apiGuard";
 import { NextResponse } from "next/server";
 import { cachedFills, cachedMinuteBars, type Bar } from "@/lib/schwab/data";
 import { groupClosesByOrder, realizedOn } from "@/lib/realized";
-import { classifySpread } from "@/lib/spreads";
+import { classifySpread, daysBetween } from "@/lib/spreads";
 import { lastSessionDate, marketSession } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +15,8 @@ export interface EntryMarker {
   contracts: number;
   /** Net price per share: + credit received, − debit paid. */
   price: number;
+  /** Days from entry to the (latest) expiration: 0 = same-day. */
+  dte: number;
 }
 
 export interface ExitMarker {
@@ -22,6 +24,7 @@ export interface ExitMarker {
   time: number;
   label: string;
   contracts: number;
+  dte: number | null;
   /** Order ids of today's entries this exit closes (by matching symbols). */
   closes: string[];
   /** Realized P/L of the closing order, net of fees (null if the opening fill is outside the lookback). */
@@ -76,6 +79,7 @@ export async function GET() {
       label: classifySpread(ls),
       contracts: unit,
       price: Math.round((ls.reduce((s, l) => s + l.cash, 0) / unit) * 100) / 100,
+      dte: daysBetween(date, fs.map((f) => f.expiration ?? date).sort().at(-1) ?? date),
     });
   }
   entries.sort((a, b) => a.time - b.time);
@@ -100,6 +104,7 @@ export async function GET() {
         time: Math.floor(o.time / 1000),
         label: labels.length ? labels.join(" / ") : classifySpread(legs),
         closes: opened.map((e) => e.orderId),
+        dte: opened.length ? Math.max(...opened.map((e) => e.dte)) : null,
         contracts: legs.map((l) => Math.abs(l.qty)).reduce(gcd),
         realized: o.unknownBasis ? null : o.realized,
       };

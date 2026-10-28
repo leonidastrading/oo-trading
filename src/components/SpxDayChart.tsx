@@ -22,15 +22,17 @@ import { etOffsetMinutes, etParts, formatTimeET } from "@/lib/time";
 
 const ABBR: Record<string, string> = {
   "Iron condor": "IC",
-  "Put credit spread": "PCS",
-  "Call credit spread": "CCS",
-  "Put debit spread": "PDS",
-  "Call debit spread": "CDS",
+  "Put credit spread": "PS",
+  "Call credit spread": "CS",
+  "Put debit spread": "PS",
+  "Call debit spread": "CS",
   "Put broken-wing butterfly": "BWB",
-  "Call broken-wing butterfly": "Call BWB",
+  "Call broken-wing butterfly": "BWB",
   "Long straddle": "Straddle",
 };
-const abbr = (label: string) => ABBR[label] ?? label;
+const abbr = (label: string) => label.split(" / ").map((l) => ABBR[l] ?? l).join("/");
+/** Chart name: multi-day trades go by their DTE (1DTE, 2DTE), same-day ones by structure. */
+const shortName = (label: string, dte: number | null | undefined) => (dte && dte > 0 ? `${dte}DTE` : abbr(label));
 /** A loss closed before 3:45 PM is a stop; closes in the last 15 minutes are scheduled time exits. */
 const isStop = (x: { time: number; realized: number | null }) => (x.realized ?? 0) < 0 && etParts(x.time * 1000).minutesOfDay < 15 * 60 + 45;
 const priceText = (p: number) => `${p >= 0 ? "cr" : "db"} ${Math.abs(p).toFixed(2)}`;
@@ -135,7 +137,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     const chart = createChart(box.current, {
       autoSize: true,
       // Marker labels use the layout font size.
-      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: css("--muted", "#898781"), fontSize: 14 },
+      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: css("--muted", "#898781"), fontSize: 16 },
       grid: { vertLines: { visible: false }, horzLines: { color: css("--axis", "#4a4a46") + "55" } },
       rightPriceScale: { borderVisible: false },
       // Room after the last bar so labels near the close aren't clipped.
@@ -195,11 +197,11 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       if (!g.texts.includes(text)) g.texts.push(text);
       groups.set(`${time}|${kind}`, g);
     };
-    for (const e of data.entries) add(e.time, e.price >= 0 ? "credit" : "debit", String(num.get(e.orderId)));
+    for (const e of data.entries) add(e.time, e.price >= 0 ? "credit" : "debit", `${num.get(e.orderId)} ${shortName(e.label, e.dte)}`);
     for (const x of data.exits ?? []) {
       const kind: Kind = isStop(x) ? "stop" : (x.realized ?? 0) < 0 ? "timeLoss" : "win";
       const ids = (x.closes ?? []).map((id) => num.get(id)).filter((n): n is number => n !== undefined);
-      add(x.time, kind, ids.length ? ids.join(",") : "?");
+      add(x.time, kind, `${ids.length ? ids.join(",") : "?"} ${shortName(x.label, x.dte)}`);
     }
     const colors: Record<Kind, string> = {
       credit: css("--accent", "#e0b73b"),
@@ -212,14 +214,14 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       .sort((x, y) => x.time - y.time)
       .map((g) => {
         const exit = g.kind === "stop" || g.kind === "win" || g.kind === "timeLoss";
-        const ids = g.texts.join(",");
+        const ids = g.texts.join(" · ");
         return {
           time: g.time,
           position: exit ? ("aboveBar" as const) : ("belowBar" as const),
           shape: exit ? ("arrowDown" as const) : ("arrowUp" as const),
           color: colors[g.kind],
           text: g.kind === "stop" ? `S${ids}` : exit ? `x${ids}` : ids,
-          size: 1.2,
+          size: 1.5,
         };
       });
     if (!isDaily) createSeriesMarkers(series, markers);
@@ -302,8 +304,11 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
                   <td className={e.price >= 0 ? "text-accent" : "text-spot"}>{i + 1}</td>
                   <td className="whitespace-nowrap">{formatTimeET(e.time * 1000).slice(0, 5)}</td>
                   <td>
-                    <span className="md:hidden">{abbr(e.label)}</span>
-                    <span className="hidden md:inline">{e.label}</span>
+                    <span className="md:hidden">{shortName(e.label, e.dte)}</span>
+                    <span className="hidden md:inline">
+                      {e.label}
+                      {e.dte > 0 ? ` · ${e.dte}DTE` : ""}
+                    </span>
                   </td>
                   <td className="num">{e.contracts}</td>
                   <td className="num">{priceText(e.price)}</td>
@@ -336,7 +341,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
                     {formatTimeET(x.time * 1000).slice(0, 5)}
                   </td>
                   <td>
-                    <span className="md:hidden">{abbr(x.label)}</span>
+                    <span className="md:hidden">{shortName(x.label, x.dte)}</span>
                     <span className="hidden md:inline">{x.label}</span>
                   </td>
                   <td className="num">{x.contracts}</td>
