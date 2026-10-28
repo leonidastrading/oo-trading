@@ -146,6 +146,7 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
               cursor={{ stroke: "var(--muted)", strokeDasharray: "3 3" }}
               contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
               labelStyle={{ color: "var(--ink-2)" }}
+              itemStyle={{ color: "var(--ink)" }}
               labelFormatter={(v) => `${underlying} ${v}`}
               formatter={(v) => [money(Number(v)), "P/L at expiry"]}
             />

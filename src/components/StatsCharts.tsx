@@ -12,6 +12,7 @@ const axis = { tick: { fill: "var(--muted)", fontSize: 11 }, tickLine: false } a
 const tooltipStyle = {
   contentStyle: { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 },
   labelStyle: { color: "var(--ink-2)" },
+  itemStyle: { color: "var(--ink)" },
 };
 
 export function EquityChart({ rows }: { rows: DailyRow[] }) {

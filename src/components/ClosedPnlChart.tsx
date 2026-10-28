@@ -68,6 +68,7 @@ export function ClosedPnlChart({ points }: { points: ClosedPoint[] }) {
             <Tooltip
               contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
               labelStyle={{ color: "var(--ink-2)" }}
+              itemStyle={{ color: "var(--ink)" }}
               labelFormatter={(i) => {
                 const d = data[Number(i)];
                 return d.i === 0 ? "Start" : `${d.expired ? "4:00 PM settlement" : timeET(d.time)} · ${d.label} ${money(d.realized, { sign: true })}`;

@@ -81,6 +81,7 @@ export default function PnlPage() {
                   cursor={{ fill: "var(--surface-2)" }}
                   contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: "var(--ink-2)" }}
+                  itemStyle={{ color: "var(--ink)" }}
                   labelFormatter={(w) => {
                     const r = weeks.find((x) => x.week === w);
                     return r ? `Week of ${weekLabel(r.week, r.end)}` : String(w);
