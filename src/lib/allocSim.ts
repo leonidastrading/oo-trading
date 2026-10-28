@@ -47,7 +47,8 @@ export function uniqueEntries(trades: OOTrade[]): OOTrade[] {
     if (!cur) by.set(k, t);
     else {
       const [a, b] = [rank(t), rank(cur)];
-      if (a[0] > b[0] || (a[0] === b[0] && a[1] > b[1])) by.set(k, t);
+      // Ties broken by key so the choice doesn't depend on storage order.
+      if (a[0] > b[0] || (a[0] === b[0] && (a[1] > b[1] || (a[1] === b[1] && t.key > cur.key)))) by.set(k, t);
     }
   }
   return [...by.values()];
