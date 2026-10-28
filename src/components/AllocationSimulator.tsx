@@ -6,6 +6,7 @@ import { impliedAllocations, portfolioAlloc, simulate, toSimTrades, type Strateg
 import type { OOTrade } from "@/lib/ooCsv";
 import { addDays, todayET } from "@/lib/time";
 import { money, plClass } from "./format";
+import { OptimizerPanel } from "./OptimizerPanel";
 
 const RANGES = [
   { label: "All", from: () => "" },
@@ -81,10 +82,12 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
     return out;
   }, [strategies, alloc, defaults]);
 
-  const sim = useMemo(() => {
+  const simTrades = useMemo(() => {
     const from = RANGES[range].from();
-    return simulate(toSimTrades(trades.filter((t) => t.dateOpened >= from)), effective, equity);
-  }, [trades, effective, equity, range]);
+    return toSimTrades(trades.filter((t) => t.dateOpened >= from));
+  }, [trades, range]);
+  const sim = useMemo(() => simulate(simTrades, effective, equity), [simTrades, effective, equity]);
+  const [showOpt, setShowOpt] = useState(false);
 
   const set = (s: string, patch: Partial<StrategyAlloc>) => setAlloc((a) => ({ ...a, [s]: { ...effective[s], ...patch } }));
   const ddFloor = Math.min(-0.005, ...sim.equity.map((e) => e.dd));
@@ -121,12 +124,27 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
               </button>
             ))}
           </div>
+          <button onClick={() => setShowOpt((v) => !v)} aria-expanded={showOpt} className="rounded-lg border border-accent/60 px-3 py-1 text-accent hover:bg-surface-2">
+            {showOpt ? "Hide optimizer" : "Optimize…"}
+          </button>
           <button onClick={() => setAlloc({})} className="rounded-lg border border-border px-3 py-1 text-ink-2 hover:bg-surface-2">
             Reset to my OO settings
           </button>
         </div>
       </div>
 
+
+      {showOpt && (
+        <OptimizerPanel
+          trades={simTrades}
+          alloc={effective}
+          equity={equity}
+          current={sim}
+          strategies={strategies}
+          label={shortName}
+          onApply={(a) => setAlloc(a)}
+        />
+      )}
 
       {sim.equity.length > 1 && (
         <div className="card h-96 p-3 md:h-[28rem]">

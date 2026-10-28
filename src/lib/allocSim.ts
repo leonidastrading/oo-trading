@@ -382,3 +382,110 @@ function nextDay(d: string): string {
   t.setUTCDate(t.getUTCDate() + 1);
   return t.toISOString().slice(0, 10);
 }
+
+export type Objective = "pl" | "cagr" | "mar" | "sharpe" | "sortino" | "dd";
+
+export interface OptimizeOptions {
+  objective: Objective;
+  /** Strategies the search may change; the rest keep their allocation. */
+  include: string[];
+  /** Limits as fractions (0.25 = 25%); null = no limit. */
+  maxAvgMargin: number | null;
+  maxPeakMargin: number | null;
+  maxDrawdown: number | null;
+  /** For the "dd" objective: keep P/L at least this. */
+  minPl?: number | null;
+  /** Highest % per trade the search may set (default 20). */
+  maxPct?: number;
+}
+
+export interface OptimizeResult {
+  alloc: Record<string, StrategyAlloc>;
+  result: SimResult;
+  feasible: boolean;
+  runs: number;
+}
+
+function score(r: SimResult, o: OptimizeOptions): number {
+  if (o.maxAvgMargin !== null && r.avgMarginUtil > o.maxAvgMargin) return -Infinity;
+  if (o.maxPeakMargin !== null && r.maxMarginUtil > o.maxPeakMargin) return -Infinity;
+  if (o.maxDrawdown !== null && -r.maxDdPct > o.maxDrawdown) return -Infinity;
+  if (o.objective === "dd" && o.minPl !== null && o.minPl !== undefined && r.pl < o.minPl) return -Infinity;
+  switch (o.objective) {
+    case "pl":
+      return r.pl;
+    case "cagr":
+      return r.cagr ?? -Infinity;
+    case "mar":
+      return r.mar ?? -Infinity;
+    case "sharpe":
+      return r.sharpe ?? -Infinity;
+    case "sortino":
+      return r.sortino ?? -Infinity;
+    case "dd":
+      return r.maxDdPct; // closer to 0 is better
+  }
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Coordinate search: for each included strategy try scaled and nudged allocations, keep any change that
+ * improves the objective within the limits, and repeat until a full pass finds nothing better.
+ * Capped add-ons (100% × a few contracts) are just switched on or off. Yields to the UI between steps.
+ */
+export async function optimize(
+  trades: SimTrade[],
+  start: Record<string, StrategyAlloc>,
+  equity: number,
+  o: OptimizeOptions,
+  onProgress?: (runs: number, best: SimResult) => void,
+): Promise<OptimizeResult> {
+  const maxPct = o.maxPct ?? 20;
+  let alloc = { ...start };
+  let best = simulate(trades, alloc, equity);
+  let bestScore = score(best, o);
+  let runs = 1;
+  // Start infeasible (e.g. margin above the limit)? Scale everything down until it fits.
+  for (let f = 0.9; bestScore === -Infinity && f > 0.05; f *= 0.9) {
+    const scaled = Object.fromEntries(
+      Object.entries(start).map(([k, a]) => [k, o.include.includes(k) && !(a.maxContracts && a.pct >= 100) ? { ...a, pct: round2(a.pct * f) } : a]),
+    );
+    const r = simulate(trades, scaled, equity);
+    runs++;
+    if (score(r, o) > -Infinity) {
+      alloc = scaled;
+      best = r;
+      bestScore = score(r, o);
+    }
+  }
+  for (let pass = 0; pass < 8; pass++) {
+    let improved = false;
+    for (const name of o.include) {
+      const cur = alloc[name] ?? { pct: 0 };
+      const addOn = !!cur.maxContracts && (cur.pct >= 100 || (start[name]?.pct ?? 0) >= 100);
+      const p = cur.pct;
+      const candidates = addOn
+        ? [0, 100]
+        : [0, p * 0.5, p * 0.75, p * 0.9, p * 1.1, p * 1.25, p * 1.5, p * 2, p - 0.1, p + 0.1, p + 0.5, p === 0 ? 0.5 : p]
+            .map((v) => round2(Math.min(maxPct, Math.max(0, v))));
+      for (const v of [...new Set(candidates)]) {
+        if (v === p) continue;
+        const trial = { ...alloc, [name]: { ...cur, pct: v } };
+        const r = simulate(trades, trial, equity);
+        runs++;
+        const sc = score(r, o);
+        if (sc > bestScore + 1e-9) {
+          alloc = trial;
+          best = r;
+          bestScore = sc;
+          improved = true;
+        }
+      }
+      onProgress?.(runs, best);
+      await new Promise((res) => setTimeout(res, 0));
+    }
+    if (!improved) break;
+  }
+  return { alloc, result: best, feasible: bestScore > -Infinity, runs };
+}

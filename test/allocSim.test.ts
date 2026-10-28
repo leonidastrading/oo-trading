@@ -99,3 +99,38 @@ describe("portfolio settings", () => {
     expect(portfolioAlloc("! SPX 2DTE Down-Trend Put Spread - 11D 75w (tested)")).toEqual({ pct: 3 });
   });
 });
+
+describe("optimizer", () => {
+  const days = Array.from({ length: 20 }, (_, i) => `2026-04-${String(i + 1).padStart(2, "0")}`);
+  // A steady winner and a volatile loser-ish strategy.
+  const good = days.map((d, i) => t({ strategy: "Good", dateOpened: d, dateClosed: d, margin: 10_000, contracts: 10, pl: i % 5 === 0 ? -500 : 400 }));
+  const bad = days.map((d, i) => t({ strategy: "Bad", dateOpened: d, dateClosed: d, margin: 10_000, contracts: 10, pl: i % 2 ? -900 : 800 }));
+  const sims = toSimTrades([...good, ...bad]);
+
+  it("raises the winner, drops the loser and respects the margin limit", async () => {
+    const { optimize } = await import("@/lib/allocSim");
+    const r = await optimize(sims, { Good: { pct: 2 }, Bad: { pct: 2 } }, 100_000, {
+      objective: "pl",
+      include: ["Good", "Bad"],
+      maxAvgMargin: 0.1,
+      maxPeakMargin: null,
+      maxDrawdown: null,
+    });
+    expect(r.feasible).toBe(true);
+    expect(r.alloc.Bad.pct).toBe(0);
+    expect(r.alloc.Good.pct).toBeGreaterThan(2);
+    expect(r.result.avgMarginUtil).toBeLessThanOrEqual(0.1 + 1e-9);
+  });
+
+  it("leaves unchecked strategies alone", async () => {
+    const { optimize } = await import("@/lib/allocSim");
+    const r = await optimize(sims, { Good: { pct: 2 }, Bad: { pct: 2 } }, 100_000, {
+      objective: "pl",
+      include: ["Good"],
+      maxAvgMargin: null,
+      maxPeakMargin: null,
+      maxDrawdown: null,
+    });
+    expect(r.alloc.Bad.pct).toBe(2);
+  });
+});
