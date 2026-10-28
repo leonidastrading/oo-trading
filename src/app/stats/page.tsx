@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { money, pct, plClass, SERIES } from "@/components/format";
+import { AllocationSimulator } from "@/components/AllocationSimulator";
 import { CalendarHeatmap, DrawdownChart, EquityChart } from "@/components/StatsCharts";
+import { UploadTrades } from "@/components/UploadTrades";
 import { Tile, toneOf } from "@/components/Tile";
 import type { EodSnapshot } from "@/lib/eod";
 import type { OOTrade } from "@/lib/ooCsv";
@@ -26,6 +28,8 @@ export default function StatsPage() {
   const [range, setRange] = useState(0);
   const [showAllDays, setShowAllDays] = useState(false);
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     const getJson = async (url: string) => {
@@ -42,7 +46,7 @@ export default function StatsPage() {
         setLoadedAt(Date.now());
       })
       .catch((e) => setError((e as Error).message));
-  }, []);
+  }, [reload]);
 
   // Fixed color per strategy (alphabetical), so filters never repaint survivors.
   const strategies = useMemo(() => [...new Set((trades ?? []).map((t) => t.strategy))].sort(), [trades]);
@@ -82,7 +86,18 @@ export default function StatsPage() {
           Last updated {formatTimeET(loadedAt)}
           {meta?.updatedAt ? ` · CSVs uploaded ${formatDateTimeET(meta.updatedAt)}` : ""}
         </span>
+        <button onClick={() => setShowUpload((v) => !v)} className="rounded-lg border border-border px-3 py-1.5 text-sm text-ink hover:bg-surface-2">
+          {showUpload ? "Hide upload" : "Upload trade log"}
+        </button>
       </div>
+      {showUpload && (
+        <div className="card p-4">
+          <p className="mb-2 text-sm text-ink-2">
+            Option Omega trade-log CSV (a portfolio log with the Strategy and Margin Req. columns works best). Trades already stored are skipped.
+          </p>
+          <UploadTrades compact onDone={() => setReload((n) => n + 1)} />
+        </div>
+      )}
 
       {!trades.length ? (
         <div className="card p-4 text-sm">
@@ -133,6 +148,9 @@ export default function StatsPage() {
             })}
           </div>
 
+          <AllocationSimulator trades={trades} colorOf={colorOf} />
+
+          <h2 className="border-t border-border pt-4 text-lg font-bold text-accent">Backtest as logged</h2>
           <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Tile label="Total P/L" value={money(all?.totalPl, { sign: true })} tone={toneOf(all?.totalPl)} />
             <Tile label="Trades" value={all?.trades ?? 0} sub={`${pct(all?.winPct)} winners`} />

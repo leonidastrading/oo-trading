@@ -15,6 +15,8 @@ export interface OOTrade {
   fundsAtClose: number | null;
   openFees: number;
   closeFees: number;
+  /** OO "Margin Req." for the whole position (buying power held), when the log has it. */
+  margin?: number | null;
 }
 
 /** RFC 4180 CSV parser (quotes, escaped quotes, CRLF, BOM). */
@@ -150,6 +152,7 @@ export function parseOOTradeLog(text: string, fallbackStrategy = "Unnamed"): Par
       fundsAtClose: parseNumber(get(r, "fundsatclose")),
       openFees: parseNumber(get(r, "openingcommissionsfees")) ?? 0,
       closeFees: parseNumber(get(r, "closingcommissionsfees")) ?? 0,
+      margin: parseNumber(get(r, "marginreq")),
     };
     t.key = tradeKey(t);
     if (seen.has(t.key)) {

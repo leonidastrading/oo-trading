@@ -20,6 +20,14 @@ export async function POST(req: NextRequest) {
   });
   const store = kv();
   const added = await store.hsetnxMany(KEYS.ooTrades, entries);
+  // Re-uploads fill in Margin Req. on trades stored before the log carried it (other fields stay as stored).
+  if (added < entries.length && entries.some(([, t]) => typeof t.margin === "number")) {
+    const stored = await store.hgetall<OOTrade>(KEYS.ooTrades);
+    for (const [key, t] of entries) {
+      const old = stored[key];
+      if (old && typeof t.margin === "number" && typeof old.margin !== "number") await store.hset(KEYS.ooTrades, key, { ...old, margin: t.margin });
+    }
+  }
   const meta = (await store.get<{ updatedAt: number; files: string[] }>(KEYS.ooMeta)) ?? { updatedAt: 0, files: [] };
   if (body.file && !meta.files.includes(body.file)) meta.files.push(body.file);
   meta.updatedAt = Date.now();
