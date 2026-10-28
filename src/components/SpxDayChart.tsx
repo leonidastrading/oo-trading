@@ -103,6 +103,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
   const { data, error } = usePoll<SpxDayData>("/api/spx-day");
   const box = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const [tf, setTf] = useState<Timeframe>("1m");
   const [style, setStyle] = useState<Style>("candles");
   const [daily, setDaily] = useState<SpxDailyData | null>(null);
@@ -190,18 +191,19 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     // Short numbered labels (matching the # column below); markers in the same minute are merged.
     const num = new Map(data.entries.map((e, i) => [e.orderId, i + 1]));
     type Kind = "credit" | "debit" | "stop" | "win" | "timeLoss";
-    const groups = new Map<string, { time: UTCTimestamp; kind: Kind; texts: string[] }>();
-    const add = (t: number, kind: Kind, text: string) => {
+    const groups = new Map<string, { time: UTCTimestamp; kind: Kind; nums: string[]; tags: string[] }>();
+    const add = (t: number, kind: Kind, nums: string, tag: string) => {
       const time = minute(t);
-      const g = groups.get(`${time}|${kind}`) ?? { time, kind, texts: [] };
-      if (!g.texts.includes(text)) g.texts.push(text);
+      const g = groups.get(`${time}|${kind}`) ?? { time, kind, nums: [], tags: [] };
+      if (!g.nums.includes(nums)) g.nums.push(nums);
+      if (!g.tags.includes(tag)) g.tags.push(tag);
       groups.set(`${time}|${kind}`, g);
     };
-    for (const e of data.entries) add(e.time, e.price >= 0 ? "credit" : "debit", `${num.get(e.orderId)} ${shortName(e.label, e.dte)}`);
+    for (const e of data.entries) add(e.time, e.price >= 0 ? "credit" : "debit", String(num.get(e.orderId)), shortName(e.label, e.dte));
     for (const x of data.exits ?? []) {
       const kind: Kind = isStop(x) ? "stop" : (x.realized ?? 0) < 0 ? "timeLoss" : "win";
       const ids = (x.closes ?? []).map((id) => num.get(id)).filter((n): n is number => n !== undefined);
-      add(x.time, kind, `${ids.length ? ids.join(",") : "?"} ${shortName(x.label, x.dte)}`);
+      add(x.time, kind, ids.length ? ids.join(",") : "?", shortName(x.label, x.dte));
     }
     const colors: Record<Kind, string> = {
       credit: css("--accent", "#e0b73b"),
@@ -210,28 +212,91 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       win: gain,
       timeLoss: css("--muted", "#898781"),
     };
-    const markers = [...groups.values()]
+    // Arrows come from the library; the two-line labels are HTML laid over the chart (see place()).
+    const labels = [...groups.values()]
       .sort((x, y) => x.time - y.time)
       .map((g) => {
         const exit = g.kind === "stop" || g.kind === "win" || g.kind === "timeLoss";
-        const ids = g.texts.join(" · ");
-        return {
-          time: g.time,
-          position: exit ? ("aboveBar" as const) : ("belowBar" as const),
-          shape: exit ? ("arrowDown" as const) : ("arrowUp" as const),
-          color: colors[g.kind],
-          text: g.kind === "stop" ? `S${ids}` : exit ? `x${ids}` : ids,
-          size: 1.5,
-        };
+        const nums = g.nums.join(",");
+        return { ...g, exit, top: g.kind === "stop" ? `S${nums}` : exit ? `x${nums}` : nums, tag: g.tags.join("/"), color: colors[g.kind] };
       });
+    const markers = labels.map((l) => ({
+      time: l.time,
+      position: l.exit ? ("aboveBar" as const) : ("belowBar" as const),
+      shape: l.exit ? ("arrowDown" as const) : ("arrowUp" as const),
+      color: l.color,
+      text: "",
+      size: 1.5,
+    }));
+    const barAt = new Map(bars.map((b) => [b.time, b]));
+    const overlay = overlayRef.current;
+    const els: HTMLDivElement[] = [];
+    if (overlay && !isDaily) {
+      overlay.replaceChildren();
+      for (const l of labels) {
+        const el = document.createElement("div");
+        el.className = "absolute whitespace-nowrap text-center text-[13px] font-semibold leading-tight md:text-sm";
+        el.style.color = l.color;
+        const a = document.createElement("div");
+        a.textContent = l.top;
+        const b2 = document.createElement("div");
+        b2.textContent = l.tag;
+        b2.className = "font-medium opacity-90";
+        el.append(...(l.exit ? [b2, a] : [a, b2]));
+        overlay.append(el);
+        els.push(el);
+      }
+    } else overlay?.replaceChildren();
+    const GAP = 26; // px between the bar's high/low and its label, clear of the arrow
+    const place = () => {
+      // Greedy lanes: a label that would overlap the previous one on its side is pushed further out.
+      const lanes: Record<"above" | "below", { right: number; lane: number }[]> = { above: [], below: [] };
+      labels.forEach((l, i) => {
+        const el = els[i];
+        const bar = barAt.get(l.time);
+        const x = chart.timeScale().timeToCoordinate(l.time);
+        const y = bar ? series.priceToCoordinate(l.exit ? bar.high : bar.low) : null;
+        if (!el) return;
+        if (x === null || y === null) {
+          el.style.display = "none";
+          return;
+        }
+        el.style.display = "";
+        const w = el.offsetWidth;
+        const h = el.offsetHeight;
+        const left = x - w / 2;
+        const side = l.exit ? "above" : "below";
+        const used = lanes[side].filter((p) => p.right > left - 4).map((p) => p.lane);
+        let lane = 0;
+        while (used.includes(lane)) lane++;
+        lanes[side].push({ right: left + w, lane });
+        const offset = GAP + lane * (h + 4);
+        el.style.left = `${left}px`;
+        el.style.top = `${l.exit ? y - offset - h : y + offset}px`;
+      });
+    };
     if (!isDaily) createSeriesMarkers(series, markers);
+    const relayout = () => requestAnimationFrame(place);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(relayout);
+    const ro = new ResizeObserver(relayout);
+    ro.observe(box.current);
+    // Vertical zoom/scroll doesn't fire a time-range event; re-place after any pointer interaction.
+    const boxEl = box.current;
+    boxEl.addEventListener("pointermove", relayout);
+    boxEl.addEventListener("wheel", relayout, { passive: true });
     const saved = viewRef.current;
     if (saved && saved.tf === tf && saved.range) chart.timeScale().setVisibleLogicalRange(saved.range);
     else {
       chart.timeScale().fitContent();
       chart.timeScale().applyOptions({ rightOffset: isDaily ? 4 : 12 });
     }
+    relayout();
     return () => {
+      ro.disconnect();
+      boxEl.removeEventListener("pointermove", relayout);
+      boxEl.removeEventListener("wheel", relayout);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(relayout);
+      overlay?.replaceChildren();
       viewRef.current = { tf, range: chart.timeScale().getVisibleLogicalRange() };
       chart.remove();
       chartRef.current = null;
@@ -284,7 +349,10 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       {data && !data.bars.length ? (
         <p className="text-sm text-muted">No bars for this session yet.</p>
       ) : (
-        <div ref={box} className="h-[36rem] w-full md:h-[48rem]" />
+        <div className="relative">
+          <div ref={box} className="h-[36rem] w-full md:h-[48rem]" />
+          <div ref={overlayRef} className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden />
+        </div>
       )}
       {data && data.entries.length > 0 && (
         <div className="overflow-x-auto">
