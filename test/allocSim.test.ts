@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { impliedAllocations, maxLossPerLot, simulate, toSimTrades } from "@/lib/allocSim";
+import { impliedAllocations, maxLossPerLot, simulate, toSimTrades, uniqueEntries } from "@/lib/allocSim";
 import type { OOTrade } from "@/lib/ooCsv";
 
 const t = (o: Partial<OOTrade>): OOTrade => ({
@@ -132,5 +132,15 @@ describe("optimizer", () => {
       maxDrawdown: null,
     });
     expect(r.alloc.Bad.pct).toBe(2);
+  });
+});
+
+describe("leftover rows", () => {
+  it("drops untagged rows of a strategy that has a tagged upload", () => {
+    const fresh = t({ source: "log.csv", uploadedAt: 5, margin: 10_000 });
+    const stale = t({ dateOpened: "2026-03-31", dateClosed: "2026-03-31", margin: 10_000 });
+    const other = t({ strategy: "Other", margin: 10_000 });
+    const names = uniqueEntries([fresh, stale, other]).map((x) => `${x.strategy}|${x.dateOpened}`);
+    expect(names.sort()).toEqual(["Other|2026-03-02", "PS|2026-03-02"]);
   });
 });

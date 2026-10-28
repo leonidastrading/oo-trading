@@ -61,6 +61,9 @@ export function maxLossPerLot(t: Pick<OOTrade, "legs" | "dateOpened" | "contract
 
 /** One trade per entry slot (different OO runs of the same entry are the same trade): newest upload first, then rows with margin. */
 export function uniqueEntries(trades: OOTrade[]): OOTrade[] {
+  // Rows stored before uploads were tagged are leftovers of older runs once a strategy has a tagged upload.
+  const tagged = new Set(trades.filter((t) => t.source).map((t) => t.strategy.trim()));
+  trades = trades.filter((t) => t.source || !tagged.has(t.strategy.trim()));
   const by = new Map<string, OOTrade>();
   const rank = (t: OOTrade) => [t.uploadedAt ?? 0, typeof t.margin === "number" ? 1 : 0];
   for (const t of trades) {
