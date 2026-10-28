@@ -1,9 +1,10 @@
 "use client";
 
+import type { ExpiryChart as ExpiryData } from "@/lib/views";
 import Link from "next/link";
 import { BestClosePanel } from "@/components/BestClosePanel";
 import { ClosedPnlChart } from "@/components/ClosedPnlChart";
-import { SpxDayChart } from "@/components/SpxDayChart";
+import { SpxDayChart, type BestCloseLine } from "@/components/SpxDayChart";
 import { money, num, openPositionsLabel, plClass, signed } from "@/components/format";
 import { PositionGroups } from "@/components/PositionGroups";
 import { StatusBar } from "@/components/StatusBar";
@@ -11,6 +12,14 @@ import { Tile, toneOf } from "@/components/Tile";
 import { usePoll } from "@/components/usePoll";
 import { ExpiryChart } from "@/components/ExpiryChart";
 import type { LiveData } from "@/lib/views";
+
+/** The best-close price as the panel shows it: the plateau edge when the max runs to a side, else the peak. */
+function bestCloseLine(e: ExpiryData | undefined): BestCloseLine | null {
+  if (!e) return null;
+  const b = e.analysis.best;
+  const price = !b.atEdge && b.range && b.edge === "above" ? b.range.low : !b.atEdge && b.range && b.edge === "below" ? b.range.high : b.price;
+  return { price, pnl: b.pnl };
+}
 
 export default function LivePage() {
   const { data, error, loading, refresh } = usePoll<LiveData>("/api/live");
@@ -94,7 +103,7 @@ export default function LivePage() {
 
       <ClosedPnlChart points={data?.closedCurve ?? []} />
 
-      <SpxDayChart />
+      <SpxDayChart best={bestCloseLine(spxExpiry)} />
 
       <section>
         <h2 className="mb-2 text-lg font-bold text-accent">Expiring today</h2>

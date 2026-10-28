@@ -114,6 +114,25 @@ export async function fetchMinuteBars(symbol: string, date: string): Promise<Bar
     .map((c) => ({ time: Math.floor(c.datetime / 1000), open: c.open, high: c.high, low: c.low, close: c.close }));
 }
 
+/** Daily bars for the last year; `time` is the ET session date as epoch seconds at 00:00 UTC. */
+export async function fetchDailyBars(symbol: string): Promise<Bar[]> {
+  const raw = await schwabGet<{ candles?: { open: number; high: number; low: number; close: number; datetime: number }[] }>(
+    "/marketdata/v1/pricehistory",
+    { symbol, periodType: "year", period: "1", frequencyType: "daily", frequency: "1" },
+  );
+  return (raw.candles ?? []).map((c) => ({
+    time: Date.parse(todayET(c.datetime + 12 * 3600_000) + "T00:00:00Z") / 1000,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+  }));
+}
+
+export function cachedDailyBars(symbol: string, maxAgeMs: number): Promise<CacheResult<Bar[]>> {
+  return cached(`bars1d:v1:${symbol}`, maxAgeMs, () => fetchDailyBars(symbol));
+}
+
 export function cachedMinuteBars(symbol: string, date: string, maxAgeMs: number): Promise<CacheResult<Bar[]>> {
   return cached(`bars1m:v1:${symbol}:${date}`, maxAgeMs, () => fetchMinuteBars(symbol, date), {
     keepSeconds: date < todayET() ? 7 * 86_400 : undefined,
