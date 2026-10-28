@@ -242,12 +242,15 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         const b2 = document.createElement("div");
         b2.textContent = l.tag;
         b2.className = "font-medium opacity-90";
-        el.append(...(l.exit ? [b2, a] : [a, b2]));
+        el.append(a, b2);
         overlay.append(el);
         els.push(el);
       }
     } else overlay?.replaceChildren();
     const GAP = 26; // px between the bar's high/low and its label, clear of the arrow
+    // The library stacks several arrows on one bar; clear all of them.
+    const arrowsOn = new Map<string, number>();
+    for (const l of labels) arrowsOn.set(`${l.time}|${l.exit}`, (arrowsOn.get(`${l.time}|${l.exit}`) ?? 0) + 1);
     const place = () => {
       // Greedy lanes: a label that would overlap the previous one on its side is pushed further out.
       const lanes: Record<"above" | "below", { right: number; lane: number }[]> = { above: [], below: [] };
@@ -270,7 +273,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         let lane = 0;
         while (used.includes(lane)) lane++;
         lanes[side].push({ right: left + w, lane });
-        const offset = GAP + lane * (h + 4);
+        const offset = GAP + ((arrowsOn.get(`${l.time}|${l.exit}`) ?? 1) - 1) * 20 + lane * (h + 4);
         el.style.left = `${left}px`;
         el.style.top = `${l.exit ? y - offset - h : y + offset}px`;
       });
