@@ -146,7 +146,21 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     const minutes = TIMEFRAMES.find((t) => t.key === tf)!.min;
     const shifted = data.bars.map((b) => ({ ...b, time: b.time + shift }));
     const anchor = Math.floor(shifted[0].time / 86_400) * 86_400 + (9 * 60 + 30) * 60;
-    const bars: Ohlc[] = isDaily ? daily!.bars : aggregate(shifted, minutes, anchor);
+    let bars: Ohlc[] = isDaily ? daily!.bars : aggregate(shifted, minutes, anchor);
+    // Schwab adds the session to its daily history overnight: build today's daily bar from the 1-minute bars.
+    const dayStart = Math.floor(shifted[0].time / 86_400) * 86_400;
+    if (isDaily && (bars[bars.length - 1]?.time ?? 0) < dayStart) {
+      bars = [
+        ...bars,
+        {
+          time: dayStart,
+          open: shifted[0].open,
+          high: Math.max(...shifted.map((b) => b.high)),
+          low: Math.min(...shifted.map((b) => b.low)),
+          close: shifted[shifted.length - 1].close,
+        },
+      ];
+    }
     let series: ISeriesApi<SeriesType>;
     if (style === "line") {
       series = chart.addSeries(LineSeries, { color: css("--spot", "#3987e5"), lineWidth: 2, priceLineVisible: true });
@@ -233,7 +247,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
           {data ? ` · ${data.entries.length} entr${data.entries.length === 1 ? "y" : "ies"} · ${(data.exits ?? []).filter(isStop).length} stopped` : ""}
         </span>
       </header>
-      <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-page/60 p-1 text-sm" role="toolbar" aria-label="Chart options">
+      <div className="flex items-center gap-0.5 overflow-x-auto rounded-lg border border-border bg-page/60 p-1 text-sm" role="toolbar" aria-label="Chart options">
         {TIMEFRAMES.map((t) => (
           <button
             key={t.key}
@@ -242,12 +256,12 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
               store("spxChart.tf", t.key);
             }}
             aria-pressed={tf === t.key}
-            className={`rounded-md px-2.5 py-1 ${tf === t.key ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"}`}
+            className={`shrink-0 rounded-md px-2 py-1 ${tf === t.key ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"}`}
           >
             {t.key}
           </button>
         ))}
-        <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+        <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
         {STYLES.map((st) => (
           <button
             key={st.key}
@@ -258,7 +272,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
               store("spxChart.style", st.key);
             }}
             aria-pressed={style === st.key}
-            className={`rounded-md px-2.5 py-1 font-mono ${style === st.key ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"}`}
+            className={`shrink-0 rounded-md px-2 py-1 font-mono ${style === st.key ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"}`}
           >
             {st.icon}
           </button>
