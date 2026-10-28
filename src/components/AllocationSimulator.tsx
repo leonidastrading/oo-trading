@@ -127,20 +127,6 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat label="P/L" value={money(sim.pl, { sign: true })} sub={`${sp(sim.start ? sim.pl / sim.start : null)} · ends ${money(sim.end)}`} tone={plClass(sim.pl)} />
-        <Stat label="CAGR" value={p1(sim.cagr)} sub={sim.firstDate ? `${sim.firstDate} → ${sim.lastDate}` : undefined} />
-        <Stat label="Max drawdown (realized)" value={p1(sim.maxDdPct, 2)} sub={money(sim.maxDd)} tone="text-loss" />
-        <Stat label="MAR" value={n2(sim.mar)} />
-        <Stat label="Sharpe / Sortino" value={`${n2(sim.sharpe)} / ${n2(sim.sortino)}`} />
-        <Stat label="Avg days to new high" value={sim.avgDaysToRecover === null ? "—" : sim.avgDaysToRecover.toFixed(1)} sub="after a drawdown" />
-        <Stat label="Win rate" value={p1(sim.winPct)} sub={`${sim.trades.toLocaleString()} trades`} />
-        <Stat label="Profit factor" value={n2(sim.profitFactor)} />
-        <Stat label="Reward / risk" value={n2(sim.riskReward)} sub="avg win ÷ avg loss" />
-        <Stat label="Premium capture" value={p1(sim.captureRate)} />
-        <Stat label="Account peak" value={money(sim.peak)} />
-        <Stat label="Margin used" value={`${p1(sim.avgMarginUtil)} avg`} sub={`${p1(sim.maxMarginUtil)} max day`} />
-      </div>
 
       {sim.equity.length > 1 && (
         <div className="card h-96 p-3 md:h-[28rem]">
@@ -173,6 +159,21 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
           </ResponsiveContainer>
         </div>
       )}
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <Stat label="P/L" value={money(sim.pl, { sign: true })} sub={`${sp(sim.start ? sim.pl / sim.start : null)} · ends ${money(sim.end)}`} tone={plClass(sim.pl)} />
+        <Stat label="CAGR" value={p1(sim.cagr)} sub={sim.firstDate ? `${sim.firstDate} → ${sim.lastDate}` : undefined} />
+        <Stat label="Max drawdown (realized)" value={p1(sim.maxDdPct, 2)} sub={money(sim.maxDd)} tone="text-loss" />
+        <Stat label="MAR" value={n2(sim.mar)} />
+        <Stat label="Sharpe / Sortino" value={`${n2(sim.sharpe)} / ${n2(sim.sortino)}`} />
+        <Stat label="Avg days to new high" value={sim.avgDaysToRecover === null ? "—" : sim.avgDaysToRecover.toFixed(1)} sub="after a drawdown" />
+        <Stat label="Win rate" value={p1(sim.winPct)} sub={`${sim.trades.toLocaleString()} trades`} />
+        <Stat label="Profit factor" value={n2(sim.profitFactor)} />
+        <Stat label="Reward / risk" value={n2(sim.riskReward)} sub="avg win ÷ avg loss" />
+        <Stat label="Premium capture" value={p1(sim.captureRate)} />
+        <Stat label="Account peak" value={money(sim.peak)} />
+        <Stat label="Margin used" value={`${p1(sim.avgMarginUtil)} avg`} sub={`${p1(sim.maxMarginUtil)} max day`} />
+      </div>
 
       <div className="card overflow-x-auto">
         <table className="data w-full text-sm">
