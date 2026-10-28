@@ -66,7 +66,10 @@ export function toSimTrades(trades: OOTrade[]): SimTrade[] {
  */
 export function impliedAllocations(trades: OOTrade[]): Record<string, StrategyAlloc> {
   const by = new Map<string, { ratios: number[]; contracts: number[] }>();
+  // When a strategy's log carries Margin Req., trust only those rows (older uploads without it may be stale runs).
+  const withMargin = new Set(trades.filter((t) => typeof t.margin === "number" && t.margin > 0).map((t) => t.strategy));
   for (const t of trades) {
+    if (withMargin.has(t.strategy) && !(typeof t.margin === "number" && t.margin > 0)) continue;
     if (t.fundsAtClose === null || !t.contracts) continue;
     const [sim] = toSimTrades([t]);
     const fundsAtOpen = t.fundsAtClose - t.pl;
