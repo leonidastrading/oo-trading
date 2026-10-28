@@ -88,6 +88,11 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   }, [trades, range]);
   const sim = useMemo(() => simulate(simTrades, effective, equity), [simTrades, effective, equity]);
   const [showOpt, setShowOpt] = useState(false);
+  // The backtest's own starting funds (first trade's funds at close minus its P/L), to compare with OO 1:1.
+  const ooStart = useMemo(() => {
+    const first = [...trades].filter((t) => t.fundsAtClose !== null && t.source).sort((a, b) => `${a.dateClosed}${a.timeClosed}`.localeCompare(`${b.dateClosed}${b.timeClosed}`))[0];
+    return first ? Math.round((first.fundsAtClose! - first.pl) / 1000) * 1000 : null;
+  }, [trades]);
 
   const set = (s: string, patch: Partial<StrategyAlloc>) => setAlloc((a) => ({ ...a, [s]: { ...effective[s], ...patch } }));
   const ddFloor = Math.min(-0.005, ...sim.equity.map((e) => e.dd));
@@ -117,6 +122,11 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
               className="w-32 rounded-lg border border-border bg-surface px-2 py-1 text-ink"
             />
           </label>
+          {ooStart && ooStart !== equity && (
+            <button onClick={() => setEquity(ooStart)} className="text-xs text-link underline" title="Start where the OO backtest started, to compare 1:1">
+              Use OO&apos;s {money(ooStart)}
+            </button>
+          )}
           <div className="flex rounded-lg border border-border" role="group" aria-label="Date range">
             {RANGES.map((r, i) => (
               <button key={r.label} onClick={() => setRange(i)} aria-pressed={i === range} className={`px-2.5 py-1 ${i === range ? "bg-surface-2 text-ink" : "text-muted"}`}>
@@ -351,7 +361,9 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
         </div>
         <p className="mt-2 text-xs text-muted">
           Monthly % is of equity at the start of the month. Drawdowns are on realized (closed-trade) equity. Sharpe/Sortino use daily returns over
-          weekdays, annualized ×√252, 0% risk-free. Margin used = each day&apos;s peak margin held ÷ that morning&apos;s equity. Risk per contract is
+          weekdays, annualized ×√252, 0% risk-free (OO subtracts a T-bill rate, so its Sharpe/Sortino read a little lower).
+          Sizing rounds down to whole contracts and add-ons are fixed at 1 contract, so a different starting equity changes the mix — use OO&apos;s
+          starting equity to match its report. Margin used = each day&apos;s peak margin held ÷ that morning&apos;s equity. Risk per contract is
           OO&apos;s Margin Req. when the log has it, else the structure&apos;s max loss from its legs.
         </p>
       </div>
