@@ -21,6 +21,7 @@ interface Saved {
   maxDd: string;
   minPl: string;
   maxPct: string;
+  maxLots?: string;
   excluded: string[];
 }
 
@@ -33,6 +34,7 @@ export function OptimizerPanel({
   alloc,
   equity,
   baseline,
+  unit = "pct",
   strategies,
   label,
   onApply,
@@ -42,6 +44,8 @@ export function OptimizerPanel({
   alloc: Record<string, StrategyAlloc>;
   equity: number;
   baseline: SimResult;
+  /** "pct": allocations are % of equity; "lots": fixed contracts per trade. */
+  unit?: "pct" | "lots";
   strategies: string[];
   label: (s: string) => string;
   onApply: (a: Record<string, StrategyAlloc>) => void;
@@ -52,6 +56,7 @@ export function OptimizerPanel({
   const [maxDd, setMaxDd] = useState("");
   const [minPl, setMinPl] = useState("");
   const [maxPct, setMaxPct] = useState("20");
+  const [maxLots, setMaxLots] = useState("50");
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState<{ runs: number } | null>(null);
   const [restored, setRestored] = useState(false);
@@ -68,6 +73,7 @@ export function OptimizerPanel({
           setMaxDd(v.maxDd ?? "");
           setMinPl(v.minPl ?? "");
           setMaxPct(v.maxPct ?? "20");
+          setMaxLots(v.maxLots ?? "50");
           setExcluded(new Set(v.excluded ?? []));
         }
       } catch {}
@@ -77,10 +83,10 @@ export function OptimizerPanel({
   useEffect(() => {
     if (!restored) return;
     try {
-      const v: Saved = { objective, maxAvg, maxPeak, maxDd, minPl, maxPct, excluded: [...excluded] };
+      const v: Saved = { objective, maxAvg, maxPeak, maxDd, minPl, maxPct, maxLots, excluded: [...excluded] };
       localStorage.setItem(STORE, JSON.stringify(v));
     } catch {}
-  }, [restored, objective, maxAvg, maxPeak, maxDd, minPl, maxPct, excluded]);
+  }, [restored, objective, maxAvg, maxPeak, maxDd, minPl, maxPct, maxLots, excluded]);
   const [result, setResult] = useState<OptimizeResult | null>(null);
 
   async function run() {
@@ -98,6 +104,7 @@ export function OptimizerPanel({
         maxDrawdown: num(maxDd) === null ? null : num(maxDd)! / 100,
         minPl: objective === "dd" ? (num(minPl) ?? baseline.pl) : null,
         maxPct: num(maxPct) ?? 20,
+        maxLots: num(maxLots) ?? 50,
       },
       (runs) => setRunning({ runs }),
     );
@@ -148,10 +155,17 @@ export function OptimizerPanel({
             <input className={`${field} w-28`} value={minPl} onChange={(e) => setMinPl(e.target.value)} placeholder={String(Math.round(baseline.pl))} inputMode="decimal" />
           </label>
         )}
-        <label className="space-y-1">
-          <span className="block text-xs text-muted">Max % per strategy</span>
-          <input className={field} value={maxPct} onChange={(e) => setMaxPct(e.target.value)} inputMode="decimal" />
-        </label>
+        {unit === "lots" ? (
+          <label className="space-y-1">
+            <span className="block text-xs text-muted">Max lots per strategy</span>
+            <input className={field} value={maxLots} onChange={(e) => setMaxLots(e.target.value)} inputMode="numeric" />
+          </label>
+        ) : (
+          <label className="space-y-1">
+            <span className="block text-xs text-muted">Max % per strategy</span>
+            <input className={field} value={maxPct} onChange={(e) => setMaxPct(e.target.value)} inputMode="decimal" />
+          </label>
+        )}
         <button
           onClick={run}
           disabled={!!running}
@@ -163,8 +177,9 @@ export function OptimizerPanel({
 
       <div>
         <div className="mb-1 text-xs text-muted">
-          Every run starts from your OO settings on the uploaded log (not from the sliders or an earlier result). Unchecked strategies stay at
-          their OO setting.
+          {unit === "lots"
+            ? "Every run starts from 1 lot of each strategy (per-contract P/L; the log's sizing is ignored). Unchecked strategies stay at 1 lot."
+            : "Every run starts from your OO settings on the uploaded log (not from the sliders or an earlier result). Unchecked strategies stay at their OO setting."}
         </div>
         <div className="flex flex-wrap gap-2">
           {strategies.map((s) => {
@@ -203,19 +218,21 @@ export function OptimizerPanel({
                 <thead>
                   <tr>
                     <th>Strategy</th>
-                    <th>OO settings</th>
+                    <th>{unit === "lots" ? "1 lot each" : "OO settings"}</th>
                     <th>Suggested</th>
                   </tr>
                 </thead>
                 <tbody>
                   {strategies.map((s) => {
-                    const a = alloc[s]?.pct ?? 0;
-                    const b = result.alloc[s]?.pct ?? 0;
+                    const lotsMode = unit === "lots";
+                    const a = (lotsMode ? alloc[s]?.fixed : alloc[s]?.pct) ?? 0;
+                    const b = (lotsMode ? result.alloc[s]?.fixed : result.alloc[s]?.pct) ?? 0;
+                    const fmt = (v: number) => (lotsMode ? `${v} lot${v === 1 ? "" : "s"}` : `${v}%`);
                     return (
                       <tr key={s}>
                         <td className="whitespace-normal">{label(s)}</td>
-                        <td>{a}%</td>
-                        <td className={b > a ? "font-semibold text-gain" : b < a ? "font-semibold text-loss" : "text-ink-2"}>{b}%</td>
+                        <td>{fmt(a)}</td>
+                        <td className={b > a ? "font-semibold text-gain" : b < a ? "font-semibold text-loss" : "text-ink-2"}>{fmt(b)}</td>
                       </tr>
                     );
                   })}
@@ -227,7 +244,7 @@ export function OptimizerPanel({
                 <thead>
                   <tr>
                     <th>Metric</th>
-                    <th>OO settings</th>
+                    <th>{unit === "lots" ? "1 lot each" : "OO settings"}</th>
                     <th>Suggested</th>
                   </tr>
                 </thead>

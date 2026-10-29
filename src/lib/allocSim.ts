@@ -7,6 +7,8 @@ export interface StrategyAlloc {
   pct: number;
   /** Optional cap on contracts per trade (e.g. 1 for an add-on); 0/undefined = no cap. */
   maxContracts?: number;
+  /** Fixed contracts per trade instead of % of equity (per-lot mode); 0 = off. */
+  fixed?: number;
 }
 
 /** Schwab Port 2026 allocations in Option Omega (as of Oct 28, 2026), keyed by the scorecard's short names. */
@@ -213,10 +215,16 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
   };
   for (const t of trades) {
     const a = alloc[t.strategy];
-    if (!a || !(a.pct > 0)) continue;
-    settle(t.open);
-    let n = Math.floor(((a.pct / 100) * Math.max(realized, 0)) / t.riskPerLot);
-    if (a.maxContracts && a.maxContracts > 0) n = Math.min(n, a.maxContracts);
+    if (!a) continue;
+    let n: number;
+    if (a.fixed !== undefined) {
+      n = Math.max(0, Math.round(a.fixed));
+    } else {
+      if (!(a.pct > 0)) continue;
+      settle(t.open);
+      n = Math.floor(((a.pct / 100) * Math.max(realized, 0)) / t.riskPerLot);
+      if (a.maxContracts && a.maxContracts > 0) n = Math.min(n, a.maxContracts);
+    }
     if (n <= 0) continue;
     const s: Sized = { ...t, contracts: n, pl: t.plPerLot * n, margin: t.riskPerLot * n };
     sized.push(s);
@@ -400,6 +408,8 @@ export interface OptimizeOptions {
   minPl?: number | null;
   /** Highest % per trade the search may set (default 20). */
   maxPct?: number;
+  /** Highest contracts per trade in fixed-lot mode (default 100). */
+  maxLots?: number;
 }
 
 export interface OptimizeResult {
@@ -452,7 +462,16 @@ export async function optimize(
   // Start infeasible (e.g. margin above the limit)? Scale everything down until it fits.
   for (let f = 0.9; bestScore === -Infinity && f > 0.05; f *= 0.9) {
     const scaled = Object.fromEntries(
-      Object.entries(start).map(([k, a]) => [k, o.include.includes(k) && !(a.maxContracts && a.pct >= 100) ? { ...a, pct: round2(a.pct * f) } : a]),
+      Object.entries(start).map(([k, a]) => [
+        k,
+        !o.include.includes(k)
+          ? a
+          : a.fixed !== undefined
+            ? { ...a, fixed: Math.floor(a.fixed * f) }
+            : a.maxContracts && a.pct >= 100
+              ? a
+              : { ...a, pct: round2(a.pct * f) },
+      ]),
     );
     const r = simulate(trades, scaled, equity);
     runs++;
@@ -466,6 +485,27 @@ export async function optimize(
     let improved = false;
     for (const name of o.include) {
       const cur = alloc[name] ?? { pct: 0 };
+      if (cur.fixed !== undefined) {
+        const c = cur.fixed;
+        const maxLots = o.maxLots ?? 100;
+        const lots = [0, c - 1, c + 1, c + 2, Math.round(c / 2), Math.round(c * 1.5), c * 2, c === 0 ? 1 : c].map((v) => Math.min(maxLots, Math.max(0, v)));
+        for (const v of [...new Set(lots)]) {
+          if (v === c) continue;
+          const trial = { ...alloc, [name]: { ...cur, fixed: v } };
+          const r = simulate(trades, trial, equity);
+          runs++;
+          const sc = score(r, o);
+          if (sc > bestScore + 1e-9) {
+            alloc = trial;
+            best = r;
+            bestScore = sc;
+            improved = true;
+          }
+        }
+        onProgress?.(runs, best);
+        await new Promise((res) => setTimeout(res, 0));
+        continue;
+      }
       const addOn = !!cur.maxContracts && (cur.pct >= 100 || (start[name]?.pct ?? 0) >= 100);
       const p = cur.pct;
       const candidates = addOn

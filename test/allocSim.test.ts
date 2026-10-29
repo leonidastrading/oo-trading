@@ -144,3 +144,29 @@ describe("leftover rows", () => {
     expect(names.sort()).toEqual(["Other|2026-03-02", "PS|2026-03-02"]);
   });
 });
+
+describe("fixed lots", () => {
+  it("sizes every trade at a fixed number of contracts, ignoring the log's sizing", () => {
+    const trades = [t({ margin: 10_000, pl: 2000, contracts: 10 }), t({ dateOpened: "2026-03-03", dateClosed: "2026-03-03", margin: 50_000, pl: -5000, contracts: 50 })];
+    const r = simulate(toSimTrades(trades), { PS: { pct: 0, fixed: 2 } }, 100_000);
+    expect(r.trades).toBe(2);
+    expect(r.pl).toBe(2 * 200 - 2 * 100);
+  });
+
+  it("optimizes lot counts", async () => {
+    const { optimize } = await import("@/lib/allocSim");
+    const days = Array.from({ length: 10 }, (_, i) => `2026-04-${String(i + 1).padStart(2, "0")}`);
+    const good = days.map((d) => t({ strategy: "Good", dateOpened: d, dateClosed: d, margin: 1000, contracts: 1, pl: 100 }));
+    const bad = days.map((d) => t({ strategy: "Bad", dateOpened: d, dateClosed: d, margin: 1000, contracts: 1, pl: -50 }));
+    const r = await optimize(toSimTrades([...good, ...bad]), { Good: { pct: 0, fixed: 1 }, Bad: { pct: 0, fixed: 1 } }, 100_000, {
+      objective: "pl",
+      include: ["Good", "Bad"],
+      maxAvgMargin: 0.05,
+      maxPeakMargin: null,
+      maxDrawdown: null,
+    });
+    expect(r.alloc.Bad.fixed).toBe(0);
+    expect(r.alloc.Good.fixed).toBeGreaterThan(1);
+    expect(r.result.avgMarginUtil).toBeLessThanOrEqual(0.05 + 1e-9);
+  });
+});

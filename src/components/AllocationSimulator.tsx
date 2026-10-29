@@ -24,10 +24,14 @@ const n2 = (v: number | null | undefined) => (v === null || v === undefined || !
 const shortName = (s: string) => s.replace(/^[!\s]+/, "").replace(/^SPX\s+/, "");
 const compact = (v: number) => (Math.abs(v) >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : `$${Math.round(v / 1000)}k`);
 
+type Mode = "pct" | "lots";
+
 interface Saved {
   equity: number;
   range: number;
   alloc: Record<string, StrategyAlloc>;
+  mode?: Mode;
+  lots?: Record<string, number>;
 }
 
 function load(): Saved | null {
@@ -59,6 +63,9 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   const [equity, setEquity] = useState(1_000_000);
   const [range, setRange] = useState(0);
   const [alloc, setAlloc] = useState<Record<string, StrategyAlloc>>({});
+  // "pct": % of equity per trade from the OO settings. "lots": fixed contracts per trade (per-lot P/L, log sizing ignored).
+  const [mode, setMode] = useState<Mode>("pct");
+  const [lots, setLots] = useState<Record<string, number>>({});
 
   // Restore this device's last settings after hydration.
   useEffect(() => {
@@ -68,19 +75,26 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       setEquity(s.equity > 0 ? s.equity : 1_000_000);
       setRange(s.range >= 0 && s.range < RANGES.length ? s.range : 0);
       setAlloc(s.alloc ?? {});
+      setMode(s.mode === "lots" ? "lots" : "pct");
+      setLots(s.lots ?? {});
     });
   }, []);
   useEffect(() => {
     try {
-      localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc } satisfies Saved));
+      localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc, mode, lots } satisfies Saved));
     } catch {}
-  }, [equity, range, alloc]);
+  }, [equity, range, alloc, mode, lots]);
 
   const effective = useMemo(() => {
     const out: Record<string, StrategyAlloc> = {};
-    for (const s of strategies) out[s] = alloc[s] ?? defaults[s] ?? { pct: 1 };
+    for (const s of strategies) out[s] = mode === "lots" ? { pct: 0, fixed: lots[s] ?? 1 } : (alloc[s] ?? defaults[s] ?? { pct: 1 });
     return out;
-  }, [strategies, alloc, defaults]);
+  }, [strategies, alloc, defaults, mode, lots]);
+  // Reference settings: the OO settings, or 1 lot of everything in per-lot mode.
+  const reference = useMemo(
+    () => (mode === "lots" ? Object.fromEntries(strategies.map((s) => [s, { pct: 0, fixed: 1 } as StrategyAlloc])) : defaults),
+    [mode, strategies, defaults],
+  );
 
   const simTrades = useMemo(() => {
     const from = RANGES[range].from();
@@ -88,7 +102,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   }, [trades, range]);
   const sim = useMemo(() => simulate(simTrades, effective, equity), [simTrades, effective, equity]);
   // Reference run on the uploaded log at the OO settings (independent of the sliders).
-  const baselineSim = useMemo(() => simulate(simTrades, defaults, equity), [simTrades, defaults, equity]);
+  const baselineSim = useMemo(() => simulate(simTrades, reference, equity), [simTrades, reference, equity]);
   const [showOpt, setShowOpt] = useState(false);
   const [ddUnit, setDdUnit] = useState<"pct" | "usd">("pct");
   useEffect(() => {
@@ -111,6 +125,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   }, [trades]);
 
   const set = (s: string, patch: Partial<StrategyAlloc>) => setAlloc((a) => ({ ...a, [s]: { ...effective[s], ...patch } }));
+  const setLot = (s: string, n: number) => setLots((l) => ({ ...l, [s]: Math.max(0, Math.round(n)) }));
   // Drawdown in % of the peak or in $ below it.
   const chartData = useMemo(() => withDollarDrawdown(sim.start, sim.equity), [sim]);
   const ddKey = ddUnit === "usd" ? "ddUsd" : "dd";
@@ -125,7 +140,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
         <div>
           <h2 className="text-lg font-bold text-accent">Allocation simulator</h2>
           <p className="text-xs text-muted">
-            Re-sizes every backtest trade from each strategy&apos;s allocation (% of current equity per trade, sized on OO&apos;s margin per contract),
+            In % mode, re-sizes every backtest trade from each strategy&apos;s allocation (% of current equity per trade, sized on OO&apos;s margin per contract),
             compounding as trades close. Sliders start at your Schwab Port 2026 settings in Option Omega.
           </p>
         </div>
@@ -156,8 +171,23 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
           <button onClick={() => setShowOpt((v) => !v)} aria-expanded={showOpt} className="rounded-lg border border-accent/60 px-3 py-1 text-accent hover:bg-surface-2">
             {showOpt ? "Hide optimizer" : "Optimize…"}
           </button>
-          <button onClick={() => setAlloc({})} className="rounded-lg border border-border px-3 py-1 text-ink-2 hover:bg-surface-2">
-            Reset to my OO settings
+          <div className="flex rounded-lg border border-border" role="group" aria-label="Sizing">
+            {(
+              [
+                ["pct", "% of equity"],
+                ["lots", "Fixed lots"],
+              ] as const
+            ).map(([k, l]) => (
+              <button key={k} onClick={() => setMode(k)} aria-pressed={mode === k} className={`px-2.5 py-1 ${mode === k ? "bg-surface-2 text-ink" : "text-muted"}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => (mode === "lots" ? setLots({}) : setAlloc({}))}
+            className="rounded-lg border border-border px-3 py-1 text-ink-2 hover:bg-surface-2"
+          >
+            {mode === "lots" ? "Reset to 1 lot each" : "Reset to my OO settings"}
           </button>
         </div>
       </div>
@@ -165,14 +195,15 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
 
       {showOpt && (
         <OptimizerPanel
-          key={`${range}|${equity}|${trades.length}`}
+          key={`${range}|${equity}|${trades.length}|${mode}`}
           trades={simTrades}
-          alloc={defaults}
+          alloc={reference}
+          unit={mode}
           equity={equity}
           baseline={baselineSim}
           strategies={strategies}
           label={shortName}
-          onApply={(a) => setAlloc(a)}
+          onApply={(a) => (mode === "lots" ? setLots(Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v.fixed ?? 0]))) : setAlloc(a))}
         />
       )}
 
@@ -262,13 +293,38 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
               const r = byName.get(s);
               // 0–20% covers normal sizing; a capped add-on (100% × 1 contract) gets the full 0–100%.
               const max = (defaults[s]?.pct ?? 0) > 20 ? 100 : 20;
+              const lot = a.fixed ?? 0;
+              const on = mode === "lots" ? lot > 0 : a.pct > 0;
               return (
-                <tr key={s} className={a.pct > 0 ? undefined : "opacity-50"}>
+                <tr key={s} className={on ? undefined : "opacity-50"}>
                   <td className="min-w-[12rem] whitespace-normal">
                     <span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: colorOf(s) }} />
                     <span title={s}>{shortName(s)}</span>
                   </td>
                   <td>
+                    {mode === "lots" ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min={0}
+                          max={Math.max(20, lot * 2)}
+                          step={1}
+                          value={lot}
+                          onChange={(e) => setLot(s, Number(e.target.value))}
+                          aria-label={`${shortName(s)} contracts per trade`}
+                          className="w-28 accent-[var(--accent)]"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={lot}
+                          onChange={(e) => setLot(s, Number(e.target.value) || 0)}
+                          className="w-16 rounded border border-border bg-surface px-1 py-0.5 text-right text-ink"
+                        />
+                        <span className="text-muted">lot{lot === 1 ? "" : "s"}</span>
+                      </div>
+                    ) : (
                     <div className="flex items-center gap-2">
                       <input
                         type="range"
@@ -291,6 +347,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
                       />
                       <span className="text-muted">%</span>
                     </div>
+                    )}
                   </td>
                   <td>
                     <input
@@ -298,7 +355,8 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
                       min={0}
                       step={1}
                       placeholder="—"
-                      value={a.maxContracts ?? ""}
+                      value={mode === "lots" ? "" : (a.maxContracts ?? "")}
+                      disabled={mode === "lots"}
                       onChange={(e) => set(s, { maxContracts: e.target.value === "" ? undefined : Math.max(0, Math.round(Number(e.target.value))) })}
                       className="w-14 rounded border border-border bg-surface px-1 py-0.5 text-right text-ink"
                       aria-label={`${shortName(s)} max contracts`}
@@ -321,6 +379,11 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
           <tfoot>
             <tr className="border-t-2 border-border font-semibold">
               <td>Total</td>
+              {mode === "lots" ? (
+                <td>
+                  {strategies.reduce((t, s) => t + (effective[s].fixed ?? 0), 0)} lots <span className="text-xs font-normal text-muted">per round of entries</span>
+                </td>
+              ) : (
               <td>
                 {strategies
                   .filter((s) => !(effective[s].maxContracts && effective[s].pct >= 100))
@@ -328,6 +391,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
                   .toFixed(2)}
                 % <span className="text-xs font-normal text-muted">per-trade allocations{strategies.some((s) => effective[s].maxContracts && effective[s].pct >= 100) ? " (+ add-on)" : ""}</span>
               </td>
+              )}
               <td />
               <td>{sim.trades.toLocaleString()}</td>
               <td>{sim.trades ? "100%" : "—"}</td>
