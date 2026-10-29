@@ -9,6 +9,8 @@ export interface StrategyAlloc {
   maxContracts?: number;
   /** Fixed contracts per trade instead of % of equity (per-lot mode); 0 = off. */
   fixed?: number;
+  /** Double the size of the strategy's next trade after it gets stopped out. */
+  doubleAfterStop?: boolean;
 }
 
 /** Schwab Port 2026 allocations in Option Omega (as of Oct 29, 2026), keyed by the scorecard's short names. */
@@ -40,6 +42,8 @@ export interface SimTrade {
   plPerLot: number;
   riskPerLot: number;
   premiumPerLot: number;
+  /** OO closed it with a stop loss. */
+  stopped: boolean;
 }
 
 const MULT = 100;
@@ -99,6 +103,7 @@ export function toSimTrades(trades: OOTrade[]): SimTrade[] {
       riskPerLot,
       // OO's net premium per contract (+ credit, − debit) when the log has it.
       premiumPerLot: t.premium ?? premium,
+      stopped: /stop/i.test(t.reason),
     });
   }
   return out.sort((a, b) => a.open.localeCompare(b.open) || a.strategy.localeCompare(b.strategy));
@@ -209,21 +214,33 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
   const sized: Sized[] = [];
   const pending: Sized[] = []; // open, not yet credited
   let realized = startEquity;
+  // Strategies whose latest closed trade was a stop-out and haven't had their doubled trade yet.
+  const afterStop = new Set<string>();
   const settle = (until: string) => {
     pending.sort((a, b) => a.close.localeCompare(b.close));
-    while (pending.length && pending[0].close <= until) realized += pending.shift()!.pl;
+    while (pending.length && pending[0].close <= until) {
+      const done = pending.shift()!;
+      realized += done.pl;
+      if (done.stopped) afterStop.add(done.strategy);
+      else afterStop.delete(done.strategy);
+    }
   };
   for (const t of trades) {
     const a = alloc[t.strategy];
     if (!a) continue;
     let n: number;
+    settle(t.open);
     if (a.fixed !== undefined) {
       n = Math.max(0, Math.round(a.fixed));
     } else {
       if (!(a.pct > 0)) continue;
-      settle(t.open);
       n = Math.floor(((a.pct / 100) * Math.max(realized, 0)) / t.riskPerLot);
       if (a.maxContracts && a.maxContracts > 0) n = Math.min(n, a.maxContracts);
+    }
+    // Double the very next trade after a stop-out (only that one).
+    if (a.doubleAfterStop && afterStop.has(t.strategy)) {
+      n *= 2;
+      afterStop.delete(t.strategy);
     }
     if (n <= 0) continue;
     const s: Sized = { ...t, contracts: n, pl: t.plPerLot * n, margin: t.riskPerLot * n };

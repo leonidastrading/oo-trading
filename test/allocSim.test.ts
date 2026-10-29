@@ -170,3 +170,15 @@ describe("fixed lots", () => {
     expect(r.result.avgMarginUtil).toBeLessThanOrEqual(0.05 + 1e-9);
   });
 });
+
+describe("double after a stop-out", () => {
+  it("doubles only the very next trade after a stop", () => {
+    const day = (d: string, pl: number, reason: string) =>
+      t({ dateOpened: d, dateClosed: d, legs: `10 Mar ${Number(d.slice(-2))} 5000 P STO 3.00 | 10 Mar ${Number(d.slice(-2))} 4990 P BTO 1.00`, margin: 10_000, pl, reason });
+    const trades = [day("2026-03-02", -1000, "Stop Loss"), day("2026-03-03", 2000, "Expired"), day("2026-03-04", 2000, "Expired")];
+    const base = simulate(toSimTrades(trades), { PS: { pct: 0, fixed: 1 } }, 100_000);
+    const dbl = simulate(toSimTrades(trades), { PS: { pct: 0, fixed: 1, doubleAfterStop: true } }, 100_000);
+    expect(base.pl).toBe(-100 + 200 + 200);
+    expect(dbl.pl).toBe(-100 + 400 + 200);
+  });
+});

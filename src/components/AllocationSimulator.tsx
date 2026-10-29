@@ -32,6 +32,8 @@ interface Saved {
   alloc: Record<string, StrategyAlloc>;
   mode?: Mode;
   lots?: Record<string, number>;
+  /** Strategies whose next trade after a stop-out is doubled. */
+  doubled?: string[];
 }
 
 function load(): Saved | null {
@@ -66,6 +68,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   // "pct": % of equity per trade from the OO settings. "lots": fixed contracts per trade (per-lot P/L, log sizing ignored).
   const [mode, setMode] = useState<Mode>("pct");
   const [lots, setLots] = useState<Record<string, number>>({});
+  const [doubled, setDoubled] = useState<Set<string>>(new Set());
 
   // Restore this device's last settings after hydration.
   useEffect(() => {
@@ -77,23 +80,30 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       setAlloc(s.alloc ?? {});
       setMode(s.mode === "lots" ? "lots" : "pct");
       setLots(s.lots ?? {});
+      setDoubled(new Set(s.doubled ?? []));
     });
   }, []);
   useEffect(() => {
     try {
-      localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc, mode, lots } satisfies Saved));
+      localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc, mode, lots, doubled: [...doubled] } satisfies Saved));
     } catch {}
-  }, [equity, range, alloc, mode, lots]);
+  }, [equity, range, alloc, mode, lots, doubled]);
 
   const effective = useMemo(() => {
     const out: Record<string, StrategyAlloc> = {};
-    for (const s of strategies) out[s] = mode === "lots" ? { pct: 0, fixed: lots[s] ?? 1 } : (alloc[s] ?? defaults[s] ?? { pct: 1 });
+    for (const s of strategies) {
+      const a = mode === "lots" ? { pct: 0, fixed: lots[s] ?? 1 } : (alloc[s] ?? defaults[s] ?? { pct: 1 });
+      out[s] = { ...a, doubleAfterStop: doubled.has(s) };
+    }
     return out;
-  }, [strategies, alloc, defaults, mode, lots]);
+  }, [strategies, alloc, defaults, mode, lots, doubled]);
   // Reference settings: the OO settings, or 1 lot of everything in per-lot mode.
   const reference = useMemo(
-    () => (mode === "lots" ? Object.fromEntries(strategies.map((s) => [s, { pct: 0, fixed: 1 } as StrategyAlloc])) : defaults),
-    [mode, strategies, defaults],
+    () =>
+      Object.fromEntries(
+        strategies.map((s) => [s, { ...(mode === "lots" ? { pct: 0, fixed: 1 } : defaults[s]), doubleAfterStop: doubled.has(s) } as StrategyAlloc]),
+      ),
+    [mode, strategies, defaults, doubled],
   );
 
   const simTrades = useMemo(() => {
@@ -199,6 +209,15 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
           trades={simTrades}
           alloc={reference}
           unit={mode}
+          doubled={doubled}
+          onToggleDouble={(st) =>
+            setDoubled((d) => {
+              const n = new Set(d);
+              if (n.has(st)) n.delete(st);
+              else n.add(st);
+              return n;
+            })
+          }
           equity={equity}
           baseline={baselineSim}
           strategies={strategies}
@@ -300,6 +319,11 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
                   <td className="min-w-[12rem] whitespace-normal">
                     <span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: colorOf(s) }} />
                     <span title={s}>{shortName(s)}</span>
+                    {doubled.has(s) && (
+                      <span className="ml-1.5 rounded bg-loss/20 px-1 text-xs text-loss" title="Next trade after a stop-out is doubled">
+                        2× after stop
+                      </span>
+                    )}
                   </td>
                   <td>
                     {mode === "lots" ? (

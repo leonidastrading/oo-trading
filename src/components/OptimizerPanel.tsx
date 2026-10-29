@@ -35,6 +35,8 @@ export function OptimizerPanel({
   equity,
   baseline,
   unit = "pct",
+  doubled,
+  onToggleDouble,
   strategies,
   label,
   onApply,
@@ -46,6 +48,9 @@ export function OptimizerPanel({
   baseline: SimResult;
   /** "pct": allocations are % of equity; "lots": fixed contracts per trade. */
   unit?: "pct" | "lots";
+  /** Strategies whose next trade after a stop-out is doubled (applies to every simulation). */
+  doubled: Set<string>;
+  onToggleDouble: (s: string) => void;
   strategies: string[];
   label: (s: string) => string;
   onApply: (a: Record<string, StrategyAlloc>) => void;
@@ -179,27 +184,35 @@ export function OptimizerPanel({
         <div className="mb-1 text-xs text-muted">
           {unit === "lots"
             ? "Every run starts from 1 lot of each strategy (per-contract P/L; the log's sizing is ignored). Unchecked strategies stay at 1 lot."
-            : "Every run starts from your OO settings on the uploaded log (not from the sliders or an earlier result). Unchecked strategies stay at their OO setting."}
+            : "Every run starts from your OO settings on the uploaded log (not from the sliders or an earlier result). Unchecked strategies stay at their OO setting."}{" "}
+          “2× after stop” doubles that strategy&apos;s very next trade after an OO stop loss — it applies to the sliders, the reference and the
+          optimizer alike.
         </div>
         <div className="flex flex-wrap gap-2">
           {strategies.map((s) => {
             const on = !excluded.has(s);
             return (
-              <label key={s} className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${on ? "border-border text-ink" : "border-border/50 text-muted"}`}>
-                <input
-                  type="checkbox"
-                  checked={on}
-                  onChange={() =>
-                    setExcluded((x) => {
-                      const n = new Set(x);
-                      if (n.has(s)) n.delete(s);
-                      else n.add(s);
-                      return n;
-                    })
-                  }
-                />
-                {label(s)}
-              </label>
+              <div key={s} className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${on ? "border-border text-ink" : "border-border/50 text-muted"}`}>
+                <label className="flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() =>
+                      setExcluded((x) => {
+                        const n = new Set(x);
+                        if (n.has(s)) n.delete(s);
+                        else n.add(s);
+                        return n;
+                      })
+                    }
+                  />
+                  {label(s)}
+                </label>
+                <label className="flex cursor-pointer items-center gap-1 border-l border-border pl-2 text-loss" title="Double the very next trade after a stop-out">
+                  <input type="checkbox" checked={doubled.has(s)} onChange={() => onToggleDouble(s)} />
+                  2× after stop
+                </label>
+              </div>
             );
           })}
         </div>
