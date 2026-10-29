@@ -140,7 +140,8 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       // Axis labels (time and price); the entry/exit labels are HTML and sized separately.
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: css("--muted", "#898781"), fontSize: 12 },
       grid: { vertLines: { visible: false }, horzLines: { color: css("--axis", "#4a4a46") + "55" } },
-      rightPriceScale: { borderVisible: false },
+      // Headroom above and below the bars for the entry/exit labels.
+      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.12, bottom: 0.22 } },
       // Intraday: the time axis is locked to the whole session, 9:30–4:30 ET (no horizontal zoom/scroll).
       timeScale: { borderVisible: false, timeVisible: !isDaily, secondsVisible: false, rightOffset: isDaily ? 4 : 0 },
       handleScroll: isDaily,
@@ -267,8 +268,12 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     const arrowsOn = new Map<string, number>();
     for (const l of labels) arrowsOn.set(`${l.time}|${l.exit}`, (arrowsOn.get(`${l.time}|${l.exit}`) ?? 0) + 1);
     const place = () => {
-      // Greedy lanes: a label that would overlap the previous one on its side is pushed further out.
-      const lanes: Record<"above" | "below", { right: number; lane: number }[]> = { above: [], below: [] };
+      // Each label starts next to its arrow and moves further out if it would overlap one already placed;
+      // when it would leave the chart it slides sideways along the edge instead, so every label stays visible.
+      const paneH = (box.current?.clientHeight ?? 0) - chart.timeScale().height();
+      const placed: { l: number; t: number; r: number; b: number }[] = [];
+      const free = (r: { l: number; t: number; r: number; b: number }) =>
+        !placed.some((p) => r.l < p.r + 4 && r.r > p.l - 4 && r.t < p.b + 2 && r.b > p.t - 2);
       labels.forEach((l, i) => {
         const el = els[i];
         const bar = barAt.get(l.time);
@@ -284,21 +289,39 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         el.style.display = "";
         const w = el.offsetWidth;
         const h = el.offsetHeight;
-        const left = x - w / 2;
-        const side = l.exit ? "above" : "below";
-        const used = lanes[side].filter((p) => p.right > left - 4).map((p) => p.lane);
-        let lane = 0;
-        while (used.includes(lane)) lane++;
-        lanes[side].push({ right: left + w, lane });
-        const offset = GAP + ((arrowsOn.get(`${l.time}|${l.exit}`) ?? 1) - 1) * 20 + lane * (h + 4);
-        el.style.left = `${left}px`;
-        el.style.top = `${l.exit ? y - offset - h : y + offset}px`;
+        const base = GAP + ((arrowsOn.get(`${l.time}|${l.exit}`) ?? 1) - 1) * 20;
+        const minTop = 2;
+        const maxTop = Math.max(minTop, paneH - h - 2);
+        const clamp = (t: number) => Math.min(maxTop, Math.max(minTop, t));
+        const at = (left: number, top: number) => ({ l: left, t: top, r: left + w, b: top + h });
+        let rect = at(x - w / 2, clamp(l.exit ? y - base - h : y + base));
+        // 1) Stack outward while there's room.
+        for (let k = 1; !free(rect) && k < 8; k++) {
+          const t = l.exit ? y - base - h - k * (h + 4) : y + base + k * (h + 4);
+          if (t < minTop || t > maxTop) break;
+          rect = at(x - w / 2, t);
+        }
+        // 2) Out of room: slide along the row, alternating right and left.
+        for (let k = 1; !free(rect) && k < 12; k++) {
+          const dx = Math.ceil(k / 2) * (w + 4) * (k % 2 ? 1 : -1);
+          rect = at(x - w / 2 + dx, rect.t);
+        }
+        placed.push(rect);
+        el.style.left = `${rect.l}px`;
+        el.style.top = `${rect.t}px`;
         if (lead) {
-          const start = offset - lane * (h + 4) - 4; // just past the arrow
-          lead.style.display = lane > 0 ? "" : "none";
+          // Connector from just past the arrow to the label, drawn only when the label had to move away.
+          const y0 = l.exit ? y - base + 4 : y + base - 4;
+          const dx = rect.l + w / 2 - x;
+          const dy = (l.exit ? rect.b : rect.t) - y0;
+          const moved = Math.abs(dx) > 2 || Math.abs(dy) > 6;
+          lead.style.display = moved ? "" : "none";
+          // A 1px vertical line from (x, y0), rotated to point at the label.
           lead.style.left = `${x}px`;
-          lead.style.height = `${offset - start}px`;
-          lead.style.top = `${l.exit ? y - offset : y + start}px`;
+          lead.style.top = `${y0}px`;
+          lead.style.height = `${Math.hypot(dx, dy)}px`;
+          lead.style.transformOrigin = "top left";
+          lead.style.transform = `rotate(${(Math.atan2(-dx, dy) * 180) / Math.PI}deg)`;
         }
       });
     };
