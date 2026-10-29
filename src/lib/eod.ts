@@ -20,7 +20,7 @@ export async function takeEodSnapshot(date: string): Promise<EodSnapshot> {
   const acct = await cachedAccount(0, true);
   if (!acct.data || acct.error) throw new Error(acct.error ?? "No account data");
   const fills = await cachedFills(date, 0, true);
-  const symbols = settlementSymbols(acct.data.positions, date);
+  const symbols = settlementSymbols(acct.data.positions, date, fills.data ?? []);
   const quotes = symbols.length ? await cachedQuotes(["$SPX", ...symbols.filter((s) => s !== "$SPX")], 60_000) : null;
   // Expired cash-settled options count as realized at the settlement price.
   const expired = splitExpired(acct.data.positions, fills.data ?? [], quotes?.data, Date.now());

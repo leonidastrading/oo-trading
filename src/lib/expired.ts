@@ -1,8 +1,8 @@
 // Cash-settled index options that have expired but that Schwab hasn't posted yet
 // (it posts settlements ~01:45 ET the next day). From the session close we value them
 // at the settlement price and treat them as closed.
-import { intrinsic, MULTIPLIER } from "./options";
-import type { ClosedOrder, Fill } from "./realized";
+import { intrinsic, MULTIPLIER, parseOptionSymbol, rootToUnderlying } from "./options";
+import { openLots, type ClosedOrder, type Fill } from "./realized";
 import type { Position } from "./spreads";
 
 export const CASH_SETTLED = new Set(["SPX", "NDX", "RUT", "XSP", "VIX", "DJX"]);
@@ -18,6 +18,43 @@ export interface ExpiredOpts {
   settle: Record<string, number | null | undefined>;
   /** Fills already on the books (Schwab's posted settlements replace our estimate). */
   fills: Fill[];
+}
+
+/**
+ * Legs that expired on sessionDate and are still open by our fills, but are no longer in Schwab's positions
+ * and not posted yet. Overnight Schwab drops expired options from the account a few hours before it posts
+ * every expiration, so without these the day's P/L would lose them in between.
+ */
+export function ghostExpired(positions: Position[], fills: Fill[], sessionDate: string): Position[] {
+  const held = new Set(positions.map((p) => p.symbol));
+  const posted = new Set(fills.filter((f) => f.settlement && f.bookDate === sessionDate).map((f) => f.symbol));
+  const out: Position[] = [];
+  for (const [symbol, lots] of openLots(fills)) {
+    if (held.has(symbol) || posted.has(symbol) || !lots.length) continue;
+    const o = parseOptionSymbol(symbol);
+    if (!o || o.expiration !== sessionDate) continue;
+    const underlying = rootToUnderlying(o.root);
+    if (!CASH_SETTLED.has(underlying)) continue;
+    const qty = lots.reduce((s, l) => s + l.qty, 0);
+    if (!qty) continue;
+    const size = lots.reduce((s, l) => s + Math.abs(l.qty), 0);
+    out.push({
+      symbol,
+      assetType: "OPTION",
+      description: "",
+      underlying,
+      expiration: o.expiration,
+      putCall: o.putCall,
+      strike: o.strike,
+      qty,
+      avgPrice: lots.reduce((s, l) => s + Math.abs(l.qty) * l.price, 0) / size,
+      mark: 0,
+      marketValue: 0,
+      plOpen: 0,
+      plDay: 0,
+    });
+  }
+  return out;
 }
 
 /** Positions that expired on sessionDate, are cash-settled, have a price, and aren't posted yet. */

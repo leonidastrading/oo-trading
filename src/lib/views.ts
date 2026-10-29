@@ -1,7 +1,7 @@
 // Server-side assembly of the Live and Today page payloads.
 import "server-only";
 import { takeManualRefresh } from "./cache";
-import { CASH_SETTLED, expiredOrders, pendingExpired } from "./expired";
+import { CASH_SETTLED, expiredOrders, ghostExpired, pendingExpired } from "./expired";
 import { analyzeClose, type CloseAnalysis } from "./options";
 import { countOpenEntries, feesOn, groupClosesByOrder, openLots, realizedOn, type ClosedOrder, type Fill } from "./realized";
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
@@ -113,7 +113,8 @@ export function splitExpired(
     settle: Object.fromEntries([...CASH_SETTLED].map((u) => [u, quotes?.[quoteSymbol(u)]?.last])),
     fills,
   };
-  const pending = pendingExpired(positions, opts);
+  // Include legs Schwab already dropped from the account but hasn't posted yet.
+  const pending = pendingExpired([...positions, ...ghostExpired(positions, fills, opts.sessionDate)], opts);
   const gone = new Set(pending.map((p) => p.symbol));
   const orders = expiredOrders(pending, opts);
   return {
@@ -125,10 +126,12 @@ export function splitExpired(
 }
 
 /** Quote symbols needed to value the session's expiring cash-settled options. */
-export function settlementSymbols(positions: Position[], sessionDate: string): string[] {
+export function settlementSymbols(positions: Position[], sessionDate: string, fills: Fill[] = []): string[] {
   return [
     ...new Set(
-      positions.filter((p) => p.expiration === sessionDate && CASH_SETTLED.has(p.underlying)).map((p) => quoteSymbol(p.underlying)),
+      [...positions, ...ghostExpired(positions, fills, sessionDate)]
+        .filter((p) => p.expiration === sessionDate && CASH_SETTLED.has(p.underlying))
+        .map((p) => quoteSymbol(p.underlying)),
     ),
   ];
 }
@@ -158,7 +161,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
   const groups = groupSpreads(positions, today);
   const todays = groups.filter((g) => g.isToday);
 
-  const symbols = new Set(["$SPX", ...todays.map((g) => quoteSymbol(g.underlying)), ...settlementSymbols(positions, sessionDate)]);
+  const symbols = new Set(["$SPX", ...todays.map((g) => quoteSymbol(g.underlying)), ...settlementSymbols(positions, sessionDate, fills.data ?? [])]);
   const quotes = await cachedQuotes([...symbols], maxAge(policy.positionsMs), allowForce);
   if (quotes.error && quotes.error !== acct.error) meta.errors.push(quotes.error);
   const spx = quotes.data?.["$SPX"] ?? null;
@@ -262,7 +265,7 @@ export async function getTodayData(force = false): Promise<TodayData> {
   const allFills = fills.data ?? [];
   const closes = realizedOn(allFills, sessionDate);
   const allPositions = acct.data?.positions ?? [];
-  const settleSymbols = settlementSymbols(allPositions, sessionDate);
+  const settleSymbols = settlementSymbols(allPositions, sessionDate, allFills);
   const quotes = settleSymbols.length
     ? await cachedQuotes(["$SPX", ...settleSymbols.filter((s) => s !== "$SPX")], maxAge(policy.positionsMs), allowForce)
     : null;

@@ -59,3 +59,45 @@ describe("expired options pending Schwab posting", () => {
     expect(pendingExpired(book, { ...base, settle: {} })).toHaveLength(0);
   });
 });
+
+describe("legs Schwab dropped overnight before posting", () => {
+  const fill = (symbol: string, qty: number, price: number, orderId: string): Fill => ({
+    id: `${orderId}-${symbol}`,
+    time: Date.parse("2026-10-28T17:30:00Z"),
+    orderId,
+    type: "TRADE",
+    symbol,
+    assetType: "OPTION",
+    underlying: "SPX",
+    expiration: "2026-10-28",
+    putCall: symbol.includes("P0") ? "P" : "C",
+    strike: Number(symbol.slice(-8)) / 1000,
+    qty,
+    price,
+    fees: 0,
+    schwabFees: 0,
+    cash: -qty * price * 100,
+    effect: "OPENING",
+    bookDate: "2026-10-28",
+    settlement: false,
+  });
+  const short = "SPXW  261028P07655000";
+  const long = "SPXW  261028P07555000";
+  const fills = [fill(short, -13, 2.0, "1"), fill(long, 13, 0.2, "1")];
+
+  it("rebuilds expired legs from the fills when they've left the account", async () => {
+    const { ghostExpired } = await import("@/lib/expired");
+    const ghosts = ghostExpired([], fills, "2026-10-28");
+    expect(ghosts.map((g) => [g.symbol, g.qty, g.avgPrice])).toEqual([
+      [short, -13, 2],
+      [long, 13, 0.2],
+    ]);
+    // Still in the account → not a ghost; another day → not a ghost.
+    expect(ghostExpired([{ ...ghosts[0] }], fills, "2026-10-28").map((g) => g.symbol)).toEqual([long]);
+    expect(ghostExpired([], fills, "2026-10-27")).toEqual([]);
+    // Valued at settlement next morning (expired OTM: keep the 1.80 credit × 13).
+    const opts: ExpiredOpts = { sessionDate: "2026-10-28", today: "2026-10-29", afterClose: false, settle: { SPX: 7700 }, fills };
+    const [order] = expiredOrders(pendingExpired(ghosts, opts), opts);
+    expect(order.realized).toBeCloseTo(13 * 1.8 * 100);
+  });
+});
