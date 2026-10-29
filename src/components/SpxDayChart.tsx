@@ -191,8 +191,8 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         color: css("--gain", "#3fb59d"),
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        // Intraday the P/L is an HTML tag right after the latest bar (see place()), so it never covers the bars.
+        // Intraday the P/L is an HTML tag in the price-axis column (see place()), so it never covers bars.
+        axisLabelVisible: isDaily,
         title: isDaily ? money(bestPnl, { sign: true }) : "",
       });
     }
@@ -267,7 +267,8 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     let bestEl: HTMLDivElement | null = null;
     if (overlay && !isDaily && bestPrice !== null) {
       bestEl = document.createElement("div");
-      bestEl.className = "absolute whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-semibold";
+      bestEl.className = "absolute whitespace-nowrap rounded-sm py-0.5 text-center text-xs font-semibold";
+      bestEl.title = `Best close ${bestPrice}`;
       bestEl.style.background = css("--gain", "#3fb59d");
       bestEl.style.color = css("--page", "#0c0c0b");
       bestEl.textContent = money(bestPnl, { sign: true });
@@ -283,30 +284,22 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       const paneH = (box.current?.clientHeight ?? 0) - chart.timeScale().height();
       const paneW = (box.current?.clientWidth ?? 0) - chart.priceScale("right").width();
       const placed: { l: number; t: number; r: number; b: number }[] = [];
-      // Best-close P/L on its line, at the right-most spot where it covers no candle (right of the latest bar
-      // when there's room), so it never hides price action.
+      // Best-close P/L in the price-axis column at its line's level (no candles there), nudged clear of the
+      // live price label when the two are close.
       const by = bestPrice !== null ? series.priceToCoordinate(bestPrice) : null;
       if (bestEl) {
-        if (by === null) bestEl.style.display = "none";
+        if (by === null || by < 0 || by > paneH) bestEl.style.display = "none";
         else {
           bestEl.style.display = "";
-          const w = bestEl.offsetWidth;
+          const axisW = chart.priceScale("right").width();
+          bestEl.style.width = `${Math.max(axisW - 2, 0)}px`;
           const h = bestEl.offsetHeight;
-          const top = by - h / 2;
-          const half = Math.max(2, chart.timeScale().options().barSpacing / 2);
-          const spans = bars.flatMap((b) => {
-            const x = chart.timeScale().timeToCoordinate(b.time as UTCTimestamp);
-            const hi = series.priceToCoordinate(b.high);
-            const lo = series.priceToCoordinate(b.low);
-            return x === null || hi === null || lo === null ? [] : [{ l: x - half, r: x + half, t: hi, b: lo }];
-          });
-          const clear = (left: number) => !spans.some((sp) => sp.l < left + w + 3 && sp.r > left - 3 && sp.t < top + h + 2 && sp.b > top - 2);
-          let left = Math.max(2, paneW - w - 2);
-          while (left > 2 && !clear(left)) left -= 4;
-          if (!clear(left)) left = Math.max(2, paneW - w - 2);
-          bestEl.style.left = `${left}px`;
-          bestEl.style.top = `${top}px`;
-          placed.push({ l: left, t: top, r: left + w, b: top + h });
+          let top = by - h / 2;
+          const last = bars[bars.length - 1];
+          const ly = last ? series.priceToCoordinate(last.close) : null;
+          if (ly !== null && Math.abs(ly - by) < h + 2) top = ly > by ? ly - h / 2 - h - 2 : ly + h / 2 + 2;
+          bestEl.style.left = `${paneW + 1}px`;
+          bestEl.style.top = `${Math.min(Math.max(0, top), paneH - h)}px`;
         }
       }
       const free = (r: { l: number; t: number; r: number; b: number }) =>
