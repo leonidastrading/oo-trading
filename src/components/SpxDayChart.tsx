@@ -313,7 +313,9 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     boxEl.addEventListener("wheel", relayout, { passive: true });
     const saved = viewRef.current;
     if (isDaily && saved && saved.tf === tf && saved.range) chart.timeScale().setVisibleLogicalRange(saved.range);
-    else chart.timeScale().fitContent();
+    else if (isDaily) chart.timeScale().fitContent();
+    // fitContent ignores trailing empty slots; span every slot from 9:30 to 4:30 explicitly.
+    else chart.timeScale().setVisibleLogicalRange({ from: -0.5, to: bars.length + whitespace.length - 0.5 });
     relayout();
     return () => {
       ro.disconnect();
