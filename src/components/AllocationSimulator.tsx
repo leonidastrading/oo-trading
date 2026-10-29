@@ -77,9 +77,12 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   const [dragging, setDragging] = useState<string | null>(null);
 
   // Restore this device's last settings after hydration.
+  const [restored, setRestored] = useState(false);
   useEffect(() => {
+    // Read now (before the save effect below can write); apply after hydration.
+    const s = load();
     void Promise.resolve().then(() => {
-      const s = load();
+      setRestored(true);
       if (!s) return;
       setEquity(s.equity > 0 ? s.equity : 1_000_000);
       setRange(s.range >= 0 && s.range < RANGES.length ? s.range : 0);
@@ -91,10 +94,11 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
     });
   }, []);
   useEffect(() => {
+    if (!restored) return; // don't overwrite the saved settings with the defaults on first render
     try {
       localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc, mode, lots, doubled: [...doubled], order } satisfies Saved));
     } catch {}
-  }, [equity, range, alloc, mode, lots, doubled, order]);
+  }, [restored, equity, range, alloc, mode, lots, doubled, order]);
 
   const effective = useMemo(() => {
     const out: Record<string, StrategyAlloc> = {};
