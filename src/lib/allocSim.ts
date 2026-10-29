@@ -11,7 +11,7 @@ export interface StrategyAlloc {
   fixed?: number;
 }
 
-/** Schwab Port 2026 allocations in Option Omega (as of Oct 28, 2026), keyed by the scorecard's short names. */
+/** Schwab Port 2026 allocations in Option Omega (as of Oct 29, 2026), keyed by the scorecard's short names. */
 export const PORTFOLIO_ALLOC: Record<string, StrategyAlloc> = {
   Long: { pct: 7.2 },
   Short: { pct: 3.4 },
@@ -21,7 +21,7 @@ export const PORTFOLIO_ALLOC: Record<string, StrategyAlloc> = {
   "$8 IC Dip": { pct: 100, maxContracts: 1 },
   "5d IC": { pct: 3 },
   BWB: { pct: 0.5 },
-  "VIX>30 1DTE": { pct: 1 },
+  "VIX>30 1DTE": { pct: 2 },
   "VIX-up PS": { pct: 1 },
   "2DTE": { pct: 3 },
 };
