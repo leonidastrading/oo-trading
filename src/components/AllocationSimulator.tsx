@@ -6,6 +6,8 @@ import { impliedAllocations, portfolioAlloc, simulate, toSimTrades, type Strateg
 import type { OOTrade } from "@/lib/ooCsv";
 import { addDays, todayET } from "@/lib/time";
 import { money, plClass } from "./format";
+import { ordered } from "./Arrangeable";
+import { MonthlyReturnsChart } from "./MonthlyReturnsChart";
 import { OptimizerPanel } from "./OptimizerPanel";
 
 const RANGES = [
@@ -34,6 +36,8 @@ interface Saved {
   lots?: Record<string, number>;
   /** Strategies whose next trade after a stop-out is doubled. */
   doubled?: string[];
+  /** The viewer's row order for the strategy table. */
+  order?: string[];
 }
 
 function load(): Saved | null {
@@ -69,6 +73,8 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   const [mode, setMode] = useState<Mode>("pct");
   const [lots, setLots] = useState<Record<string, number>>({});
   const [doubled, setDoubled] = useState<Set<string>>(new Set());
+  const [order, setOrder] = useState<string[]>([]);
+  const [dragging, setDragging] = useState<string | null>(null);
 
   // Restore this device's last settings after hydration.
   useEffect(() => {
@@ -81,13 +87,14 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       setMode(s.mode === "lots" ? "lots" : "pct");
       setLots(s.lots ?? {});
       setDoubled(new Set(s.doubled ?? []));
+      setOrder(s.order ?? []);
     });
   }, []);
   useEffect(() => {
     try {
-      localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc, mode, lots, doubled: [...doubled] } satisfies Saved));
+      localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc, mode, lots, doubled: [...doubled], order } satisfies Saved));
     } catch {}
-  }, [equity, range, alloc, mode, lots, doubled]);
+  }, [equity, range, alloc, mode, lots, doubled, order]);
 
   const effective = useMemo(() => {
     const out: Record<string, StrategyAlloc> = {};
@@ -141,6 +148,16 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   const ddKey = ddUnit === "usd" ? "ddUsd" : "dd";
   const ddFloor = ddUnit === "usd" ? Math.min(-1, ...chartData.map((e) => e.ddUsd)) : Math.min(-0.005, ...sim.equity.map((e) => e.dd));
   const byName = new Map(sim.strategies.map((r) => [r.strategy, r]));
+  // Strategy table rows in the viewer's order (drag a row, or ▲/▼); new strategies go to the end.
+  const rows = ordered(
+    strategies.map((id) => ({ id })),
+    order,
+  ).map((r) => r.id);
+  const moveRow = (id: string, to: number) => {
+    const ids = rows.filter((x) => x !== id);
+    ids.splice(Math.max(0, Math.min(ids.length, to)), 0, id);
+    setOrder(ids);
+  };
   const years = [...new Set(sim.months.map((m) => m.month.slice(0, 4)))].sort().reverse();
   const monthMap = new Map(sim.months.map((m) => [m.month, m]));
 
@@ -220,7 +237,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
           }
           equity={equity}
           baseline={baselineSim}
-          strategies={strategies}
+          strategies={rows}
           label={shortName}
           onApply={(a) => (mode === "lots" ? setLots(Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v.fixed ?? 0]))) : setAlloc(a))}
         />
@@ -287,11 +304,20 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
         <Stat label="Margin used" value={`${p1(sim.avgMarginUtil)} avg`} sub={`${p1(sim.maxMarginUtil)} max day`} />
       </div>
 
+      <MonthlyReturnsChart months={sim.months} />
+
       <div className="card overflow-x-auto">
         <table className="data w-full text-sm">
           <thead>
             <tr>
-              <th>Strategy</th>
+              <th>
+                Strategy
+                {order.length > 0 && (
+                  <button onClick={() => setOrder([])} className="ml-2 text-xs font-normal normal-case text-link underline">
+                    reset order
+                  </button>
+                )}
+              </th>
               <th className="min-w-[12rem]">Allocation / trade</th>
               <th>Max ct</th>
               <th>Trades</th>
@@ -307,7 +333,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
             </tr>
           </thead>
           <tbody>
-            {strategies.map((s) => {
+            {rows.map((s, idx) => {
               const a = effective[s];
               const r = byName.get(s);
               // 0–20% covers normal sizing; a capped add-on (100% × 1 contract) gets the full 0–100%.
@@ -315,8 +341,48 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
               const lot = a.fixed ?? 0;
               const on = mode === "lots" ? lot > 0 : a.pct > 0;
               return (
-                <tr key={s} className={on ? undefined : "opacity-50"}>
+                <tr
+                  key={s}
+                  className={`${on ? "" : "opacity-50"} ${dragging === s ? "bg-surface-2" : ""}`}
+                  onDragOver={(e) => {
+                    if (!dragging) return;
+                    e.preventDefault();
+                    if (dragging !== s) moveRow(dragging, idx);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragging(null);
+                  }}
+                >
                   <td className="min-w-[12rem] whitespace-normal">
+                    <span className="mr-1 inline-flex items-center gap-0.5 align-middle">
+                      <span
+                        draggable
+                        onDragStart={(e) => {
+                          setDragging(s);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => setDragging(null)}
+                        className="cursor-grab px-0.5 text-muted active:cursor-grabbing"
+                        title="Drag to reorder"
+                        aria-hidden
+                      >
+                        ⠿
+                      </span>
+                      <span className="flex flex-col leading-none">
+                        <button onClick={() => moveRow(s, idx - 1)} disabled={idx === 0} aria-label={`Move ${shortName(s)} up`} className="px-0.5 text-[10px] text-muted disabled:opacity-20">
+                          ▲
+                        </button>
+                        <button
+                          onClick={() => moveRow(s, idx + 1)}
+                          disabled={idx === rows.length - 1}
+                          aria-label={`Move ${shortName(s)} down`}
+                          className="px-0.5 text-[10px] text-muted disabled:opacity-20"
+                        >
+                          ▼
+                        </button>
+                      </span>
+                    </span>
                     <span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: colorOf(s) }} />
                     <span title={s}>{shortName(s)}</span>
                     {doubled.has(s) && (
