@@ -137,8 +137,8 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     const loss = css("--loss", "#e66767");
     const chart = createChart(box.current, {
       autoSize: true,
-      // Marker labels use the layout font size.
-      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: css("--muted", "#898781"), fontSize: 16 },
+      // Axis labels (time and price); the entry/exit labels are HTML and sized separately.
+      layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: css("--muted", "#898781"), fontSize: 12 },
       grid: { vertLines: { visible: false }, horzLines: { color: css("--axis", "#4a4a46") + "55" } },
       rightPriceScale: { borderVisible: false },
       // Intraday: the time axis is locked to the whole session, 9:30–4:30 ET (no horizontal zoom/scroll).
