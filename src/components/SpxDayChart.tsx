@@ -264,6 +264,30 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         leaders.push(lead);
       }
     } else overlay?.replaceChildren();
+    // Stop-outs: a red line from each stopped entry to its stop, under the labels.
+    const stopPairs = isDaily
+      ? []
+      : (data.exits ?? []).filter(isStop).flatMap((x) =>
+          (x.closes ?? []).flatMap((id) => {
+            const e = data.entries.find((en) => en.orderId === id);
+            return e ? [{ from: minute(e.time), to: minute(x.time) }] : [];
+          }),
+        );
+    const svgNs = "http://www.w3.org/2000/svg";
+    const stopLines: SVGLineElement[] = [];
+    if (overlay && stopPairs.length) {
+      const svg = document.createElementNS(svgNs, "svg");
+      svg.setAttribute("class", "absolute inset-0 h-full w-full");
+      for (let i = 0; i < stopPairs.length; i++) {
+        const line = document.createElementNS(svgNs, "line");
+        line.setAttribute("stroke", loss);
+        line.setAttribute("stroke-width", "2");
+        line.setAttribute("stroke-linecap", "round");
+        svg.append(line);
+        stopLines.push(line);
+      }
+      overlay.prepend(svg);
+    }
     let bestEl: HTMLDivElement | null = null;
     if (overlay && !isDaily && bestPrice !== null) {
       bestEl = document.createElement("div");
@@ -283,6 +307,26 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       // when it would leave the chart it slides sideways along the edge instead, so every label stays visible.
       const paneH = (box.current?.clientHeight ?? 0) - chart.timeScale().height();
       const paneW = (box.current?.clientWidth ?? 0) - chart.priceScale("right").width();
+      // Entry → stop lines, from the entry bar's close to the stop bar's close.
+      stopPairs.forEach((p, i) => {
+        const ln = stopLines[i];
+        const a = barAt.get(p.from);
+        const b = barAt.get(p.to);
+        const x1 = chart.timeScale().timeToCoordinate(p.from);
+        const x2 = chart.timeScale().timeToCoordinate(p.to);
+        const y1 = a ? series.priceToCoordinate(a.close) : null;
+        const y2 = b ? series.priceToCoordinate(b.close) : null;
+        if (!ln) return;
+        if (x1 === null || x2 === null || y1 === null || y2 === null) {
+          ln.style.display = "none";
+          return;
+        }
+        ln.style.display = "";
+        ln.setAttribute("x1", String(x1));
+        ln.setAttribute("y1", String(y1));
+        ln.setAttribute("x2", String(x2));
+        ln.setAttribute("y2", String(y2));
+      });
       const placed: { l: number; t: number; r: number; b: number }[] = [];
       // Best-close P/L in the price-axis column at its line's level (no candles there), nudged clear of the
       // live price label when the two are close.
@@ -506,7 +550,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       <p className="text-xs text-muted">
         Numbers match the # column: ▲ under a bar is an entry (one Schwab opening order), ▼ above is an exit of that entry (S = stop).{" "}
         <span className="text-accent">▲</span> credit entry, <span className="text-spot">▲</span> debit entry,{" "}
-        <span className="text-loss">▼</span> stop (closed at a loss before 3:45 PM), <span className="text-gain">▼</span> exit at a gain,{" "}
+        <span className="text-loss">▼</span> stop (closed at a loss before 3:45 PM; a red line joins it to its entry), <span className="text-gain">▼</span> exit at a gain,{" "}
         <span className="text-muted">▼</span> time exit at a loss. Expirations aren&apos;t marked. <span className="text-gain">- - -</span> best SPX close for today&apos;s expirations. Times ET.
       </p>
     </section>
