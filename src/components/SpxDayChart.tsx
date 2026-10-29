@@ -283,18 +283,27 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       const paneH = (box.current?.clientHeight ?? 0) - chart.timeScale().height();
       const paneW = (box.current?.clientWidth ?? 0) - chart.priceScale("right").width();
       const placed: { l: number; t: number; r: number; b: number }[] = [];
-      // Best-close P/L: on its line, just right of the latest bar (in the session's empty part).
-      const lastBar = bars[bars.length - 1];
-      const bx = lastBar ? chart.timeScale().timeToCoordinate(lastBar.time as UTCTimestamp) : null;
+      // Best-close P/L on its line, at the right-most spot where it covers no candle (right of the latest bar
+      // when there's room), so it never hides price action.
       const by = bestPrice !== null ? series.priceToCoordinate(bestPrice) : null;
       if (bestEl) {
-        if (bx === null || by === null) bestEl.style.display = "none";
+        if (by === null) bestEl.style.display = "none";
         else {
           bestEl.style.display = "";
           const w = bestEl.offsetWidth;
           const h = bestEl.offsetHeight;
-          const left = Math.min(bx + 10, Math.max(2, paneW - w - 2));
           const top = by - h / 2;
+          const half = Math.max(2, chart.timeScale().options().barSpacing / 2);
+          const spans = bars.flatMap((b) => {
+            const x = chart.timeScale().timeToCoordinate(b.time as UTCTimestamp);
+            const hi = series.priceToCoordinate(b.high);
+            const lo = series.priceToCoordinate(b.low);
+            return x === null || hi === null || lo === null ? [] : [{ l: x - half, r: x + half, t: hi, b: lo }];
+          });
+          const clear = (left: number) => !spans.some((sp) => sp.l < left + w + 3 && sp.r > left - 3 && sp.t < top + h + 2 && sp.b > top - 2);
+          let left = Math.max(2, paneW - w - 2);
+          while (left > 2 && !clear(left)) left -= 4;
+          if (!clear(left)) left = Math.max(2, paneW - w - 2);
           bestEl.style.left = `${left}px`;
           bestEl.style.top = `${top}px`;
           placed.push({ l: left, t: top, r: left + w, b: top + h });
