@@ -1,7 +1,22 @@
 import { requireKv } from "@/lib/apiGuard";
 import { NextResponse } from "next/server";
 import { cachedFills, cachedMinuteBars, type Bar } from "@/lib/schwab/data";
+import { uniqueEntries } from "@/lib/allocSim";
+import { cached } from "@/lib/cache";
+import { KEYS, kv } from "@/lib/kv";
+import type { OOTrade } from "@/lib/ooCsv";
 import { groupClosesByOrder, realizedOn } from "@/lib/realized";
+import {
+  buildLiveTrades,
+  buildProfiles,
+  deserializeProfiles,
+  inferStrategy,
+  scheduledExits,
+  serializeProfiles,
+  toBacktest,
+  type BacktestTrade,
+  type SerializedProfiles,
+} from "@/lib/scorecard";
 import { classifySpread, daysBetween } from "@/lib/spreads";
 import { lastSessionDate, marketSession } from "@/lib/time";
 
@@ -17,6 +32,8 @@ export interface EntryMarker {
   price: number;
   /** Days from entry to the (latest) expiration: 0 = same-day. */
   dte: number;
+  /** Book strategy inferred from the OO backtests (null if unsure). */
+  strategy: string | null;
 }
 
 export interface ExitMarker {
@@ -27,6 +44,11 @@ export interface ExitMarker {
   dte: number | null;
   /** Order ids of today's entries this exit closes (by matching symbols). */
   closes: string[];
+  /**
+   * Stop-out: a losing close that isn't the entry strategy's scheduled exit (from its OO backtests, ±10 min).
+   * Falls back to "a loss before 3:45 PM" when the strategy can't be told.
+   */
+  stop: boolean;
   /** Realized P/L of the closing order, net of fees (null if the opening fill is outside the lookback). */
   realized: number | null;
 }
@@ -80,9 +102,35 @@ export async function GET() {
       contracts: unit,
       price: Math.round((ls.reduce((s, l) => s + l.cash, 0) / unit) * 100) / 100,
       dte: daysBetween(date, fs.map((f) => f.expiration ?? date).sort().at(-1) ?? date),
+      strategy: null,
     });
   }
   entries.sort((a, b) => a.time - b.time);
+
+  // Which strategy each entry is, and when that strategy is scheduled to exit (learned from the OO backtests).
+  const model = await cached<{ profiles: SerializedProfiles; schedule: [string, number][] }>("oo:stopmodel:v1", 6 * 3600_000, async () => {
+    const oo = uniqueEntries(Object.values(await kv().hgetall<OOTrade>(KEYS.ooTrades)));
+    const bt = oo.map(toBacktest).filter((b): b is BacktestTrade => b !== null);
+    return { profiles: serializeProfiles(buildProfiles(bt)), schedule: [...scheduledExits(bt)] };
+  });
+  const profiles = deserializeProfiles(model.data?.profiles ?? []);
+  const schedule = new Map(model.data?.schedule ?? []);
+  const liveTrades = new Map(buildLiveTrades(fills.data ?? [], date).map((l) => [l.orderId, l]));
+  for (const e of entries) {
+    const l = liveTrades.get(e.orderId);
+    e.strategy = l ? inferStrategy(l, profiles) : null;
+  }
+  const etMin = (sec: number) => {
+    const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "numeric", hourCycle: "h23" }).formatToParts(new Date(sec * 1000));
+    return Number(p.find((x) => x.type === "hour")?.value) * 60 + Number(p.find((x) => x.type === "minute")?.value);
+  };
+  const isStop = (time: number, realized: number | null, closes: string[]) => {
+    if ((realized ?? 0) >= 0) return false;
+    const m = etMin(time);
+    const known = closes.map((id) => entries.find((e) => e.orderId === id)?.strategy).filter((s): s is string => !!s);
+    if (!known.length) return m < 15 * 60 + 45;
+    return !known.some((s) => schedule.has(s) && m >= schedule.get(s)! - 1 && m <= schedule.get(s)! + 10);
+  };
 
   // Closing orders placed during the session (stops / early exits); expirations settle at 4:00 and are not shown.
   const closes = realizedOn(fills.data ?? [], date).filter((c) => !c.fill.settlement && c.fill.underlying === "SPX");
@@ -104,12 +152,14 @@ export async function GET() {
         time: Math.floor(o.time / 1000),
         label: labels.length ? labels.join(" / ") : classifySpread(legs),
         closes: opened.map((e) => e.orderId),
+        stop: false,
         dte: opened.length ? Math.max(...opened.map((e) => e.dte)) : null,
         contracts: legs.map((l) => Math.abs(l.qty)).reduce(gcd),
         realized: o.unknownBasis ? null : o.realized,
       };
     })
     .sort((a, b) => a.time - b.time);
+  for (const x of exits) x.stop = isStop(x.time, x.realized, x.closes);
 
   const body: SpxDayData = {
     meta: { pollMs: live ? 60_000 : null, errors: [bars.error, fills.error].filter((e): e is string => !!e) },

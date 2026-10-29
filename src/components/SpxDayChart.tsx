@@ -33,8 +33,9 @@ const ABBR: Record<string, string> = {
 const abbr = (label: string) => label.split(" / ").map((l) => ABBR[l] ?? l).join("/");
 /** Chart name: multi-day trades go by their DTE (1DTE, 2DTE), same-day ones by structure. */
 const shortName = (label: string, dte: number | null | undefined) => (dte && dte > 0 ? `${dte}DTE` : abbr(label));
-/** A loss closed before 3:45 PM is a stop; closes in the last 15 minutes are scheduled time exits. */
-const isStop = (x: { time: number; realized: number | null }) => (x.realized ?? 0) < 0 && etParts(x.time * 1000).minutesOfDay < 15 * 60 + 45;
+/** Stop-out as decided by the server (losing close that isn't the strategy's scheduled exit); older payloads: loss before 3:45 PM. */
+const isStop = (x: { time: number; realized: number | null; stop?: boolean }) =>
+  typeof x.stop === "boolean" ? x.stop : (x.realized ?? 0) < 0 && etParts(x.time * 1000).minutesOfDay < 15 * 60 + 45;
 const priceText = (p: number) => `${p >= 0 ? "cr" : "db"} ${Math.abs(p).toFixed(2)}`;
 
 const TIMEFRAMES = [
@@ -550,7 +551,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       <p className="text-xs text-muted">
         Numbers match the # column: ▲ under a bar is an entry (one Schwab opening order), ▼ above is an exit of that entry (S = stop).{" "}
         <span className="text-accent">▲</span> credit entry, <span className="text-spot">▲</span> debit entry,{" "}
-        <span className="text-loss">▼</span> stop (closed at a loss before 3:45 PM; a red line joins it to its entry), <span className="text-gain">▼</span> exit at a gain,{" "}
+        <span className="text-loss">▼</span> stop (a loss that isn&apos;t the strategy&apos;s scheduled exit; a red line joins it to its entry), <span className="text-gain">▼</span> exit at a gain,{" "}
         <span className="text-muted">▼</span> time exit at a loss. Expirations aren&apos;t marked. <span className="text-gain">- - -</span> best SPX close for today&apos;s expirations. Times ET.
       </p>
     </section>

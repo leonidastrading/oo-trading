@@ -356,3 +356,20 @@ describe("canonicalStrategy: Schwab Port 2026 names", () => {
     for (const [name, row] of Object.entries(names)) expect(canonicalStrategy(name)).toBe(row);
   });
 });
+
+describe("scheduled exits", () => {
+  it("learns a strategy's usual time exit from its backtest", async () => {
+    const { scheduledExits } = await import("@/lib/scorecard");
+    const mk = (strategy: string, kind: "time" | "stop" | "expired", closeTime: string) =>
+      ({ strategy, kind, closeTime }) as unknown as Parameters<typeof scheduledExits>[0][number];
+    const bt = [
+      ...Array.from({ length: 6 }, () => mk("BWB", "time", "15:50:00")),
+      mk("BWB", "time", "15:51:00"),
+      mk("BWB", "stop", "14:10:00"),
+      ...Array.from({ length: 6 }, () => mk("Short", "expired", "16:00:00")),
+    ];
+    const s = scheduledExits(bt);
+    expect(s.get("BWB")).toBe(15 * 60 + 50);
+    expect(s.has("Short")).toBe(false);
+  });
+});

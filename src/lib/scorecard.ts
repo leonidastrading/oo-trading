@@ -326,6 +326,34 @@ export function buildProfiles(backtest: BacktestTrade[]): Map<string, Profile> {
   return out;
 }
 
+/** Each strategy's scheduled exit (minutes after midnight ET), when its backtest mostly time-exits at one time. */
+export function scheduledExits(backtest: BacktestTrade[]): Map<string, number> {
+  const by = new Map<string, number[]>();
+  for (const b of backtest) {
+    if (b.kind !== "time" || !b.closeTime) continue;
+    by.set(b.strategy, [...(by.get(b.strategy) ?? []), Math.round(hhmmToMin(b.closeTime))]);
+  }
+  const out = new Map<string, number>();
+  for (const [s, ms] of by) {
+    if (ms.length < 5) continue;
+    const counts = new Map<number, number>();
+    for (const m of ms) counts.set(m, (counts.get(m) ?? 0) + 1);
+    const [mode, n] = [...counts].sort((a, b) => b[1] - a[1])[0];
+    if (n >= ms.length / 2) out.set(s, mode);
+  }
+  return out;
+}
+
+export type SerializedProfiles = [string, { signatures: string[]; times: number[]; creditLo: number; creditHi: number }][];
+
+export function serializeProfiles(p: Map<string, Profile>): SerializedProfiles {
+  return [...p].map(([s, v]) => [s, { ...v, signatures: [...v.signatures] }]);
+}
+
+export function deserializeProfiles(p: SerializedProfiles): Map<string, Profile> {
+  return new Map(p.map(([s, v]) => [s, { ...v, signatures: new Set(v.signatures) }]));
+}
+
 export const MAX_INFER_MINUTES = 30;
 
 /**
