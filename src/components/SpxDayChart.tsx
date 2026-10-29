@@ -142,7 +142,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       grid: { vertLines: { visible: false }, horzLines: { color: css("--axis", "#4a4a46") + "55" } },
       rightPriceScale: { borderVisible: false },
       // Intraday: the time axis is locked to the whole session, 9:30–4:30 ET (no horizontal zoom/scroll).
-      timeScale: { borderVisible: false, timeVisible: !isDaily, secondsVisible: false, rightOffset: isDaily ? 4 : 0, fixLeftEdge: !isDaily, fixRightEdge: !isDaily },
+      timeScale: { borderVisible: false, timeVisible: !isDaily, secondsVisible: false, rightOffset: isDaily ? 4 : 0 },
       handleScroll: isDaily,
       handleScale: isDaily,
       crosshair: { mode: 0 },
@@ -191,7 +191,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `Best close ${money(bestPnl, { sign: true })}`,
+        title: money(bestPnl, { sign: true }),
       });
     }
     // Markers land on the bar that contains them (none on the daily view).
@@ -374,7 +374,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         <p className="text-sm text-muted">No bars for this session yet.</p>
       ) : (
         <div className="relative">
-          <div ref={box} className="h-[36rem] w-full md:h-[48rem]" />
+          <div ref={box} className="h-[24rem] w-full md:h-[32rem]" />
           <div ref={overlayRef} className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden />
         </div>
       )}
