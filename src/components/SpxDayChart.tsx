@@ -192,7 +192,8 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: money(bestPnl, { sign: true }),
+        // Intraday the P/L is an HTML tag right after the latest bar (see place()), so it never covers the bars.
+        title: isDaily ? money(bestPnl, { sign: true }) : "",
       });
     }
     // Markers land on the bar that contains them (none on the daily view).
@@ -263,6 +264,15 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         leaders.push(lead);
       }
     } else overlay?.replaceChildren();
+    let bestEl: HTMLDivElement | null = null;
+    if (overlay && !isDaily && bestPrice !== null) {
+      bestEl = document.createElement("div");
+      bestEl.className = "absolute whitespace-nowrap rounded px-1.5 py-0.5 text-xs font-semibold";
+      bestEl.style.background = css("--gain", "#3fb59d");
+      bestEl.style.color = css("--page", "#0c0c0b");
+      bestEl.textContent = money(bestPnl, { sign: true });
+      overlay.append(bestEl);
+    }
     const GAP = 26; // px between the bar's high/low and its label, clear of the arrow
     // The library stacks several arrows on one bar; clear all of them.
     const arrowsOn = new Map<string, number>();
@@ -273,6 +283,23 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       const paneH = (box.current?.clientHeight ?? 0) - chart.timeScale().height();
       const paneW = (box.current?.clientWidth ?? 0) - chart.priceScale("right").width();
       const placed: { l: number; t: number; r: number; b: number }[] = [];
+      // Best-close P/L: on its line, just right of the latest bar (in the session's empty part).
+      const lastBar = bars[bars.length - 1];
+      const bx = lastBar ? chart.timeScale().timeToCoordinate(lastBar.time as UTCTimestamp) : null;
+      const by = bestPrice !== null ? series.priceToCoordinate(bestPrice) : null;
+      if (bestEl) {
+        if (bx === null || by === null) bestEl.style.display = "none";
+        else {
+          bestEl.style.display = "";
+          const w = bestEl.offsetWidth;
+          const h = bestEl.offsetHeight;
+          const left = Math.min(bx + 10, Math.max(2, paneW - w - 2));
+          const top = by - h / 2;
+          bestEl.style.left = `${left}px`;
+          bestEl.style.top = `${top}px`;
+          placed.push({ l: left, t: top, r: left + w, b: top + h });
+        }
+      }
       const free = (r: { l: number; t: number; r: number; b: number }) =>
         !placed.some((p) => r.l < p.r + 4 && r.r > p.l - 4 && r.t < p.b + 2 && r.b > p.t - 2);
       labels.forEach((l, i) => {
