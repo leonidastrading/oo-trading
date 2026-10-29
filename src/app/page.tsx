@@ -2,6 +2,7 @@
 
 import type { ExpiryChart as ExpiryData } from "@/lib/views";
 import Link from "next/link";
+import { Arrangeable } from "@/components/Arrangeable";
 import { BestClosePanel } from "@/components/BestClosePanel";
 import { ClosedPnlChart } from "@/components/ClosedPnlChart";
 import { SpxDayChart, type BestCloseLine } from "@/components/SpxDayChart";
@@ -30,58 +31,49 @@ export default function LivePage() {
   const spxExpiry = data?.expiring.find((e) => e.underlying === "SPX");
   const otherExpiry = data?.expiring.filter((e) => e.underlying !== "SPX") ?? [];
 
-  return (
+  // Panels the viewer can reorder (Rearrange); StatusBar and the connect notice stay on top.
+  const tilesPanel = (
+    <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <Tile
+        label="Open P/L"
+        value={money(data?.pl?.open, { sign: true })}
+        tone={toneOf(data?.pl?.open)}
+        sub={data?.pl ? openPositionsLabel(data.pl.entries, data.groups) : undefined}
+      />
+      <Tile
+        label="Closed P/L"
+        value={money(data?.pl?.closed, { sign: true })}
+        tone={toneOf(data?.pl?.closed)}
+        sub={
+          data?.pl ? (
+            <>
+              {`${data.pl.closedPositions} position${data.pl.closedPositions === 1 ? "" : "s"} · ${data.pl.closedLegs} leg${data.pl.closedLegs === 1 ? "" : "s"}`}
+              {data.pl.unknownBasis ? ` · ${data.pl.unknownBasis} w/o basis excluded` : ""}
+            </>
+          ) : undefined
+        }
+      />
+      <Tile
+        label="SPX"
+        value={num(spx?.last)}
+        sub={
+          spx ? (
+            <span className={spx.change && spx.change < 0 ? "text-loss" : "text-gain"}>
+              {signed(spx.change)} ({signed(spx.changePct)}%)
+            </span>
+          ) : undefined
+        }
+      />
+      <Tile
+        label="Fees"
+        value={data?.pl ? money(-data.pl.fees, { cents: true }) : "—"}
+        tone={data?.pl?.fees ? "loss" : null}
+        sub={data?.pl ? `${data.pl.contracts.toLocaleString("en-US")} contracts × $${data.pl.feeRate.toFixed(2)}` : undefined}
+      />
+    </section>
+  );
+  const expiryPanel = (
     <div className="space-y-5">
-      <StatusBar meta={data?.meta ?? null} fetchedAt={data?.fetchedAt ?? null} loading={loading} clientError={error} onRefresh={refresh} />
-
-      {data && !data.meta.token.connected && (
-        <div className="card p-4 text-sm">
-          Schwab isn&apos;t connected.{" "}
-          <Link href="/settings" className="font-semibold text-link underline">
-            Connect in Settings
-          </Link>
-        </div>
-      )}
-
-      <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Tile
-          label="Open P/L"
-          value={money(data?.pl?.open, { sign: true })}
-          tone={toneOf(data?.pl?.open)}
-          sub={data?.pl ? openPositionsLabel(data.pl.entries, data.groups) : undefined}
-        />
-        <Tile
-          label="Closed P/L"
-          value={money(data?.pl?.closed, { sign: true })}
-          tone={toneOf(data?.pl?.closed)}
-          sub={
-            data?.pl ? (
-              <>
-                {`${data.pl.closedPositions} position${data.pl.closedPositions === 1 ? "" : "s"} · ${data.pl.closedLegs} leg${data.pl.closedLegs === 1 ? "" : "s"}`}
-                {data.pl.unknownBasis ? ` · ${data.pl.unknownBasis} w/o basis excluded` : ""}
-              </>
-            ) : undefined
-          }
-        />
-        <Tile
-          label="SPX"
-          value={num(spx?.last)}
-          sub={
-            spx ? (
-              <span className={spx.change && spx.change < 0 ? "text-loss" : "text-gain"}>
-                {signed(spx.change)} ({signed(spx.changePct)}%)
-              </span>
-            ) : undefined
-          }
-        />
-        <Tile
-          label="Fees"
-          value={data?.pl ? money(-data.pl.fees, { cents: true }) : "—"}
-          tone={data?.pl?.fees ? "loss" : null}
-          sub={data?.pl ? `${data.pl.contracts.toLocaleString("en-US")} contracts × $${data.pl.feeRate.toFixed(2)}` : undefined}
-        />
-      </section>
-
       {spxExpiry ? (
         <BestClosePanel data={spxExpiry} />
       ) : (
@@ -100,25 +92,50 @@ export default function LivePage() {
           <ExpiryChart analysis={e.analysis} underlying={e.underlying} />
         </section>
       ))}
+    </div>
+  );
+  const expiringPanel = (
+    <section>
+      <h2 className="mb-2 text-lg font-bold text-accent">Expiring today</h2>
+      <PositionGroups
+        groups={todays}
+        today={today}
+        empty={data?.pl?.expiredPending ? "Expired — valued at settlement in Closed P/L." : "Nothing expires today."}
+      />
+    </section>
+  );
+  const otherPanel = (
+    <section>
+      <h2 className="mb-1 text-lg font-bold text-accent">Other positions</h2>
+      <p className="mb-2 text-xs text-muted">Not included in the expiry curve — current mark P/L only.</p>
+      <PositionGroups groups={others} today={today} empty="No other open positions." />
+    </section>
+  );
 
-      <ClosedPnlChart points={data?.closedCurve ?? []} />
+  return (
+    <div className="space-y-5">
+      <StatusBar meta={data?.meta ?? null} fetchedAt={data?.fetchedAt ?? null} loading={loading} clientError={error} onRefresh={refresh} />
 
-      <SpxDayChart best={bestCloseLine(spxExpiry)} />
+      {data && !data.meta.token.connected && (
+        <div className="card p-4 text-sm">
+          Schwab isn&apos;t connected.{" "}
+          <Link href="/settings" className="font-semibold text-link underline">
+            Connect in Settings
+          </Link>
+        </div>
+      )}
 
-      <section>
-        <h2 className="mb-2 text-lg font-bold text-accent">Expiring today</h2>
-        <PositionGroups
-          groups={todays}
-          today={today}
-          empty={data?.pl?.expiredPending ? "Expired — valued at settlement in Closed P/L." : "Nothing expires today."}
-        />
-      </section>
-
-      <section>
-        <h2 className="mb-1 text-lg font-bold text-accent">Other positions</h2>
-        <p className="mb-2 text-xs text-muted">Not included in the expiry curve — current mark P/L only.</p>
-        <PositionGroups groups={others} today={today} empty="No other open positions." />
-      </section>
+      <Arrangeable
+        storageKey="live.layout.v1"
+        panels={[
+          { id: "tiles", label: "P/L, SPX & fees", node: tilesPanel },
+          { id: "expiry", label: "Best SPX close / expiry chart", node: expiryPanel },
+          { id: "closed", label: "Closed P/L today", node: <ClosedPnlChart points={data?.closedCurve ?? []} /> },
+          { id: "spx", label: "SPX chart", node: <SpxDayChart best={bestCloseLine(spxExpiry)} /> },
+          { id: "expiring", label: "Expiring today", node: expiringPanel },
+          { id: "other", label: "Other positions", node: otherPanel },
+        ]}
+      />
     </div>
   );
 }
