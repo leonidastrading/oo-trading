@@ -38,7 +38,7 @@ export function MonthlyReturnsChart({ months }: { months: MonthRow[] }) {
               tickLine={false}
               axisLine={{ stroke: "var(--axis)" }}
             />
-            <YAxis tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
+            <YAxis domain={[Math.min(0, Math.floor(sorted[0] - 0.5)), "auto"]} tickFormatter={(v: number) => `${v.toFixed(0)}%`} tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
             <ReferenceLine y={0} stroke="var(--axis)" />
             <ReferenceLine y={avg} stroke="var(--ink-2)" strokeDasharray="4 4" />
             <Tooltip
