@@ -432,7 +432,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       ) : (
         <div className="relative">
           <div ref={box} className="h-[24rem] w-full md:h-[32rem]" />
-          <div ref={overlayRef} className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden />
+          <div ref={overlayRef} className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden />
         </div>
       )}
       {data && data.entries.length > 0 && (
