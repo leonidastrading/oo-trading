@@ -141,8 +141,10 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: css("--muted", "#898781"), fontSize: 16 },
       grid: { vertLines: { visible: false }, horzLines: { color: css("--axis", "#4a4a46") + "55" } },
       rightPriceScale: { borderVisible: false },
-      // Room after the last bar so labels near the close aren't clipped.
-      timeScale: { borderVisible: false, timeVisible: !isDaily, secondsVisible: false, rightOffset: isDaily ? 4 : 12 },
+      // Intraday: the time axis is locked to the whole session, 9:30–4:30 ET (no horizontal zoom/scroll).
+      timeScale: { borderVisible: false, timeVisible: !isDaily, secondsVisible: false, rightOffset: isDaily ? 4 : 0, fixLeftEdge: !isDaily, fixRightEdge: !isDaily },
+      handleScroll: isDaily,
+      handleScale: isDaily,
       crosshair: { mode: 0 },
     });
     chartRef.current = chart;
@@ -164,16 +166,23 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         },
       ];
     }
+    // Empty slots after the last bar up to 4:30 PM, so the full session is always on screen.
+    const sessionEnd = anchor + 7 * 3600;
+    const step = Math.max(minutes, 1) * 60;
+    const whitespace: { time: UTCTimestamp }[] = [];
+    if (!isDaily) {
+      for (let t = (bars[bars.length - 1]?.time ?? anchor - step) + step; t <= sessionEnd; t += step) whitespace.push({ time: t as UTCTimestamp });
+    }
     let series: ISeriesApi<SeriesType>;
     if (style === "line") {
       series = chart.addSeries(LineSeries, { color: css("--spot", "#3987e5"), lineWidth: 2, priceLineVisible: true });
-      series.setData(bars.map((b) => ({ time: b.time as UTCTimestamp, value: b.close })));
+      series.setData([...bars.map((b) => ({ time: b.time as UTCTimestamp, value: b.close })), ...whitespace]);
     } else if (style === "bars") {
       series = chart.addSeries(BarSeries, { upColor: gain, downColor: loss, thinBars: false });
-      series.setData(bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })));
+      series.setData([...bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })), ...whitespace]);
     } else {
       series = chart.addSeries(CandlestickSeries, { upColor: gain, downColor: loss, borderVisible: false, wickUpColor: gain, wickDownColor: loss });
-      series.setData(bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })));
+      series.setData([...bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })), ...whitespace]);
     }
     if (bestPrice !== null) {
       series.createPriceLine({
@@ -303,11 +312,8 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     boxEl.addEventListener("pointermove", relayout);
     boxEl.addEventListener("wheel", relayout, { passive: true });
     const saved = viewRef.current;
-    if (saved && saved.tf === tf && saved.range) chart.timeScale().setVisibleLogicalRange(saved.range);
-    else {
-      chart.timeScale().fitContent();
-      chart.timeScale().applyOptions({ rightOffset: isDaily ? 4 : 12 });
-    }
+    if (isDaily && saved && saved.tf === tf && saved.range) chart.timeScale().setVisibleLogicalRange(saved.range);
+    else chart.timeScale().fitContent();
     relayout();
     return () => {
       ro.disconnect();
