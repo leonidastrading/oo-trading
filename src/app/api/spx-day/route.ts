@@ -11,6 +11,7 @@ import {
   buildProfiles,
   deserializeProfiles,
   inferStrategy,
+  OO_TIME_EXITS,
   scheduledExits,
   serializeProfiles,
   toBacktest,
@@ -45,7 +46,7 @@ export interface ExitMarker {
   /** Order ids of today's entries this exit closes (by matching symbols). */
   closes: string[];
   /**
-   * Stop-out: a losing close that isn't the entry strategy's scheduled exit (from its OO backtests, ±10 min).
+   * Stop-out: a losing close that isn't the entry strategy's scheduled exit (its OO time exit, within 2 min).
    * Falls back to "a loss before 3:45 PM" when the strategy can't be told.
    */
   stop: boolean;
@@ -114,7 +115,7 @@ export async function GET() {
     return { profiles: serializeProfiles(buildProfiles(bt)), schedule: [...scheduledExits(bt)] };
   });
   const profiles = deserializeProfiles(model.data?.profiles ?? []);
-  const schedule = new Map(model.data?.schedule ?? []);
+  const schedule = new Map([...(model.data?.schedule ?? []), ...Object.entries(OO_TIME_EXITS)]);
   const liveTrades = new Map(buildLiveTrades(fills.data ?? [], date).map((l) => [l.orderId, l]));
   for (const e of entries) {
     const l = liveTrades.get(e.orderId);
@@ -129,7 +130,7 @@ export async function GET() {
     const m = etMin(time);
     const known = closes.map((id) => entries.find((e) => e.orderId === id)?.strategy).filter((s): s is string => !!s);
     if (!known.length) return m < 15 * 60 + 45;
-    return !known.some((s) => schedule.has(s) && m >= schedule.get(s)! - 1 && m <= schedule.get(s)! + 10);
+    return !known.some((s) => schedule.has(s) && m >= schedule.get(s)! && m <= schedule.get(s)! + 2);
   };
 
   // Closing orders placed during the session (stops / early exits); expirations settle at 4:00 and are not shown.

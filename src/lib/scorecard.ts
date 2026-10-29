@@ -326,6 +326,12 @@ export function buildProfiles(backtest: BacktestTrade[]): Map<string, Profile> {
   return out;
 }
 
+/**
+ * Time exits set in the strategies' Option Omega settings (as of Oct 29, 2026): only the BWB has one —
+ * at 3:50 PM it closes half its contracts. Everything else holds to expiration or a stop.
+ */
+export const OO_TIME_EXITS: Record<string, number> = { BWB: 15 * 60 + 50 };
+
 /** Each strategy's scheduled exit (minutes after midnight ET), when its backtest mostly time-exits at one time. */
 export function scheduledExits(backtest: BacktestTrade[]): Map<string, number> {
   const by = new Map<string, number[]>();
