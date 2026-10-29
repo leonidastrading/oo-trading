@@ -18,12 +18,11 @@ export function ordered<T extends { id: string }>(items: T[], saved: string[]): 
 }
 
 /**
- * Panels the viewer can reorder: "Rearrange" shows a bar on each panel to drag it (desktop)
+ * Panels the viewer can reorder: while `editing`, a bar on each panel lets you drag it (desktop)
  * or move it up/down (touch). The order is remembered on this device.
  */
-export function Arrangeable({ storageKey, panels }: { storageKey: string; panels: Panel[] }) {
+export function Arrangeable({ storageKey, panels, editing }: { storageKey: string; panels: Panel[]; editing: boolean }) {
   const [order, setOrder] = useState<string[]>([]);
-  const [editing, setEditing] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
 
@@ -51,20 +50,13 @@ export function Arrangeable({ storageKey, panels }: { storageKey: string; panels
 
   return (
     <div className="space-y-5">
-      <div className="flex justify-end gap-2">
-        {editing && order.length > 0 && (
-          <button onClick={() => save([])} className="rounded-lg border border-border px-3 py-1 text-xs text-ink-2 hover:bg-surface-2">
+      {editing && order.length > 0 && (
+        <div className="flex justify-end">
+          <button onClick={() => save([])} className="rounded-lg border border-border px-3 py-1.5 text-sm text-ink-2 hover:bg-surface-2">
             Reset layout
           </button>
-        )}
-        <button
-          onClick={() => setEditing((v) => !v)}
-          aria-pressed={editing}
-          className={`rounded-lg border px-3 py-1 text-xs ${editing ? "border-accent bg-accent text-page" : "border-border text-ink-2 hover:bg-surface-2"}`}
-        >
-          {editing ? "Done" : "Rearrange"}
-        </button>
-      </div>
+        </div>
+      )}
       {list.map((p, i) => (
         <div
           key={p.id}

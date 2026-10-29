@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { formatTimeET } from "@/lib/time";
 
 const MANUAL_MS = 30_000;
@@ -20,12 +20,15 @@ export function StatusBar({
   loading,
   clientError,
   onRefresh,
+  actions,
 }: {
   meta: StatusMeta | null;
   fetchedAt: number | null;
   loading: boolean;
   clientError: string | null;
   onRefresh: () => void;
+  /** Extra buttons shown just before Refresh (same style). */
+  actions?: ReactNode;
 }) {
   const [lastManual, setLastManual] = useState(0);
   const [now, setNow] = useState(0);
@@ -51,18 +54,21 @@ export function StatusBar({
           {meta ? phaseLabel : "Loading…"}
         </span>
         <span className="num">Last updated {formatTimeET(fetchedAt)}</span>
-        <button
-          onClick={() => {
-            const t = Date.now();
-            setLastManual(t);
-            setNow(t);
-            onRefresh();
-          }}
-          disabled={loading || wait > 0}
-          className="ml-auto rounded-lg border border-border px-3 py-1.5 text-sm text-ink hover:bg-surface-2 disabled:opacity-50"
-        >
-          {loading ? "Refreshing…" : wait > 0 ? `Refresh (${wait}s)` : "Refresh"}
-        </button>
+        <span className="ml-auto flex items-center gap-2">
+          {actions}
+          <button
+            onClick={() => {
+              const t = Date.now();
+              setLastManual(t);
+              setNow(t);
+              onRefresh();
+            }}
+            disabled={loading || wait > 0}
+            className="rounded-lg border border-border px-3 py-1.5 text-sm text-ink hover:bg-surface-2 disabled:opacity-50"
+          >
+            {loading ? "Refreshing…" : wait > 0 ? `Refresh (${wait}s)` : "Refresh"}
+          </button>
+        </span>
       </div>
       {meta?.delayed && (
         <Banner tone="warn">Data delayed — last good data is from {formatTimeET(fetchedAt)}. Retrying automatically.</Banner>

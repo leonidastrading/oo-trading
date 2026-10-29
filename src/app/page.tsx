@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { ExpiryChart as ExpiryData } from "@/lib/views";
 import Link from "next/link";
 import { Arrangeable } from "@/components/Arrangeable";
@@ -24,6 +25,7 @@ function bestCloseLine(e: ExpiryData | undefined): BestCloseLine | null {
 
 export default function LivePage() {
   const { data, error, loading, refresh } = usePoll<LiveData>("/api/live");
+  const [arranging, setArranging] = useState(false);
   const today = data?.meta.date ?? "";
   const spx = data?.spx;
   const todays = data?.groups.filter((g) => g.isToday) ?? [];
@@ -114,7 +116,22 @@ export default function LivePage() {
 
   return (
     <div className="space-y-5">
-      <StatusBar meta={data?.meta ?? null} fetchedAt={data?.fetchedAt ?? null} loading={loading} clientError={error} onRefresh={refresh} />
+      <StatusBar
+        meta={data?.meta ?? null}
+        fetchedAt={data?.fetchedAt ?? null}
+        loading={loading}
+        clientError={error}
+        onRefresh={refresh}
+        actions={
+          <button
+            onClick={() => setArranging((v) => !v)}
+            aria-pressed={arranging}
+            className={`rounded-lg border px-3 py-1.5 text-sm ${arranging ? "border-accent bg-accent text-page" : "border-border text-ink hover:bg-surface-2"}`}
+          >
+            {arranging ? "Done" : "Rearrange"}
+          </button>
+        }
+      />
 
       {data && !data.meta.token.connected && (
         <div className="card p-4 text-sm">
@@ -127,6 +144,7 @@ export default function LivePage() {
 
       <Arrangeable
         storageKey="live.layout.v1"
+        editing={arranging}
         panels={[
           { id: "tiles", label: "P/L, SPX & fees", node: tilesPanel },
           { id: "expiry", label: "Best SPX close / expiry chart", node: expiryPanel },
