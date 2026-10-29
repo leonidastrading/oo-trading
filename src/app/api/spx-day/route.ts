@@ -160,7 +160,26 @@ export async function GET() {
       };
     })
     .sort((a, b) => a.time - b.time);
-  for (const x of exits) x.stop = isStop(x.time, x.realized, x.closes);
+  // Which entry each closing order actually closed, from the scorecard's per-order exit matching
+  // (symbols alone can't tell apart entries that share strikes, e.g. three identical BWBs).
+  const closedBy = new Map<string, string[]>();
+  for (const l of liveTrades.values()) {
+    for (const f of l.exits) {
+      if (f.via !== "order") continue;
+      const ids = closedBy.get(f.orderId) ?? [];
+      if (!ids.includes(l.orderId)) ids.push(l.orderId);
+      closedBy.set(f.orderId, ids);
+    }
+  }
+  for (const x of exits) {
+    const ids = closedBy.get(x.orderId);
+    if (ids?.length) {
+      x.closes = ids;
+      const labels = [...new Set(ids.map((id) => entries.find((e) => e.orderId === id)?.label).filter((v): v is string => !!v))];
+      if (labels.length) x.label = labels.join(" / ");
+    }
+    x.stop = isStop(x.time, x.realized, x.closes);
+  }
 
   const body: SpxDayData = {
     meta: { pollMs: live ? 60_000 : null, errors: [bars.error, fills.error].filter((e): e is string => !!e) },
