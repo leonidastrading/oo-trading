@@ -58,7 +58,19 @@ export interface LiveData {
   account: (Balances & { last4: string; dayPl: number | null }) | null;
   spx: Quote | null;
   /** Session P/L: open (all positions), closed (realized today, net of fees), fees today. */
-  pl: { open: number; entries: number; closed: number; expired: number; expiredPending: boolean; fees: number; contracts: number; feeRate: number; unknownBasis: number } | null;
+  pl: {
+    open: number;
+    entries: number;
+    closed: number;
+    expired: number;
+    expiredPending: boolean;
+    fees: number;
+    contracts: number;
+    feeRate: number;
+    unknownBasis: number;
+    closedPositions: number;
+    closedLegs: number;
+  } | null;
   groups: SpreadGroup[];
   /** Today's expirations, one chart per underlying. */
   expiring: ExpiryChart[];
@@ -106,6 +118,7 @@ export function splitExpired(
   const orders = expiredOrders(pending, opts);
   return {
     open: positions.filter((p) => !gone.has(p.symbol)),
+    pending,
     orders,
     realized: Math.round(orders.reduce((s, o) => s + o.realized, 0) * 100) / 100,
   };
@@ -180,6 +193,11 @@ export async function getLiveData(force = false): Promise<LiveData> {
         contracts: fee.contracts,
         feeRate: feePerContract(),
         unknownBasis: closes.filter((c) => c.realized === null).length,
+        // Closed today: each closing order is a position, plus today's expired entries; legs counted per order/entry.
+        closedPositions: groupClosesByOrder(closes).length + countOpenEntries(fills.data ?? [], expired.pending),
+        closedLegs:
+          new Set(closes.map((c) => `${c.fill.orderId}|${c.fill.symbol}`)).size +
+          splitByEntry(expired.pending, openLots(fills.data ?? [])).length,
       }
     : null;
   const fetchedAt = Math.min(acct.fetchedAt ?? Infinity, quotes.fetchedAt ?? Infinity);

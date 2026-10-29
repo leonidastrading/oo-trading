@@ -57,8 +57,8 @@ export default function LivePage() {
           sub={
             data?.pl ? (
               <>
-                {data.pl.unknownBasis ? `net of fees · ${data.pl.unknownBasis} close(s) w/o basis excluded` : "net of fees"}
-                {data.pl.expiredPending && ` · incl. ${money(data.pl.expired, { sign: true })} expired`}
+                {`${data.pl.closedPositions} position${data.pl.closedPositions === 1 ? "" : "s"} · ${data.pl.closedLegs} leg${data.pl.closedLegs === 1 ? "" : "s"}`}
+                {data.pl.unknownBasis ? ` · ${data.pl.unknownBasis} w/o basis excluded` : ""}
               </>
             ) : undefined
           }
