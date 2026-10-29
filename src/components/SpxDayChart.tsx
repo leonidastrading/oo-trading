@@ -271,6 +271,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       // Each label starts next to its arrow and moves further out if it would overlap one already placed;
       // when it would leave the chart it slides sideways along the edge instead, so every label stays visible.
       const paneH = (box.current?.clientHeight ?? 0) - chart.timeScale().height();
+      const paneW = (box.current?.clientWidth ?? 0) - chart.priceScale("right").width();
       const placed: { l: number; t: number; r: number; b: number }[] = [];
       const free = (r: { l: number; t: number; r: number; b: number }) =>
         !placed.some((p) => r.l < p.r + 4 && r.r > p.l - 4 && r.t < p.b + 2 && r.b > p.t - 2);
@@ -293,7 +294,9 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         const minTop = 2;
         const maxTop = Math.max(minTop, paneH - h - 2);
         const clamp = (t: number) => Math.min(maxTop, Math.max(minTop, t));
-        const at = (left: number, top: number) => ({ l: left, t: top, r: left + w, b: top + h });
+        // Keep clear of the price scale on the right and the chart's left edge.
+        const fitX = (left: number) => Math.min(Math.max(2, left), Math.max(2, paneW - w - 2));
+        const at = (left: number, top: number) => ({ l: fitX(left), t: top, r: fitX(left) + w, b: top + h });
         let rect = at(x - w / 2, clamp(l.exit ? y - base - h : y + base));
         // 1) Stack outward while there's room.
         for (let k = 1; !free(rect) && k < 8; k++) {
