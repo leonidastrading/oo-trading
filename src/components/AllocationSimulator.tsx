@@ -9,6 +9,7 @@ import { money, plClass } from "./format";
 import { ordered } from "./Arrangeable";
 import { MonthlyReturnsChart } from "./MonthlyReturnsChart";
 import { OptimizerPanel } from "./OptimizerPanel";
+import { RangeSlider } from "./RangeSlider";
 
 const RANGES = [
   { label: "All", from: () => "" },
@@ -18,6 +19,9 @@ const RANGES = [
 ] as const;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const STORE = "allocSim.v1";
+// VIX slider span; a handle at either end means no limit on that side.
+const VIX_LO = 9;
+const VIX_HI = 45;
 
 const p1 = (f: number | null | undefined, d = 1) => (f === null || f === undefined || !Number.isFinite(f) ? "—" : `${(f * 100).toFixed(d)}%`);
 const sp = (f: number | null | undefined, d = 1) =>
@@ -163,11 +167,6 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   }, [trades]);
 
   const set = (s: string, patch: Partial<StrategyAlloc>) => setAlloc((a) => ({ ...a, [s]: { ...effective[s], ...patch } }));
-  const setVix = (s: string, end: "min" | "max", v: string) =>
-    setVixRange((r) => {
-      const n = v.trim() === "" || !Number.isFinite(Number(v)) ? undefined : Number(v);
-      return { ...r, [s]: { ...r[s], [end]: n } };
-    });
   const hasVix = trades.some((t) => typeof t.vix === "number");
   const setLot = (s: string, n: number) => setLots((l) => ({ ...l, [s]: Math.max(0, Math.round(n)) }));
   // Drawdown in % of the peak or in $ below it.
@@ -486,31 +485,15 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
                     />
                   </td>
                   <td className="whitespace-nowrap">
-                    <span className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        placeholder="min"
-                        value={vixRange[s]?.min ?? ""}
-                        onChange={(e) => setVix(s, "min", e.target.value)}
-                        disabled={!hasVix}
-                        aria-label={`${shortName(s)} minimum VIX`}
-                        className="w-14 rounded border border-border bg-surface px-1 py-0.5 text-right text-ink disabled:opacity-40"
-                      />
-                      <span className="text-muted">–</span>
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        placeholder="max"
-                        value={vixRange[s]?.max ?? ""}
-                        onChange={(e) => setVix(s, "max", e.target.value)}
-                        disabled={!hasVix}
-                        aria-label={`${shortName(s)} maximum VIX`}
-                        className="w-14 rounded border border-border bg-surface px-1 py-0.5 text-right text-ink disabled:opacity-40"
-                      />
-                    </span>
+                    <RangeSlider
+                      lo={VIX_LO}
+                      hi={VIX_HI}
+                      min={vixRange[s]?.min}
+                      max={vixRange[s]?.max}
+                      disabled={!hasVix}
+                      label={shortName(s)}
+                      onChange={(mn, mx) => setVixRange((r) => ({ ...r, [s]: { min: mn, max: mx } }))}
+                    />
                     {(sim.vixSkipped[s] ?? 0) > 0 && <span className="block text-xs text-muted">{sim.vixSkipped[s]} skipped</span>}
                   </td>
                   <td>{r?.trades ?? 0}</td>
