@@ -145,8 +145,9 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       // Axis labels (time and price); the entry/exit labels are HTML and sized separately.
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: css("--muted", "#898781"), fontSize: 12 },
       grid: { vertLines: { visible: false }, horzLines: { color: css("--axis", "#4a4a46") + "55" } },
-      // Headroom above and below the bars for the entry/exit labels.
-      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.12, bottom: 0.22 } },
+      // Headroom for the entry/exit labels: daily via margins; intraday it's added in price terms (see
+      // autoscaleInfoProvider) so a best-close line beyond the bars doesn't add a second, empty margin.
+      rightPriceScale: { borderVisible: false, scaleMargins: isDaily ? { top: 0.12, bottom: 0.22 } : { top: 0.03, bottom: 0.03 } },
       // Intraday: the time axis is locked to the whole session, 9:30–4:30 ET (no horizontal zoom/scroll).
       timeScale: { borderVisible: false, timeVisible: !isDaily, secondsVisible: false, rightOffset: isDaily ? 4 : 0 },
       handleScroll: isDaily,
@@ -190,18 +191,20 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       series = chart.addSeries(CandlestickSeries, { upColor: gain, downColor: loss, borderVisible: false, wickUpColor: gain, wickDownColor: loss });
       series.setData([...bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })), ...whitespace]);
     }
-    // Keep the best-close line(s) on screen: the price scale stretches to include them.
+    // Intraday price range: the bars plus label headroom (same share as the old 12%/22% margins), stretched
+    // to keep the best-close line(s) on screen.
     const bestLevels = [bestPrice, bestHigh].filter((p): p is number => p !== null);
-    if (bestLevels.length && !isDaily) {
+    if (!isDaily) {
       series.applyOptions({
         autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
           const r = original();
           if (!r?.priceRange) return r;
+          const span = Math.max(r.priceRange.maxValue - r.priceRange.minValue, 1);
           return {
             ...r,
             priceRange: {
-              minValue: Math.min(r.priceRange.minValue, ...bestLevels),
-              maxValue: Math.max(r.priceRange.maxValue, ...bestLevels),
+              minValue: Math.min(r.priceRange.minValue - span * 0.33, ...bestLevels),
+              maxValue: Math.max(r.priceRange.maxValue + span * 0.18, ...bestLevels),
             },
           };
         },
