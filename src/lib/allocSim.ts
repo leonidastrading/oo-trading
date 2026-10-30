@@ -182,6 +182,9 @@ export interface MonthRow {
   month: string; // YYYY-MM
   pl: number;
   pct: number;
+  /** Best and worst point of the month's running (closed) return vs. equity at the start of the month. */
+  hiPct: number;
+  loPct: number;
 }
 
 export interface SimResult {
@@ -387,11 +390,22 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
   // 6) Months.
   const monthPl = new Map<string, number>();
   for (const d of days) monthPl.set(d.slice(0, 7), (monthPl.get(d.slice(0, 7)) ?? 0) + byDay.get(d)!);
+  const swing = new Map<string, { run: number; hi: number; lo: number }>();
+  for (const d of days) {
+    const m = d.slice(0, 7);
+    const r = swing.get(m) ?? { run: 0, hi: 0, lo: 0 };
+    r.run += byDay.get(d)!;
+    r.hi = Math.max(r.hi, r.run);
+    r.lo = Math.min(r.lo, r.run);
+    swing.set(m, r);
+  }
   const months: MonthRow[] = [];
   let mEq = startEquity;
   for (const m of [...monthPl.keys()].sort()) {
     const v = monthPl.get(m)!;
-    months.push({ month: m, pl: v, pct: mEq > 0 ? v / mEq : 0 });
+    const r = swing.get(m)!;
+    const f = (x: number) => (mEq > 0 ? x / mEq : 0);
+    months.push({ month: m, pl: v, pct: f(v), hiPct: f(r.hi), loPct: f(r.lo) });
     mEq += v;
   }
 
