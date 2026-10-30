@@ -17,6 +17,8 @@ export interface OOTrade {
   closeFees: number;
   /** OO "Margin Req." for the whole position (buying power held), when the log has it. */
   margin?: number | null;
+  /** VIX when the trade opened (OO "Opening VIX"), when the log has it. */
+  vix?: number | null;
   /** Upload/feed this row came from, and when it was stored (newest copy of an entry wins). */
   source?: string;
   uploadedAt?: number;
@@ -161,6 +163,7 @@ export function parseOOTradeLog(text: string, fallbackStrategy = "Unnamed"): Par
       openFees: parseNumber(get(r, "openingcommissionsfees")) ?? 0,
       closeFees: parseNumber(get(r, "closingcommissionsfees")) ?? 0,
       margin: parseNumber(get(r, "marginreq")),
+      vix: parseNumber(get(r, "openingvix")),
     };
     t.key = tradeKey(t);
     if (seen.has(t.key)) {

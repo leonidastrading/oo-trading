@@ -182,3 +182,14 @@ describe("double after a stop-out", () => {
     expect(dbl.pl).toBe(-100 + 400 + 200);
   });
 });
+
+describe("VIX safe zone", () => {
+  it("skips entries outside a strategy's VIX range and keeps ones without a reading", () => {
+    const day = (d: string, vix: number | null) =>
+      t({ dateOpened: d, dateClosed: d, legs: `10 Mar ${Number(d.slice(-2))} 5000 P STO 3.00 | 10 Mar ${Number(d.slice(-2))} 4990 P BTO 1.00`, margin: 10_000, pl: 1000, vix });
+    const trades = [day("2026-03-02", 12), day("2026-03-03", 18), day("2026-03-04", 30), day("2026-03-05", null)];
+    const r = simulate(toSimTrades(trades), { PS: { pct: 0, fixed: 1, vixMin: 15, vixMax: 25 } }, 100_000);
+    expect(r.trades).toBe(2);
+    expect(r.vixSkipped).toEqual({ PS: 2 });
+  });
+});

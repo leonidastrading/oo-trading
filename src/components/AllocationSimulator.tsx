@@ -38,6 +38,13 @@ interface Saved {
   doubled?: string[];
   /** The viewer's row order for the strategy table. */
   order?: string[];
+  /** Per-strategy VIX safe zone (entries outside it are skipped). */
+  vix?: Record<string, VixRange>;
+}
+
+interface VixRange {
+  min?: number;
+  max?: number;
 }
 
 function load(): Saved | null {
@@ -74,6 +81,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   const [lots, setLots] = useState<Record<string, number>>({});
   const [doubled, setDoubled] = useState<Set<string>>(new Set());
   const [order, setOrder] = useState<string[]>([]);
+  const [vixRange, setVixRange] = useState<Record<string, VixRange>>({});
   const [dragging, setDragging] = useState<string | null>(null);
 
   // Restore this device's last settings after hydration.
@@ -91,30 +99,39 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       setLots(s.lots ?? {});
       setDoubled(new Set(s.doubled ?? []));
       setOrder(s.order ?? []);
+      setVixRange(s.vix ?? {});
     });
   }, []);
   useEffect(() => {
     if (!restored) return; // don't overwrite the saved settings with the defaults on first render
     try {
-      localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc, mode, lots, doubled: [...doubled], order } satisfies Saved));
+      localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc, mode, lots, doubled: [...doubled], order, vix: vixRange } satisfies Saved));
     } catch {}
-  }, [restored, equity, range, alloc, mode, lots, doubled, order]);
+  }, [restored, equity, range, alloc, mode, lots, doubled, order, vixRange]);
 
   const effective = useMemo(() => {
     const out: Record<string, StrategyAlloc> = {};
     for (const s of strategies) {
       const a = mode === "lots" ? { pct: 0, fixed: lots[s] ?? 1 } : (alloc[s] ?? defaults[s] ?? { pct: 1 });
-      out[s] = { ...a, doubleAfterStop: doubled.has(s) };
+      out[s] = { ...a, doubleAfterStop: doubled.has(s), vixMin: vixRange[s]?.min, vixMax: vixRange[s]?.max };
     }
     return out;
-  }, [strategies, alloc, defaults, mode, lots, doubled]);
+  }, [strategies, alloc, defaults, mode, lots, doubled, vixRange]);
   // Reference settings: the OO settings, or 1 lot of everything in per-lot mode.
   const reference = useMemo(
     () =>
       Object.fromEntries(
-        strategies.map((s) => [s, { ...(mode === "lots" ? { pct: 0, fixed: 1 } : defaults[s]), doubleAfterStop: doubled.has(s) } as StrategyAlloc]),
+        strategies.map((s) => [
+          s,
+          {
+            ...(mode === "lots" ? { pct: 0, fixed: 1 } : defaults[s]),
+            doubleAfterStop: doubled.has(s),
+            vixMin: vixRange[s]?.min,
+            vixMax: vixRange[s]?.max,
+          } as StrategyAlloc,
+        ]),
       ),
-    [mode, strategies, defaults, doubled],
+    [mode, strategies, defaults, doubled, vixRange],
   );
 
   const simTrades = useMemo(() => {
@@ -146,6 +163,12 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   }, [trades]);
 
   const set = (s: string, patch: Partial<StrategyAlloc>) => setAlloc((a) => ({ ...a, [s]: { ...effective[s], ...patch } }));
+  const setVix = (s: string, end: "min" | "max", v: string) =>
+    setVixRange((r) => {
+      const n = v.trim() === "" || !Number.isFinite(Number(v)) ? undefined : Number(v);
+      return { ...r, [s]: { ...r[s], [end]: n } };
+    });
+  const hasVix = trades.some((t) => typeof t.vix === "number");
   const setLot = (s: string, n: number) => setLots((l) => ({ ...l, [s]: Math.max(0, Math.round(n)) }));
   // Drawdown in % of the peak or in $ below it.
   const chartData = useMemo(() => withDollarDrawdown(sim.start, sim.equity), [sim]);
@@ -309,6 +332,11 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       </div>
 
       <MonthlyReturnsChart months={sim.months} />
+      {!hasVix && (
+        <p className="text-xs text-muted">
+          VIX ranges need the trades&apos; opening VIX — re-upload your OO trade log (it has an “Opening VIX” column) to turn them on.
+        </p>
+      )}
 
       <div className="card overflow-x-auto">
         <table className="data w-full text-sm">
@@ -324,6 +352,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
               </th>
               <th className="min-w-[12rem]">Allocation / trade</th>
               <th>Max ct</th>
+              <th title="Only trade when VIX at entry is inside this range">VIX range</th>
               <th>Trades</th>
               <th>% trades</th>
               <th>Avg size</th>
@@ -456,6 +485,34 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
                       aria-label={`${shortName(s)} max contracts`}
                     />
                   </td>
+                  <td className="whitespace-nowrap">
+                    <span className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        placeholder="min"
+                        value={vixRange[s]?.min ?? ""}
+                        onChange={(e) => setVix(s, "min", e.target.value)}
+                        disabled={!hasVix}
+                        aria-label={`${shortName(s)} minimum VIX`}
+                        className="w-14 rounded border border-border bg-surface px-1 py-0.5 text-right text-ink disabled:opacity-40"
+                      />
+                      <span className="text-muted">–</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        placeholder="max"
+                        value={vixRange[s]?.max ?? ""}
+                        onChange={(e) => setVix(s, "max", e.target.value)}
+                        disabled={!hasVix}
+                        aria-label={`${shortName(s)} maximum VIX`}
+                        className="w-14 rounded border border-border bg-surface px-1 py-0.5 text-right text-ink disabled:opacity-40"
+                      />
+                    </span>
+                    {(sim.vixSkipped[s] ?? 0) > 0 && <span className="block text-xs text-muted">{sim.vixSkipped[s]} skipped</span>}
+                  </td>
                   <td>{r?.trades ?? 0}</td>
                   <td>{p1(r?.tradeShare)}</td>
                   <td>{r ? r.avgContracts.toFixed(1) : "—"}</td>
@@ -487,6 +544,9 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
               </td>
               )}
               <td />
+              <td className="text-xs font-normal text-muted">
+                {Object.values(sim.vixSkipped).reduce((a, b) => a + b, 0) > 0 ? `${Object.values(sim.vixSkipped).reduce((a, b) => a + b, 0)} skipped` : ""}
+              </td>
               <td>{sim.trades.toLocaleString()}</td>
               <td>{sim.trades ? "100%" : "—"}</td>
               <td>{sim.trades ? (sim.strategies.reduce((t, r) => t + r.avgContracts * r.trades, 0) / sim.trades).toFixed(1) : "—"}</td>

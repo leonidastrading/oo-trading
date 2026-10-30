@@ -11,6 +11,9 @@ export interface StrategyAlloc {
   fixed?: number;
   /** Double the size of the strategy's next trade after it gets stopped out. */
   doubleAfterStop?: boolean;
+  /** Only take trades whose VIX at entry is within this range (either end optional). */
+  vixMin?: number;
+  vixMax?: number;
 }
 
 /** Schwab Port 2026 allocations in Option Omega (as of Oct 29, 2026), keyed by the scorecard's short names. */
@@ -44,6 +47,8 @@ export interface SimTrade {
   premiumPerLot: number;
   /** OO closed it with a stop loss. */
   stopped: boolean;
+  /** VIX at entry, when known. */
+  vix: number | null;
 }
 
 const MULT = 100;
@@ -104,6 +109,7 @@ export function toSimTrades(trades: OOTrade[]): SimTrade[] {
       // OO's net premium per contract (+ credit, − debit) when the log has it.
       premiumPerLot: t.premium ?? premium,
       stopped: /stop/i.test(t.reason),
+      vix: typeof t.vix === "number" ? t.vix : null,
     });
   }
   return out.sort((a, b) => a.open.localeCompare(b.open) || a.strategy.localeCompare(b.strategy));
@@ -199,6 +205,8 @@ export interface SimResult {
   strategies: StrategyResult[];
   months: MonthRow[];
   equity: { date: string; equity: number; dd: number }[];
+  /** Entries skipped by each strategy's VIX range. */
+  vixSkipped: Record<string, number>;
 }
 
 interface Sized extends SimTrade {
@@ -216,6 +224,7 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
   let realized = startEquity;
   // Strategies whose latest closed trade was a stop-out and haven't had their doubled trade yet.
   const afterStop = new Set<string>();
+  const vixSkipped: Record<string, number> = {};
   const settle = (until: string) => {
     pending.sort((a, b) => a.close.localeCompare(b.close));
     while (pending.length && pending[0].close <= until) {
@@ -228,6 +237,11 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
   for (const t of trades) {
     const a = alloc[t.strategy];
     if (!a) continue;
+    // VIX safe zone: skip entries outside the strategy's range (trades without a VIX reading are kept).
+    if (t.vix !== null && ((a.vixMin !== undefined && t.vix < a.vixMin) || (a.vixMax !== undefined && t.vix > a.vixMax))) {
+      vixSkipped[t.strategy] = (vixSkipped[t.strategy] ?? 0) + 1;
+      continue;
+    }
     let n: number;
     settle(t.open);
     if (a.fixed !== undefined) {
@@ -402,6 +416,7 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
     strategies,
     months,
     equity,
+    vixSkipped,
   };
 }
 

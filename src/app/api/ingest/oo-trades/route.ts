@@ -39,10 +39,14 @@ export async function POST(req: NextRequest) {
   if (replaced.length) await store.hdel(KEYS.ooTrades, ...replaced);
   const fresh = valid.filter((t) => !(t.key in existing));
   await store.hsetnxMany(KEYS.ooTrades, fresh.map((t) => [t.key, t] as [string, unknown]));
-  // Fill in Margin Req. on trades stored before the feed carried it.
+  // Fill in Margin Req. / opening VIX on trades stored before the feed carried them.
   for (const t of valid) {
     const old = existing[t.key];
-    if (old && typeof t.margin === "number" && typeof old.margin !== "number") await store.hset(KEYS.ooTrades, t.key, { ...old, margin: t.margin });
+    if (!old) continue;
+    const patch: Partial<OOTrade> = {};
+    if (typeof t.margin === "number" && typeof old.margin !== "number") patch.margin = t.margin;
+    if (typeof t.vix === "number" && typeof old.vix !== "number") patch.vix = t.vix;
+    if (Object.keys(patch).length) await store.hset(KEYS.ooTrades, t.key, { ...old, ...patch });
   }
 
   const meta = (await store.get<{ updatedAt: number; files: string[]; autoRefreshedAt?: number }>(KEYS.ooMeta)) ?? { updatedAt: 0, files: [] };
