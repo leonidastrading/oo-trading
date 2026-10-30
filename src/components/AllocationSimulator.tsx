@@ -265,7 +265,12 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
           baseline={baselineSim}
           strategies={rows}
           label={shortName}
-          onApply={(a) => (mode === "lots" ? setLots(Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v.fixed ?? 0]))) : setAlloc(a))}
+          onApply={(a) => {
+            if (mode === "lots") setLots(Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v.fixed ?? 0])));
+            else setAlloc(a);
+            // The result carries each strategy's VIX range (searched when "Optimize VIX ranges" is on).
+            setVixRange(Object.fromEntries(Object.entries(a).map(([k, v]) => [k, { min: v.vixMin, max: v.vixMax }])));
+          }}
         />
       )}
 

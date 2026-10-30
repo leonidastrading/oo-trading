@@ -445,7 +445,12 @@ export interface OptimizeOptions {
   maxPct?: number;
   /** Highest contracts per trade in fixed-lot mode (default 100). */
   maxLots?: number;
+  /** Also search each included strategy's VIX range (min/max at entry). */
+  optimizeVix?: boolean;
 }
+
+const VIX_MIN_STEPS = [undefined, 12, 13, 14, 15, 16, 17, 18, 20, 22, 25];
+const VIX_MAX_STEPS = [undefined, 16, 18, 20, 22, 25, 28, 30, 35, 40];
 
 export interface OptimizeResult {
   alloc: Record<string, StrategyAlloc>;
@@ -519,6 +524,28 @@ export async function optimize(
   for (let pass = 0; pass < 8; pass++) {
     let improved = false;
     for (const name of o.include) {
+      // VIX safe zone: try each floor, then each ceiling, keeping whatever improves the objective.
+      if (o.optimizeVix && alloc[name]) {
+        for (const key of ["vixMin", "vixMax"] as const) {
+          for (const v of key === "vixMin" ? VIX_MIN_STEPS : VIX_MAX_STEPS) {
+            const c = alloc[name];
+            if (c[key] === v) continue;
+            const lo = key === "vixMin" ? v : c.vixMin;
+            const hi = key === "vixMax" ? v : c.vixMax;
+            if (lo !== undefined && hi !== undefined && lo >= hi) continue;
+            const trial = { ...alloc, [name]: { ...c, [key]: v } };
+            const r = simulate(trades, trial, equity);
+            runs++;
+            const sc = score(r, o);
+            if (sc > bestScore + 1e-9) {
+              alloc = trial;
+              best = r;
+              bestScore = sc;
+              improved = true;
+            }
+          }
+        }
+      }
       const cur = alloc[name] ?? { pct: 0 };
       if (cur.fixed !== undefined) {
         const c = cur.fixed;

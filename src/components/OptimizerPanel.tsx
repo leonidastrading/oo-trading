@@ -22,6 +22,7 @@ interface Saved {
   minPl: string;
   maxPct: string;
   maxLots?: string;
+  optimizeVix?: boolean;
   excluded: string[];
 }
 
@@ -62,6 +63,7 @@ export function OptimizerPanel({
   const [minPl, setMinPl] = useState("");
   const [maxPct, setMaxPct] = useState("20");
   const [maxLots, setMaxLots] = useState("50");
+  const [optimizeVix, setOptimizeVix] = useState(false);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState<{ runs: number } | null>(null);
   const [restored, setRestored] = useState(false);
@@ -79,6 +81,7 @@ export function OptimizerPanel({
           setMinPl(v.minPl ?? "");
           setMaxPct(v.maxPct ?? "20");
           setMaxLots(v.maxLots ?? "50");
+          setOptimizeVix(!!v.optimizeVix);
           setExcluded(new Set(v.excluded ?? []));
         }
       } catch {}
@@ -88,10 +91,10 @@ export function OptimizerPanel({
   useEffect(() => {
     if (!restored) return;
     try {
-      const v: Saved = { objective, maxAvg, maxPeak, maxDd, minPl, maxPct, maxLots, excluded: [...excluded] };
+      const v: Saved = { objective, maxAvg, maxPeak, maxDd, minPl, maxPct, maxLots, optimizeVix, excluded: [...excluded] };
       localStorage.setItem(STORE, JSON.stringify(v));
     } catch {}
-  }, [restored, objective, maxAvg, maxPeak, maxDd, minPl, maxPct, maxLots, excluded]);
+  }, [restored, objective, maxAvg, maxPeak, maxDd, minPl, maxPct, maxLots, optimizeVix, excluded]);
   const [result, setResult] = useState<OptimizeResult | null>(null);
 
   async function run() {
@@ -110,6 +113,7 @@ export function OptimizerPanel({
         minPl: objective === "dd" ? (num(minPl) ?? baseline.pl) : null,
         maxPct: num(maxPct) ?? 20,
         maxLots: num(maxLots) ?? 50,
+        optimizeVix,
       },
       (runs) => setRunning({ runs }),
     );
@@ -171,6 +175,10 @@ export function OptimizerPanel({
             <input className={field} value={maxPct} onChange={(e) => setMaxPct(e.target.value)} inputMode="decimal" />
           </label>
         )}
+        <label className="flex cursor-pointer items-center gap-2 self-center pt-4 text-sm text-ink-2" title="Also search each strategy's VIX min/max at entry">
+          <input type="checkbox" checked={optimizeVix} onChange={(e) => setOptimizeVix(e.target.checked)} />
+          Optimize VIX ranges
+        </label>
         <button
           onClick={run}
           disabled={!!running}
@@ -187,6 +195,14 @@ export function OptimizerPanel({
             : "Every run starts from your OO settings on the uploaded log (not from the sliders or an earlier result). Unchecked strategies stay at their OO setting."}{" "}
           “2× after stop” doubles that strategy&apos;s very next trade after an OO stop loss — it applies to the sliders, the reference and the
           optimizer alike.
+        </div>
+        <div className="mb-2 flex gap-2 text-xs">
+          <button onClick={() => setExcluded(new Set())} className="rounded border border-border px-2 py-0.5 text-ink-2 hover:bg-surface-2">
+            Select all
+          </button>
+          <button onClick={() => setExcluded(new Set(strategies))} className="rounded border border-border px-2 py-0.5 text-ink-2 hover:bg-surface-2">
+            Deselect all
+          </button>
         </div>
         <div className="flex flex-wrap gap-2">
           {strategies.map((s) => {
@@ -240,12 +256,20 @@ export function OptimizerPanel({
                     const lotsMode = unit === "lots";
                     const a = (lotsMode ? alloc[s]?.fixed : alloc[s]?.pct) ?? 0;
                     const b = (lotsMode ? result.alloc[s]?.fixed : result.alloc[s]?.pct) ?? 0;
+                    const vixText = (x?: StrategyAlloc) =>
+                      x && (x.vixMin !== undefined || x.vixMax !== undefined) ? ` · VIX ${x.vixMin ?? "–"}–${x.vixMax ?? "∞"}` : "";
                     const fmt = (v: number) => (lotsMode ? `${v} lot${v === 1 ? "" : "s"}` : `${v}%`);
                     return (
                       <tr key={s}>
                         <td className="whitespace-normal">{label(s)}</td>
-                        <td>{fmt(a)}</td>
-                        <td className={b > a ? "font-semibold text-gain" : b < a ? "font-semibold text-loss" : "text-ink-2"}>{fmt(b)}</td>
+                        <td>
+                          {fmt(a)}
+                          <span className="text-xs text-muted">{vixText(alloc[s])}</span>
+                        </td>
+                        <td className={b > a ? "font-semibold text-gain" : b < a ? "font-semibold text-loss" : "text-ink-2"}>
+                          {fmt(b)}
+                          <span className="text-xs">{vixText(result.alloc[s])}</span>
+                        </td>
                       </tr>
                     );
                   })}

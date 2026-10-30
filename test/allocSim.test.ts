@@ -193,3 +193,25 @@ describe("VIX safe zone", () => {
     expect(r.vixSkipped).toEqual({ PS: 2 });
   });
 });
+
+describe("optimizer VIX ranges", () => {
+  it("finds a VIX ceiling that drops the losing high-VIX trades", async () => {
+    const { optimize } = await import("@/lib/allocSim");
+    const days = Array.from({ length: 12 }, (_, i) => `2026-04-${String(i + 1).padStart(2, "0")}`);
+    const trades = days.map((d, i) =>
+      t({ dateOpened: d, dateClosed: d, legs: `1 Apr ${i + 1} 5000 P STO 3.00 | 1 Apr ${i + 1} 4990 P BTO 1.00`, contracts: 1, margin: 1000, vix: i % 3 === 0 ? 32 : 15, pl: i % 3 === 0 ? -400 : 100 }),
+    );
+    const r = await optimize(toSimTrades(trades), { PS: { pct: 0, fixed: 1 } }, 100_000, {
+      objective: "pl",
+      include: ["PS"],
+      maxAvgMargin: null,
+      maxPeakMargin: null,
+      maxDrawdown: null,
+      maxLots: 1,
+      optimizeVix: true,
+    });
+    expect(r.alloc.PS.vixMax).toBeDefined();
+    expect(r.alloc.PS.vixMax!).toBeLessThan(32);
+    expect(r.result.pl).toBe(8 * 100);
+  });
+});
