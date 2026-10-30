@@ -356,7 +356,14 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
               </th>
               <th className="min-w-[12rem]">Allocation / trade</th>
               <th>Max ct</th>
-              <th title="Only trade when VIX at entry is inside this range">VIX range</th>
+              <th title="Only trade when VIX at entry is inside this range">
+                VIX range
+                {Object.values(vixRange).some((v) => v.min !== undefined || v.max !== undefined) && (
+                  <button onClick={() => setVixRange({})} className="ml-2 text-xs font-normal normal-case text-link underline">
+                    clear all
+                  </button>
+                )}
+              </th>
               <th>Trades</th>
               <th>% trades</th>
               <th>Avg size</th>

@@ -121,6 +121,9 @@ export function OptimizerPanel({
     setResult(r);
   }
 
+  // VIX ranges aren't an OO setting: the starting point uses the VIX sliders.
+  const anyVix = Object.values(alloc).some((a) => a.vixMin !== undefined || a.vixMax !== undefined);
+  const startLabel = `${unit === "lots" ? "1 lot each" : "OO settings"}${anyVix ? " + your VIX" : ""}`;
   const rows: [string, (r: SimResult) => string][] = [
     ["P/L", (r) => money(r.pl, { sign: true })],
     ["CAGR", (r) => pct(r.cagr)],
@@ -192,7 +195,8 @@ export function OptimizerPanel({
         <div className="mb-1 text-xs text-muted">
           {unit === "lots"
             ? "Every run starts from 1 lot of each strategy (per-contract P/L; the log's sizing is ignored). Unchecked strategies stay at 1 lot."
-            : "Every run starts from your OO settings on the uploaded log (not from the sliders or an earlier result). Unchecked strategies stay at their OO setting."}{" "}
+            : "Every run starts from your OO settings on the uploaded log (not from the allocation sliders or an earlier result). Unchecked strategies stay at their OO setting."}{" "}
+          VIX ranges are the exception: runs start from your VIX sliders (OO has none), shown next to the starting values.
           “2× after stop” doubles that strategy&apos;s very next trade after an OO stop loss — it applies to the sliders, the reference and the
           optimizer alike.
         </div>
@@ -247,7 +251,7 @@ export function OptimizerPanel({
                 <thead>
                   <tr>
                     <th>Strategy</th>
-                    <th>{unit === "lots" ? "1 lot each" : "OO settings"}</th>
+                    <th>{startLabel}</th>
                     <th>Suggested</th>
                   </tr>
                 </thead>
@@ -287,7 +291,7 @@ export function OptimizerPanel({
                 <thead>
                   <tr>
                     <th>Metric</th>
-                    <th>{unit === "lots" ? "1 lot each" : "OO settings"}</th>
+                    <th>{startLabel}</th>
                     <th>Suggested</th>
                   </tr>
                 </thead>
