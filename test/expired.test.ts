@@ -101,3 +101,14 @@ describe("legs Schwab dropped overnight before posting", () => {
     expect(order.realized).toBeCloseTo(13 * 1.8 * 100);
   });
 });
+
+describe("stale position snapshot after Schwab posts the settlement", () => {
+  it("treats a settled leg as closed", async () => {
+    const { settledSymbols } = await import("@/lib/expired");
+    const leg = "SPXW  261029C07705000";
+    const settled = { symbol: leg, settlement: true, expiration: "2026-10-29" } as Fill;
+    const trade = { symbol: "SPXW  261030P07600000", settlement: false, expiration: "2026-10-30" } as Fill;
+    expect(settledSymbols([settled, trade], "2026-10-30")).toEqual([leg]);
+    expect(settledSymbols([settled], "2026-10-29")).toEqual([]);
+  });
+});

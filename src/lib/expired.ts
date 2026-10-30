@@ -58,6 +58,11 @@ export function ghostExpired(positions: Position[], fills: Fill[], sessionDate: 
 }
 
 /** Positions that expired on sessionDate, are cash-settled, have a price, and aren't posted yet. */
+/** Symbols of expired options Schwab has already settled (closed, whatever a cached position list says). */
+export function settledSymbols(fills: Fill[], today: string): string[] {
+  return fills.filter((f) => f.settlement && f.expiration !== null && f.expiration < today).map((f) => f.symbol);
+}
+
 export function pendingExpired(positions: Position[], o: ExpiredOpts): Position[] {
   const posted = new Set(o.fills.filter((f) => f.settlement && f.bookDate === o.sessionDate).map((f) => f.symbol));
   return positions.filter(

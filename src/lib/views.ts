@@ -1,7 +1,7 @@
 // Server-side assembly of the Live and Today page payloads.
 import "server-only";
 import { takeManualRefresh } from "./cache";
-import { CASH_SETTLED, expiredOrders, ghostExpired, pendingExpired } from "./expired";
+import { CASH_SETTLED, expiredOrders, ghostExpired, pendingExpired, settledSymbols } from "./expired";
 import { analyzeClose, type CloseAnalysis } from "./options";
 import { countOpenEntries, feesOn, groupClosesByOrder, openLots, realizedOn, type ClosedOrder, type Fill } from "./realized";
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
@@ -115,7 +115,11 @@ export function splitExpired(
   };
   // Include legs Schwab already dropped from the account but hasn't posted yet.
   const pending = pendingExpired([...positions, ...ghostExpired(positions, fills, opts.sessionDate)], opts);
-  const gone = new Set(pending.map((p) => p.symbol));
+  // Legs Schwab already settled are closed even if a cached position snapshot still lists them.
+  const gone = new Set([
+    ...pending.map((p) => p.symbol),
+    ...settledSymbols(fills, opts.today),
+  ]);
   const orders = expiredOrders(pending, opts);
   return {
     open: positions.filter((p) => !gone.has(p.symbol)),
