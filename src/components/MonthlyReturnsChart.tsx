@@ -20,6 +20,7 @@ export function MonthlyReturnsChart({ months }: { months: MonthRow[] }) {
     pl: m.pl,
     hi: m.hiPct * 100,
     lo: m.loPct * 100,
+    vix: m.vix,
     // ErrorBar takes [below, above] distances from the bar's end.
     range: [m.pct * 100 - m.loPct * 100, m.hiPct * 100 - m.pct * 100],
   }));
@@ -27,6 +28,9 @@ export function MonthlyReturnsChart({ months }: { months: MonthRow[] }) {
   const sorted = [...data].map((d) => d.pct).sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
   const yMin = Math.min(0, Math.floor(Math.min(...data.map((d) => d.lo)) - 0.5));
+  const vixes = data.map((d) => d.vix).filter((v): v is number => v !== null);
+  const hasVix = vixes.length > 0;
+  const vixAvg = hasVix ? vixes.reduce((a, b) => a + b, 0) / vixes.length : 0;
   const yMax = Math.ceil(Math.max(...data.map((d) => d.hi)) + 0.5);
   const up = data.filter((d) => d.pct > 0).length;
   // One tick per January (or every month when the range is short).
@@ -42,7 +46,7 @@ export function MonthlyReturnsChart({ months }: { months: MonthRow[] }) {
       </div>
       <div className="h-[28rem] w-full md:h-[32rem]">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 4 }} barCategoryGap="15%">
+          <BarChart data={data} syncId="monthly" margin={{ top: 8, right: 8, bottom: 0, left: 4 }} barCategoryGap="15%">
             <XAxis
               dataKey="month"
               ticks={ticks}
@@ -74,7 +78,33 @@ export function MonthlyReturnsChart({ months }: { months: MonthRow[] }) {
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <p className="mt-1 text-xs text-muted">Return = month&apos;s closed-trade P/L ÷ equity at the start of the month. Thin line = the month&apos;s best and worst point. Dashed line = average month.</p>
+      {hasVix && (
+        <>
+          <div className="mt-3 flex items-baseline justify-between gap-2">
+            <h4 className="text-sm font-bold text-ink-2">Average VIX</h4>
+            <span className="text-xs text-muted">avg {vixAvg.toFixed(1)}</span>
+          </div>
+          <div className="h-40 w-full md:h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data} syncId="monthly" margin={{ top: 8, right: 8, bottom: 0, left: 4 }} barCategoryGap="15%">
+                <XAxis dataKey="month" ticks={ticks} tick={false} tickLine={false} axisLine={{ stroke: "var(--axis)" }} height={4} />
+                <YAxis domain={[0, "auto"]} tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={false} width={40} />
+                <ReferenceLine y={vixAvg} stroke="var(--ink-2)" strokeDasharray="4 4" />
+                <Tooltip
+                  cursor={{ fill: "var(--surface-2)" }}
+                  contentStyle={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: "var(--ink-2)" }}
+                  itemStyle={{ color: "var(--ink)" }}
+                  labelFormatter={(m) => label(String(m))}
+                  formatter={(v) => [v === null || v === undefined ? "—" : Number(v).toFixed(1), "Avg VIX"]}
+                />
+                <Bar dataKey="vix" fill="var(--link)" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+      <p className="mt-1 text-xs text-muted">Return = month&apos;s closed-trade P/L ÷ equity at the start of the month. Thin line = the month&apos;s best and worst point. Dashed line = average month.{hasVix && " VIX = each day's average VIX at the log's entries, averaged over the month."}</p>
     </div>
   );
 }

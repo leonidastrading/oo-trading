@@ -185,6 +185,8 @@ export interface MonthRow {
   /** Best and worst point of the month's running (closed) return vs. equity at the start of the month. */
   hiPct: number;
   loPct: number;
+  /** Average VIX: each trading day's mean entry VIX across the whole log, averaged over the month. */
+  vix: number | null;
 }
 
 export interface SimResult {
@@ -399,13 +401,19 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
     r.lo = Math.min(r.lo, r.run);
     swing.set(m, r);
   }
+  // VIX comes from every trade in the log, not just those a VIX range let through.
+  const vixDay = new Map<string, number[]>();
+  for (const t of trades) if (t.vix !== null) vixDay.set(t.open.slice(0, 10), [...(vixDay.get(t.open.slice(0, 10)) ?? []), t.vix]);
+  const vixMonth = new Map<string, number[]>();
+  for (const [d, vs] of vixDay) vixMonth.set(d.slice(0, 7), [...(vixMonth.get(d.slice(0, 7)) ?? []), vs.reduce((a, b) => a + b, 0) / vs.length]);
   const months: MonthRow[] = [];
   let mEq = startEquity;
   for (const m of [...monthPl.keys()].sort()) {
     const v = monthPl.get(m)!;
     const r = swing.get(m)!;
     const f = (x: number) => (mEq > 0 ? x / mEq : 0);
-    months.push({ month: m, pl: v, pct: f(v), hiPct: f(r.hi), loPct: f(r.lo) });
+    const vs = vixMonth.get(m);
+    months.push({ month: m, pl: v, pct: f(v), hiPct: f(r.hi), loPct: f(r.lo), vix: vs ? vs.reduce((a, b) => a + b, 0) / vs.length : null });
     mEq += v;
   }
 

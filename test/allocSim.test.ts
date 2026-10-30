@@ -41,7 +41,7 @@ describe("allocation simulator", () => {
     expect(r.maxDdPct).toBeCloseTo(-5000 / 102_000);
     expect(r.winPct).toBe(0.5);
     expect(r.profitFactor).toBeCloseTo(0.4);
-    expect(r.months).toEqual([{ month: "2026-03", pl: -3000, pct: -0.03, hiPct: 0.02, loPct: -0.03 }]);
+    expect(r.months).toEqual([{ month: "2026-03", pl: -3000, pct: -0.03, hiPct: 0.02, loPct: -0.03, vix: null }]);
     expect(r.avgMarginUtil).toBeCloseTo((10_000 / 100_000 + 10_000 / 102_000) / 2);
     expect(r.strategies[0]).toMatchObject({ strategy: "PS", trades: 2, contribution: 1, tradeShare: 1 });
   });
