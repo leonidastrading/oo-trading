@@ -1,6 +1,7 @@
 import { requireKv } from "@/lib/apiGuard";
 import { NextResponse, type NextRequest } from "next/server";
 import { KEYS, kv } from "@/lib/kv";
+import { rememberVix, fillVix } from "@/lib/ooVix";
 import { isValidTrade, tradeKey, tradeSlot, type OOTrade } from "@/lib/ooCsv";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +10,9 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   const missing = requireKv();
   if (missing) return missing;
-  const body = (await req.json().catch(() => null)) as { trades?: unknown[]; file?: string } | null;
+  // replace: true (sent with the first chunk of an upload) clears every stored backtest trade first,
+  // so the new log becomes the whole data set instead of being merged into older ones.
+  const body = (await req.json().catch(() => null)) as { trades?: unknown[]; file?: string; replace?: boolean } | null;
   if (!body || !Array.isArray(body.trades)) return NextResponse.json({ error: "Expected { trades: [] }" }, { status: 400 });
   if (body.trades.length > 5000) return NextResponse.json({ error: "Max 5000 trades per request" }, { status: 413 });
 
@@ -20,17 +23,12 @@ export async function POST(req: NextRequest) {
     return [key, { ...t, key, source: body.file ?? "upload", uploadedAt: now }];
   });
   const store = kv();
+  const trades = entries.map(([, t]) => t);
+  await rememberVix(trades);
+  await fillVix(trades); // logs exported without "Opening VIX" keep the readings already known
+  if (body.replace) await store.del(KEYS.ooTrades);
   // Latest upload wins: an entry already stored from another run (same strategy, date and time) is replaced.
-  const existing = await store.hgetall<OOTrade>(KEYS.ooTrades);
-  // Logs exported without "Opening VIX" keep the VIX already known for that entry minute.
-  const vixAt = new Map<string, number>();
-  for (const t of Object.values(existing)) if (typeof t.vix === "number") vixAt.set(`${t.dateOpened} ${t.timeOpened}`, t.vix);
-  for (const [, t] of entries) {
-    if (typeof t.vix !== "number") {
-      const v = vixAt.get(`${t.dateOpened} ${t.timeOpened}`);
-      if (v !== undefined) t.vix = v;
-    }
-  }
+  const existing = body.replace ? {} : await store.hgetall<OOTrade>(KEYS.ooTrades);
   const slots = new Set(entries.map(([, t]) => tradeSlot(t)));
   const keys = new Set(entries.map(([k]) => k));
   const replaced = Object.entries(existing)
@@ -40,6 +38,7 @@ export async function POST(req: NextRequest) {
   const added = entries.filter(([k]) => !(k in existing)).length;
   await store.hsetMany(KEYS.ooTrades, entries);
   const meta = (await store.get<{ updatedAt: number; files: string[] }>(KEYS.ooMeta)) ?? { updatedAt: 0, files: [] };
+  if (body.replace) meta.files = [];
   if (body.file && !meta.files.includes(body.file)) meta.files.push(body.file);
   meta.updatedAt = Date.now();
   await store.set(KEYS.ooMeta, meta);

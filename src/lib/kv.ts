@@ -179,6 +179,8 @@ export const KEYS = {
   manual: (name: string) => `manual:${name}`,
   ooTrades: "oo:trades",
   ooMeta: "oo:meta",
+  /** Opening VIX by entry minute ("YYYY-MM-DD HH:MM:SS"), kept apart from the trades so replacing a log never loses it. */
+  ooVix: "oo:vix",
   annotations: "scorecard:annotations",
   eod: "eod:snapshots",
 } as const;

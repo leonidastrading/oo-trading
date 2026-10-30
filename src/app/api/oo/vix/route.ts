@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
   if (!body?.vix || typeof body.vix !== "object") return NextResponse.json({ error: "Expected { vix: { 'date time': number } }" }, { status: 400 });
   const map = new Map(Object.entries(body.vix).filter((e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1])));
   const store = kv();
+  await store.hsetMany(KEYS.ooVix, [...map]);
   const all = await store.hgetall<OOTrade>(KEYS.ooTrades);
   const patched: [string, unknown][] = [];
   for (const [key, t] of Object.entries(all)) {

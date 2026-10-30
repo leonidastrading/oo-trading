@@ -5,6 +5,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { requireKv } from "@/lib/apiGuard";
 import { KEYS, kv } from "@/lib/kv";
+import { fillVix, rememberVix } from "@/lib/ooVix";
 import { isValidTrade, tradeKey, tradeSlot, type OOTrade } from "@/lib/ooCsv";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,8 @@ export async function POST(req: NextRequest) {
   const now = Date.now();
   const valid = body.trades.filter(isValidTrade).map((t) => ({ ...t, key: tradeKey(t), source: body.source ?? "OO auto-refresh", uploadedAt: now }));
   const store = kv();
+  await rememberVix(valid);
+  await fillVix(valid);
   const existing = await store.hgetall<OOTrade>(KEYS.ooTrades);
   const incomingSlots = new Set(valid.map(slot));
   const incomingKeys = new Set(valid.map((t) => t.key));

@@ -18,11 +18,14 @@ const CHUNK = 1000;
 export function UploadTrades({ onDone, compact = false }: { onDone?: () => void; compact?: boolean }) {
   const [results, setResults] = useState<FileResult[]>([]);
   const [busy, setBusy] = useState(false);
+  // Default: the new log replaces everything stored, so old runs don't linger in the stats.
+  const [replace, setReplace] = useState(true);
 
   async function upload(files: FileList | null) {
     if (!files?.length) return;
     setBusy(true);
     const out: FileResult[] = [];
+    let first = replace;
     for (const file of Array.from(files)) {
       const r: FileResult = { name: file.name, parsed: 0, added: 0, duplicates: 0, errors: [], done: false };
       out.push(r);
@@ -36,10 +39,11 @@ export function UploadTrades({ onDone, compact = false }: { onDone?: () => void;
           const res = await fetch("/api/oo/upload", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ trades: trades.slice(i, i + CHUNK), file: file.name }),
+            body: JSON.stringify({ trades: trades.slice(i, i + CHUNK), file: file.name, replace: first }),
           });
           const j = await res.json();
           if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+          first = false; // only the first chunk of the first file clears the store
           r.added += j.added;
           r.duplicates += j.duplicates;
           if (j.invalid) r.errors.push(`${j.invalid} rows rejected by server validation`);
@@ -56,6 +60,10 @@ export function UploadTrades({ onDone, compact = false }: { onDone?: () => void;
 
   return (
     <div className="space-y-3">
+      <label className="flex items-center gap-2 text-sm text-ink-2">
+        <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} disabled={busy} />
+        Replace everything already stored (uncheck to add to it)
+      </label>
       <label className="block">
         <span className="sr-only">Choose OO trade-log CSV files</span>
         <input
