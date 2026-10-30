@@ -275,8 +275,9 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       )}
 
       {sim.equity.length > 1 && (
-        <div className="card relative h-96 p-3 md:h-[28rem]">
-          <div className="absolute right-3 top-3 z-10 flex rounded-lg border border-border bg-surface text-xs" role="group" aria-label="Drawdown units">
+        <div className="card flex h-96 flex-col p-3 md:h-[28rem]">
+          <div className="mb-2 flex justify-end">
+          <div className="flex rounded-lg border border-border bg-surface text-xs" role="group" aria-label="Drawdown units">
             {(["pct", "usd"] as const).map((u) => (
               <button
                 key={u}
@@ -288,6 +289,8 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
               </button>
             ))}
           </div>
+          </div>
+          <div className="min-h-0 flex-1">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
               <XAxis dataKey="date" tick={{ fill: "var(--muted)", fontSize: 11 }} tickLine={false} axisLine={{ stroke: "var(--axis)" }} minTickGap={40} />
@@ -317,6 +320,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
               <Area yAxisId="eq" type="monotone" dataKey="equity" stroke="var(--spot)" strokeWidth={2} fill="var(--spot)" fillOpacity={0.12} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
+          </div>
         </div>
       )}
 
