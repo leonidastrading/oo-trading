@@ -445,7 +445,7 @@ export interface OptimizeOptions {
   maxPct?: number;
   /** Highest contracts per trade in fixed-lot mode (default 100). */
   maxLots?: number;
-  /** Also search each included strategy's VIX range (min/max at entry). */
+  /** Search only each included strategy's VIX range (min/max at entry); allocations stay as they are. */
   optimizeVix?: boolean;
 }
 
@@ -500,7 +500,7 @@ export async function optimize(
   let bestScore = score(best, o);
   let runs = 1;
   // Start infeasible (e.g. margin above the limit)? Scale everything down until it fits.
-  for (let f = 0.9; bestScore === -Infinity && f > 0.05; f *= 0.9) {
+  for (let f = 0.9; !o.optimizeVix && bestScore === -Infinity && f > 0.05; f *= 0.9) {
     const scaled = Object.fromEntries(
       Object.entries(start).map(([k, a]) => [
         k,
@@ -525,6 +525,7 @@ export async function optimize(
     let improved = false;
     for (const name of o.include) {
       // VIX safe zone: try each floor, then each ceiling, keeping whatever improves the objective.
+      // (When this is on, it is the only thing searched.)
       if (o.optimizeVix && alloc[name]) {
         for (const key of ["vixMin", "vixMax"] as const) {
           for (const v of key === "vixMin" ? VIX_MIN_STEPS : VIX_MAX_STEPS) {
@@ -545,6 +546,12 @@ export async function optimize(
             }
           }
         }
+      }
+      // VIX mode tunes only the ranges; sizes stay at the starting allocation.
+      if (o.optimizeVix) {
+        onProgress?.(runs, best);
+        await new Promise((res) => setTimeout(res, 0));
+        continue;
       }
       const cur = alloc[name] ?? { pct: 0 };
       if (cur.fixed !== undefined) {

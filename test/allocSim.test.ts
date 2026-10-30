@@ -213,5 +213,6 @@ describe("optimizer VIX ranges", () => {
     expect(r.alloc.PS.vixMax).toBeDefined();
     expect(r.alloc.PS.vixMax!).toBeLessThan(32);
     expect(r.result.pl).toBe(8 * 100);
+    expect(r.alloc.PS.fixed).toBe(1); // sizes untouched in VIX mode
   });
 });

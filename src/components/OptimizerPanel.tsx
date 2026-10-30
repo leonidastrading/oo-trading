@@ -175,9 +175,9 @@ export function OptimizerPanel({
             <input className={field} value={maxPct} onChange={(e) => setMaxPct(e.target.value)} inputMode="decimal" />
           </label>
         )}
-        <label className="flex cursor-pointer items-center gap-2 self-center pt-4 text-sm text-ink-2" title="Also search each strategy's VIX min/max at entry">
+        <label className="flex cursor-pointer items-center gap-2 self-center pt-4 text-sm text-ink-2" title="Search only each strategy's VIX min/max at entry; allocations stay at the starting settings">
           <input type="checkbox" checked={optimizeVix} onChange={(e) => setOptimizeVix(e.target.checked)} />
-          Optimize VIX ranges
+          Optimize VIX ranges only
         </label>
         <button
           onClick={run}
@@ -257,7 +257,13 @@ export function OptimizerPanel({
                     const a = (lotsMode ? alloc[s]?.fixed : alloc[s]?.pct) ?? 0;
                     const b = (lotsMode ? result.alloc[s]?.fixed : result.alloc[s]?.pct) ?? 0;
                     const vixText = (x?: StrategyAlloc) =>
-                      x && (x.vixMin !== undefined || x.vixMax !== undefined) ? ` · VIX ${x.vixMin ?? "–"}–${x.vixMax ?? "∞"}` : "";
+                      !x || (x.vixMin === undefined && x.vixMax === undefined)
+                        ? ""
+                        : x.vixMin === undefined
+                          ? ` · VIX ≤ ${x.vixMax}`
+                          : x.vixMax === undefined
+                            ? ` · VIX ≥ ${x.vixMin}`
+                            : ` · VIX ${x.vixMin}–${x.vixMax}`;
                     const fmt = (v: number) => (lotsMode ? `${v} lot${v === 1 ? "" : "s"}` : `${v}%`);
                     return (
                       <tr key={s}>
