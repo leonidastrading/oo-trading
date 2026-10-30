@@ -22,6 +22,15 @@ export async function POST(req: NextRequest) {
   const store = kv();
   // Latest upload wins: an entry already stored from another run (same strategy, date and time) is replaced.
   const existing = await store.hgetall<OOTrade>(KEYS.ooTrades);
+  // Logs exported without "Opening VIX" keep the VIX already known for that entry minute.
+  const vixAt = new Map<string, number>();
+  for (const t of Object.values(existing)) if (typeof t.vix === "number") vixAt.set(`${t.dateOpened} ${t.timeOpened}`, t.vix);
+  for (const [, t] of entries) {
+    if (typeof t.vix !== "number") {
+      const v = vixAt.get(`${t.dateOpened} ${t.timeOpened}`);
+      if (v !== undefined) t.vix = v;
+    }
+  }
   const slots = new Set(entries.map(([, t]) => tradeSlot(t)));
   const keys = new Set(entries.map(([k]) => k));
   const replaced = Object.entries(existing)

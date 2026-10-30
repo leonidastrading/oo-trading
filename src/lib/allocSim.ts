@@ -92,6 +92,9 @@ export function uniqueEntries(trades: OOTrade[]): OOTrade[] {
 
 export function toSimTrades(trades: OOTrade[]): SimTrade[] {
   const out: SimTrade[] = [];
+  // VIX at an entry minute is the same for every strategy: fill gaps from any trade opened then.
+  const vixAt = new Map<string, number>();
+  for (const t of trades) if (typeof t.vix === "number") vixAt.set(`${t.dateOpened} ${t.timeOpened}`, t.vix);
   for (const t of uniqueEntries(trades)) {
     const n = Math.max(1, t.contracts || 1);
     const { risk, premium } = maxLossPerLot(t);
@@ -109,7 +112,7 @@ export function toSimTrades(trades: OOTrade[]): SimTrade[] {
       // OO's net premium per contract (+ credit, − debit) when the log has it.
       premiumPerLot: t.premium ?? premium,
       stopped: /stop/i.test(t.reason),
-      vix: typeof t.vix === "number" ? t.vix : null,
+      vix: typeof t.vix === "number" ? t.vix : (vixAt.get(`${t.dateOpened} ${t.timeOpened}`) ?? null),
     });
   }
   return out.sort((a, b) => a.open.localeCompare(b.open) || a.strategy.localeCompare(b.strategy));
