@@ -8,6 +8,7 @@ import {
   createSeriesMarkers,
   LineSeries,
   LineStyle,
+  type AutoscaleInfo,
   type IChartApi,
   type ISeriesApi,
   type SeriesType,
@@ -98,6 +99,8 @@ const css = (name: string, fallback: string) =>
 export interface BestCloseLine {
   price: number;
   pnl: number;
+  /** Upper edge when the best close is a flat zone (price is then its lower edge). */
+  high?: number;
 }
 
 export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
@@ -111,6 +114,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
   // Keep the viewer's zoom/scroll across data refreshes (reset when the timeframe changes).
   const viewRef = useRef<{ tf: Timeframe; range: { from: number; to: number } | null } | null>(null);
   const bestPrice = best && best.pnl > 0 ? best.price : null;
+  const bestHigh = bestPrice !== null && best?.high !== undefined ? best.high : null;
   const bestPnl = best?.pnl ?? 0;
 
   // Restore the viewer's last choice after hydration (localStorage isn't available on the server).
@@ -186,9 +190,26 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       series = chart.addSeries(CandlestickSeries, { upColor: gain, downColor: loss, borderVisible: false, wickUpColor: gain, wickDownColor: loss });
       series.setData([...bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })), ...whitespace]);
     }
-    if (bestPrice !== null) {
+    // Keep the best-close line(s) on screen: the price scale stretches to include them.
+    const bestLevels = [bestPrice, bestHigh].filter((p): p is number => p !== null);
+    if (bestLevels.length && !isDaily) {
+      series.applyOptions({
+        autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+          const r = original();
+          if (!r?.priceRange) return r;
+          return {
+            ...r,
+            priceRange: {
+              minValue: Math.min(r.priceRange.minValue, ...bestLevels),
+              maxValue: Math.max(r.priceRange.maxValue, ...bestLevels),
+            },
+          };
+        },
+      });
+    }
+    for (const price of bestLevels) {
       series.createPriceLine({
-        price: bestPrice,
+        price,
         color: css("--gain", "#3fb59d"),
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
@@ -293,7 +314,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     if (overlay && !isDaily && bestPrice !== null) {
       bestEl = document.createElement("div");
       bestEl.className = "absolute whitespace-nowrap rounded-sm py-0.5 text-center text-xs font-semibold";
-      bestEl.title = `Best close ${bestPrice}`;
+      bestEl.title = bestHigh !== null ? `Best close ${bestPrice}–${bestHigh}` : `Best close ${bestPrice}`;
       bestEl.style.background = css("--gain", "#3fb59d");
       bestEl.style.color = css("--page", "#0c0c0b");
       bestEl.textContent = money(bestPnl, { sign: true });
@@ -331,7 +352,11 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       const placed: { l: number; t: number; r: number; b: number }[] = [];
       // Best-close P/L in the price-axis column at its line's level (no candles there), nudged clear of the
       // live price label when the two are close.
-      const by = bestPrice !== null ? series.priceToCoordinate(bestPrice) : null;
+      // For a flat zone, the tag sits on whichever edge is nearer the latest price.
+      const lastClose = bars[bars.length - 1]?.close ?? bestPrice ?? 0;
+      const tagPrice =
+        bestHigh !== null && bestPrice !== null && Math.abs(bestHigh - lastClose) < Math.abs(bestPrice - lastClose) ? bestHigh : bestPrice;
+      const by = tagPrice !== null ? series.priceToCoordinate(tagPrice) : null;
       if (bestEl) {
         if (by === null || by < 0 || by > paneH) bestEl.style.display = "none";
         else {
@@ -427,7 +452,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, daily, tf, style, bestPrice, bestPnl]);
+  }, [data, daily, tf, style, bestPrice, bestHigh, bestPnl]);
 
   const dateLabel = data ? new Date(data.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) : "";
 
@@ -552,7 +577,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         Numbers match the # column: ▲ under a bar is an entry (one Schwab opening order), ▼ above is an exit of that entry (S = stop).{" "}
         <span className="text-accent">▲</span> credit entry, <span className="text-spot">▲</span> debit entry,{" "}
         <span className="text-loss">▼</span> stop (a loss that isn&apos;t the strategy&apos;s scheduled exit; a red line joins it to its entry), <span className="text-gain">▼</span> exit at a gain,{" "}
-        <span className="text-muted">▼</span> time exit at a loss. Expirations aren&apos;t marked. <span className="text-gain">- - -</span> best SPX close for today&apos;s expirations. Times ET.
+        <span className="text-muted">▼</span> time exit at a loss. Expirations aren&apos;t marked. <span className="text-gain">- - -</span> best SPX close for today&apos;s expirations (two lines when it&apos;s a flat zone). Times ET.
       </p>
     </section>
   );

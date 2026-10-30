@@ -20,7 +20,9 @@ function bestCloseLine(e: ExpiryData | undefined): BestCloseLine | null {
   if (!e) return null;
   const b = e.analysis.best;
   const price = !b.atEdge && b.range && b.edge === "above" ? b.range.low : !b.atEdge && b.range && b.edge === "below" ? b.range.high : b.price;
-  return { price, pnl: b.pnl };
+  // A flat best zone with both ends in range (an iron condor's body): show both edges.
+  const high = !b.atEdge && b.range && b.edge === null && b.range.high > b.range.low ? b.range.high : undefined;
+  return { price, pnl: b.pnl, high };
 }
 
 export default function LivePage() {
