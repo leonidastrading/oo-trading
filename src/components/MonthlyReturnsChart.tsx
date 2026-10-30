@@ -40,7 +40,7 @@ export function MonthlyReturnsChart({ months }: { months: MonthRow[] }) {
           {up} up / {data.length - up} down · avg {sp(avg)} · median {sp(median)}
         </span>
       </div>
-      <div className="h-56 w-full md:h-64">
+      <div className="h-[28rem] w-full md:h-[32rem]">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 4 }} barCategoryGap="15%">
             <XAxis
