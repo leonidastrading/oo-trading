@@ -310,15 +310,19 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       }
       overlay.prepend(svg);
     }
-    let bestEl: HTMLDivElement | null = null;
-    if (overlay && !isDaily && bestPrice !== null) {
-      bestEl = document.createElement("div");
-      bestEl.className = "absolute whitespace-nowrap rounded-sm py-0.5 text-center text-xs font-semibold";
-      bestEl.title = bestHigh !== null ? `Best close ${bestPrice}–${bestHigh}` : `Best close ${bestPrice}`;
-      bestEl.style.background = css("--gain", "#3fb59d");
-      bestEl.style.color = css("--page", "#0c0c0b");
-      bestEl.textContent = money(bestPnl, { sign: true });
-      overlay.append(bestEl);
+    // One P/L tag per best-close line (both edges of a flat zone).
+    const bestTags: { price: number; el: HTMLDivElement }[] = [];
+    if (overlay && !isDaily) {
+      for (const price of bestLevels) {
+        const el = document.createElement("div");
+        el.className = "absolute whitespace-nowrap rounded-sm py-0.5 text-center text-xs font-semibold";
+        el.title = bestHigh !== null ? `Best close ${bestPrice}–${bestHigh}` : `Best close ${price}`;
+        el.style.background = css("--gain", "#3fb59d");
+        el.style.color = css("--page", "#0c0c0b");
+        el.textContent = money(bestPnl, { sign: true });
+        overlay.append(el);
+        bestTags.push({ price, el });
+      }
     }
     const GAP = 26; // px between the bar's high/low and its label, clear of the arrow
     // The library stacks several arrows on one bar; clear all of them.
@@ -352,24 +356,20 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       const placed: { l: number; t: number; r: number; b: number }[] = [];
       // Best-close P/L in the price-axis column at its line's level (no candles there), nudged clear of the
       // live price label when the two are close.
-      // For a flat zone, the tag sits on whichever edge is nearer the latest price.
-      const lastClose = bars[bars.length - 1]?.close ?? bestPrice ?? 0;
-      const tagPrice =
-        bestHigh !== null && bestPrice !== null && Math.abs(bestHigh - lastClose) < Math.abs(bestPrice - lastClose) ? bestHigh : bestPrice;
-      const by = tagPrice !== null ? series.priceToCoordinate(tagPrice) : null;
-      if (bestEl) {
-        if (by === null || by < 0 || by > paneH) bestEl.style.display = "none";
+      for (const { price, el } of bestTags) {
+        const by = series.priceToCoordinate(price);
+        if (by === null || by < 0 || by > paneH) el.style.display = "none";
         else {
-          bestEl.style.display = "";
+          el.style.display = "";
           const axisW = chart.priceScale("right").width();
-          bestEl.style.width = `${Math.max(axisW - 2, 0)}px`;
-          const h = bestEl.offsetHeight;
+          el.style.width = `${Math.max(axisW - 2, 0)}px`;
+          const h = el.offsetHeight;
           let top = by - h / 2;
           const last = bars[bars.length - 1];
           const ly = last ? series.priceToCoordinate(last.close) : null;
           if (ly !== null && Math.abs(ly - by) < h + 2) top = ly > by ? ly - h / 2 - h - 2 : ly + h / 2 + 2;
-          bestEl.style.left = `${paneW + 1}px`;
-          bestEl.style.top = `${Math.min(Math.max(0, top), paneH - h)}px`;
+          el.style.left = `${paneW + 1}px`;
+          el.style.top = `${Math.min(Math.max(0, top), paneH - h)}px`;
         }
       }
       const free = (r: { l: number; t: number; r: number; b: number }) =>
