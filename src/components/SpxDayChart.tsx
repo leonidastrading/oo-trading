@@ -191,7 +191,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       series = chart.addSeries(CandlestickSeries, { upColor: gain, downColor: loss, borderVisible: false, wickUpColor: gain, wickDownColor: loss });
       series.setData([...bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })), ...whitespace]);
     }
-    // Intraday price range: the bars plus label headroom (same share as the old 12%/22% margins), stretched
+    // Intraday price range: the bars plus label headroom (a little above, more below for entry labels), stretched
     // to keep the best-close line(s) on screen.
     const bestLevels = [bestPrice, bestHigh].filter((p): p is number => p !== null);
     if (!isDaily) {
@@ -204,7 +204,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
             ...r,
             priceRange: {
               minValue: Math.min(r.priceRange.minValue - span * 0.33, ...bestLevels),
-              maxValue: Math.max(r.priceRange.maxValue + span * 0.18, ...bestLevels),
+              maxValue: Math.max(r.priceRange.maxValue + span * 0.06, ...bestLevels),
             },
           };
         },
