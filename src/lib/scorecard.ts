@@ -2,6 +2,7 @@
 // Read-only reporting. All prices are per share ($/share); "per contract" = × 100.
 import { parseLegs, type OOTrade } from "./ooCsv";
 import type { Fill } from "./realized";
+import { classifyBookEntry } from "./strategyRules";
 import { etParts, todayET } from "./time";
 
 /** Costs the backtests assume ($/share, except fees which are $/contract/side). */
@@ -363,11 +364,15 @@ export function deserializeProfiles(p: SerializedProfiles): Map<string, Profile>
 export const MAX_INFER_MINUTES = 30;
 
 /**
- * Best-guess strategy for a live trade with no same-day backtest twin: same structure and DTE,
- * nearest typical entry time (≤ 30 min), and a credit inside the strategy's usual range.
+ * Best-guess strategy for a live trade with no same-day backtest twin: the book's structure rules
+ * (see strategyRules.ts), else same structure and DTE as a backtest strategy, nearest typical entry
+ * time (≤ 30 min), and a credit inside its usual range.
  */
 export function inferStrategy(l: LiveTrade, profiles: Map<string, Profile>): string | null {
   const t = minutesET(l.time);
+  // The book's own rules (structure, wing widths, DTE) first; the backtest profiles only as a fallback.
+  const ruled = classifyBookEntry(l.legs, l.date, t);
+  if (ruled) return ruled;
   let best: { s: string; score: number } | null = null;
   for (const [s, p] of profiles) {
     if (!p.signatures.has(l.signature)) continue;

@@ -137,7 +137,8 @@ describe("stops, flags, missed/extra/awaiting", () => {
     expect(a.slippageCost).toBeCloseTo((0.05 + 1.1) * 100 * 10, 2);
     expect(a.lights.slippage).toBe("red"); // flagged fill
     expect(a.lights.stopRate).toBe("few");
-    expect(a.lights.missedExtra).toBe("yellow");
+    // The 11:00 entry has the 5d IC's structure, so it counts as an extra 5d IC (plus the missed 14:30).
+    expect(a.lights.missedExtra).toBe("red");
   });
 });
 
@@ -180,15 +181,16 @@ describe("inferStrategy", () => {
     mk("! SPX 0DTE $8 IC 1:35 10SMA", "13:35:00", 1500, icLegs),
   ];
   const D3 = "2026-10-22";
-  const live = (orderId: number, iso: string, px: [number, number, number, number]) =>
+  // Wings as the strategies trade them: 5d IC 100/100, 8SMA IC 25 put / 100 call, $8 IC 50/50.
+  const live = (orderId: number, iso: string, px: [number, number, number, number], pw = 100, cw = 100) =>
     buildLiveTrades(normalizeTransactions(order(orderId, iso, [
-      [sym(D3, "P", 7600), -9, px[0]], [sym(D3, "C", 7700), -9, px[1]], [sym(D3, "P", 7500), 9, px[2]], [sym(D3, "C", 7800), 9, px[3]],
+      [sym(D3, "P", 7600), -9, px[0]], [sym(D3, "C", 7700), -9, px[1]], [sym(D3, "P", 7600 - pw), 9, px[2]], [sym(D3, "C", 7700 + cw), 9, px[3]],
     ], "OPENING"), 0.88), D3)[0];
   const rows = scoreTrades(
-    [live(1, "2026-10-22T17:30:03+0000", [0.6, 0.5, 0.05, 0.05]), live(2, "2026-10-22T17:30:05+0000", [5, 4, 0.5, 0.4]), live(3, "2026-10-22T17:35:12+0000", [8, 7.5, 0.3, 0.2])],
+    [live(1, "2026-10-22T17:30:03+0000", [0.6, 0.5, 0.05, 0.05]), live(2, "2026-10-22T17:30:05+0000", [5, 4, 0.5, 0.4], 25, 100), live(3, "2026-10-22T17:35:12+0000", [8, 7.5, 0.3, 0.2], 50, 50)],
     history, D3, "2026-10-21",
   );
-  it("tells 5d IC, 8SMA IC and $8 IC apart by time and credit", () => {
+  it("tells 5d IC, 8SMA IC and $8 IC apart by wing widths", () => {
     const byOrder = Object.fromEntries(rows.map((r) => [r.live!.orderId, r]));
     expect(byOrder["1"].strategy).toBe("5d IC");
     expect(byOrder["2"].strategy).toBe("8SMA IC");

@@ -1,6 +1,7 @@
 // Normalize Schwab positions and group them into spreads by underlying + expiration.
 import { MULTIPLIER, parseOptionSymbol, rootToUnderlying, type OptionLeg, type PutCall } from "./options";
-import { addDays } from "./time";
+import { classifyBookEntry } from "./strategyRules";
+import { addDays, etParts } from "./time";
 
 export interface SchwabInstrument {
   assetType: string;
@@ -174,6 +175,8 @@ export interface SpreadGroup {
   marketValue: number;
   /** Entry time when the group is a single strategy entry (see splitByEntry). */
   enteredAt: number | null;
+  /** Book strategy the entry's structure matches (strategyRules.ts), when it is a single entry. */
+  strategy: string | null;
 }
 
 export function daysBetween(from: string, to: string): number {
@@ -210,6 +213,9 @@ export function groupSpreads(positions: Position[], today: string): SpreadGroup[
       plDay: sum(list.map((p) => p.plDay)),
       marketValue: sum(list.map((p) => p.marketValue)),
       enteredAt: first.enteredAt ?? null,
+      strategy: first.enteredAt
+        ? classifyBookEntry(list, etParts(first.enteredAt).date, etParts(first.enteredAt).minutesOfDay)
+        : null,
     });
   }
   return groups.sort(

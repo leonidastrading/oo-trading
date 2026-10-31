@@ -33,7 +33,7 @@ export interface EntryMarker {
   price: number;
   /** Days from entry to the (latest) expiration: 0 = same-day. */
   dte: number;
-  /** Book strategy inferred from the OO backtests (null if unsure). */
+  /** Book strategy from its structure (strategyRules.ts), else inferred from the OO backtests (null if unsure). */
   strategy: string | null;
 }
 
@@ -121,6 +121,9 @@ export async function GET() {
     const l = liveTrades.get(e.orderId);
     e.strategy = l ? inferStrategy(l, profiles) : null;
   }
+  // The Dip Add-On is a 1-lot copy of the $8 IC; when it comes in as its own order, name it.
+  const icOrders = entries.filter((e) => e.strategy === "$8 IC");
+  if (icOrders.length > 1) for (const e of icOrders) if (e.contracts === 1) e.strategy = "Dip";
   const etMin = (sec: number) => {
     const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "numeric", hourCycle: "h23" }).formatToParts(new Date(sec * 1000));
     return Number(p.find((x) => x.type === "hour")?.value) * 60 + Number(p.find((x) => x.type === "minute")?.value);

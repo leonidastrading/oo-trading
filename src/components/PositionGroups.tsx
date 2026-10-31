@@ -14,6 +14,7 @@ export function PositionGroups({ groups, today, empty }: { groups: SpreadGroup[]
           <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-3">
             <div className="min-w-0">
               <div className="font-semibold text-link">
+                {g.strategy ? `${g.strategy} · ` : ""}
                 {g.underlying} {g.label}
               </div>
               <div className="text-xs text-muted">
