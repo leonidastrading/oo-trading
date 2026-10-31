@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { ChangePassword } from "@/components/ChangePassword";
 import { Banner } from "@/components/StatusBar";
+import { StrategyNames } from "@/components/StrategyNames";
 import { UploadTrades } from "@/components/UploadTrades";
 import type { TokenStatus } from "@/lib/schwab/tokens";
 import { formatDateTimeET, formatTimeET } from "@/lib/time";
@@ -128,6 +129,11 @@ function SettingsInner() {
           </button>
         </div>
         <p className="text-xs text-muted">Read-only: this dashboard only reads accounts, positions, balances, quotes and transactions. It cannot place orders.</p>
+      </section>
+
+      <section className="card space-y-3 p-4">
+        <h2 className="text-lg font-bold text-accent">Strategy names</h2>
+        <StrategyNames />
       </section>
 
       <section className="card space-y-3 p-4">

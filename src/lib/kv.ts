@@ -183,4 +183,6 @@ export const KEYS = {
   ooVix: "oo:vix",
   annotations: "scorecard:annotations",
   eod: "eod:snapshots",
+  /** Display names the viewer chose for the book strategies (canonical name → display name). */
+  strategyNames: "settings:strategy-names",
 } as const;

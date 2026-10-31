@@ -4,8 +4,10 @@ import type { SpreadGroup } from "@/lib/spreads";
 import { expirationLabel } from "@/lib/spreads";
 import { formatTimeET } from "@/lib/time";
 import { money, num, plClass, strike } from "./format";
+import { displayName, useStrategyNames } from "./useStrategyNames";
 
 export function PositionGroups({ groups, today, empty }: { groups: SpreadGroup[]; today: string; empty?: string }) {
+  const names = useStrategyNames();
   if (!groups.length) return <p className="text-sm text-muted">{empty ?? "No positions."}</p>;
   return (
     <div className="space-y-3">
@@ -14,7 +16,7 @@ export function PositionGroups({ groups, today, empty }: { groups: SpreadGroup[]
           <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-3">
             <div className="min-w-0">
               <div className="font-semibold text-link">
-                {g.strategy ? `${g.strategy} · ` : ""}
+                {g.strategy ? `${displayName(names, g.strategy)} · ` : ""}
                 {g.underlying} {g.label}
               </div>
               <div className="text-xs text-muted">

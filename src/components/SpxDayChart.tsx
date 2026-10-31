@@ -19,6 +19,7 @@ import type { SpxDailyData } from "@/app/api/spx-daily/route";
 import type { SpxDayData } from "@/app/api/spx-day/route";
 import { money } from "./format";
 import { usePoll } from "./usePoll";
+import { useStrategyNames } from "./useStrategyNames";
 import { etOffsetMinutes, etParts, formatTimeET } from "@/lib/time";
 
 const ABBR: Record<string, string> = {
@@ -36,12 +37,18 @@ const abbr = (label: string) => label.split(" / ").map((l) => ABBR[l] ?? l).join
 const shortName = (label: string, dte: number | null | undefined) => (dte && dte > 0 ? `${dte}DTE` : abbr(label));
 /** Chart tag for a book strategy (see strategyRules.ts). */
 const STRATEGY_TAG: Record<string, string> = { "VIX-up PS": "VIX-up", "VIX>30 1DTE": "VIX>30" };
-const entryName = (e: { label: string; dte: number | null | undefined; strategy?: string | null }) =>
-  e.strategy ? (STRATEGY_TAG[e.strategy] ?? e.strategy) : shortName(e.label, e.dte);
+/** A strategy's tag: the viewer's rename (Settings), else the short default. */
+const tagOf = (s: string, names: Record<string, string>) => names[s] ?? STRATEGY_TAG[s] ?? s;
+const entryName = (e: { label: string; dte: number | null | undefined; strategy?: string | null }, names: Record<string, string>) =>
+  e.strategy ? tagOf(e.strategy, names) : shortName(e.label, e.dte);
 /** An exit goes by the strategy of the entry it closes. */
-const exitName = (x: { label: string; dte: number | null | undefined; closes?: string[] }, entries: { orderId: string; strategy?: string | null }[]) => {
+const exitName = (
+  x: { label: string; dte: number | null | undefined; closes?: string[] },
+  entries: { orderId: string; strategy?: string | null }[],
+  names: Record<string, string>,
+) => {
   const s = (x.closes ?? []).map((id) => entries.find((e) => e.orderId === id)?.strategy).find((v) => !!v);
-  return s ? (STRATEGY_TAG[s] ?? s) : shortName(x.label, x.dte);
+  return s ? tagOf(s, names) : shortName(x.label, x.dte);
 };
 /** Stop-out as decided by the server (losing close that isn't the strategy's scheduled exit); older payloads: loss before 3:45 PM. */
 const isStop = (x: { time: number; realized: number | null; stop?: boolean }) =>
@@ -114,6 +121,7 @@ export interface BestCloseLine {
 
 export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
   const { data, error } = usePoll<SpxDayData>("/api/spx-day");
+  const names = useStrategyNames();
   const box = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -244,11 +252,11 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       if (!g.tags.includes(tag)) g.tags.push(tag);
       groups.set(`${time}|${kind}`, g);
     };
-    for (const e of data.entries) add(e.time, e.price >= 0 ? "credit" : "debit", String(num.get(e.orderId)), entryName(e));
+    for (const e of data.entries) add(e.time, e.price >= 0 ? "credit" : "debit", String(num.get(e.orderId)), entryName(e, names));
     for (const x of data.exits ?? []) {
       const kind: Kind = isStop(x) ? "stop" : (x.realized ?? 0) < 0 ? "timeLoss" : "win";
       const ids = (x.closes ?? []).map((id) => num.get(id)).filter((n): n is number => n !== undefined);
-      add(x.time, kind, ids.length ? ids.join(",") : "?", exitName(x, data.entries));
+      add(x.time, kind, ids.length ? ids.join(",") : "?", exitName(x, data.entries, names));
     }
     const colors: Record<Kind, string> = {
       credit: css("--accent", "#e0b73b"),
@@ -464,7 +472,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, daily, tf, style, bestPrice, bestHigh, bestPnl]);
+  }, [data, daily, tf, style, bestPrice, bestHigh, bestPnl, names]);
 
   const dateLabel = data ? new Date(data.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) : "";
 
@@ -535,9 +543,9 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
                   <td className={e.price >= 0 ? "text-accent" : "text-spot"}>{i + 1}</td>
                   <td className="whitespace-nowrap">{formatTimeET(e.time * 1000).slice(0, 5)}</td>
                   <td>
-                    <span className="md:hidden">{entryName(e)}</span>
+                    <span className="md:hidden">{entryName(e, names)}</span>
                     <span className="hidden md:inline">
-                      {e.strategy ? `${entryName(e)} · ` : ""}
+                      {e.strategy ? `${entryName(e, names)} · ` : ""}
                       {e.label}
                       {e.dte > 0 ? ` · ${e.dte}DTE` : ""}
                     </span>
@@ -573,9 +581,9 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
                     {formatTimeET(x.time * 1000).slice(0, 5)}
                   </td>
                   <td>
-                    <span className="md:hidden">{exitName(x, data.entries)}</span>
+                    <span className="md:hidden">{exitName(x, data.entries, names)}</span>
                     <span className="hidden md:inline">
-                      {exitName(x, data.entries) !== shortName(x.label, x.dte) ? `${exitName(x, data.entries)} · ` : ""}
+                      {exitName(x, data.entries, names) !== shortName(x.label, x.dte) ? `${exitName(x, data.entries, names)} · ` : ""}
                       {x.label}
                     </span>
                   </td>

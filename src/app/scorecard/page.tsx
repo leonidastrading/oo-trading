@@ -1,5 +1,6 @@
 "use client";
 
+import { displayName, useStrategyNames } from "@/components/useStrategyNames";
 import { Fragment, useMemo, useState } from "react";
 import { money, num } from "@/components/format";
 import { Banner, StatusBar, type StatusMeta } from "@/components/StatusBar";
@@ -84,11 +85,12 @@ function ManualControl({
   onMark: (strategy: string) => void;
   onUnmark: () => void;
 }) {
+  const names = useStrategyNames();
   const [choice, setChoice] = useState(STRATEGIES.includes(trade.strategy) ? trade.strategy : STRATEGIES[0]);
   if (trade.manual) {
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-link">Manual entry for {trade.strategy}</span>
+        <span className="text-link">Manual entry for {displayName(names, trade.strategy)}</span>
         <span className="text-muted">matched to that day&apos;s backtest trade regardless of time; excluded from slippage stats.</span>
         <button disabled={busy} onClick={onUnmark} className="rounded border border-border px-2 py-0.5 text-ink hover:bg-surface disabled:opacity-50">
           Remove manual mark
@@ -101,7 +103,9 @@ function ManualControl({
       <span className="text-ink-2">Entered by hand?</span>
       <select value={choice} onChange={(e) => setChoice(e.target.value)} className="rounded border border-border bg-surface px-1 py-0.5 text-ink">
         {STRATEGIES.map((s) => (
-          <option key={s}>{s}</option>
+          <option key={s} value={s}>
+            {displayName(names, s)}
+          </option>
         ))}
       </select>
       <button disabled={busy} onClick={() => onMark(choice)} className="rounded border border-border px-2 py-0.5 text-ink hover:bg-surface disabled:opacity-50">
@@ -113,6 +117,7 @@ function ManualControl({
 
 export default function ScorecardPage() {
   const { data, error, loading, refresh } = usePoll<Data>("/api/scorecard");
+  const names = useStrategyNames();
   const [periodKey, setPeriodKey] = useState<"mtd" | "inception">("mtd");
   const [strategy, setStrategy] = useState("All");
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -289,7 +294,7 @@ export default function ScorecardPage() {
                   <tr key={a.name} className={a.name === "Book" ? "font-semibold" : undefined}>
                     <td>
                       <button className={a.name === "Book" ? "" : "text-link underline-offset-2 hover:underline"} onClick={() => setStrategy(a.name === "Book" ? "All" : a.name)}>
-                        {a.name}
+                        {a.name === "Book" ? a.name : displayName(names, a.name)}
                       </button>
                     </td>
                     <td>
@@ -346,7 +351,9 @@ export default function ScorecardPage() {
               Strategy{" "}
               <select value={strategy} onChange={(e) => setStrategy(e.target.value)} className="ml-1 rounded-lg border border-border bg-surface-2 px-2 py-1 text-ink">
                 {strategyNames.map((s) => (
-                  <option key={s}>{s}</option>
+                  <option key={s} value={s}>
+                    {s === "All" ? s : displayName(names, s)}
+                  </option>
                 ))}
               </select>
             </label>
@@ -379,7 +386,7 @@ export default function ScorecardPage() {
                         {t.date} <span className="text-muted">{t.entryTime.slice(0, 5)}</span>
                       </td>
                       <td title={t.rawStrategy ?? undefined}>
-                        {t.strategy}
+                        {displayName(names, t.strategy)}
                         {/dip/i.test(t.rawStrategy ?? "") && <span className="text-xs text-muted"> · Dip add-on</span>}
                         {t.strategyInferred && <span className="text-xs text-muted"> (inferred)</span>}
                       </td>
