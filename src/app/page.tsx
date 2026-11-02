@@ -14,6 +14,7 @@ import { Tile, toneOf } from "@/components/Tile";
 import { usePoll } from "@/components/usePoll";
 import { ExpiryChart } from "@/components/ExpiryChart";
 import type { LiveData } from "@/lib/views";
+import type { SpreadGroup } from "@/lib/spreads";
 
 /** The best-close price as the panel shows it: the plateau edge when the max runs to a side, else the peak. */
 function bestCloseLine(e: ExpiryData | undefined): BestCloseLine | null {
@@ -24,6 +25,20 @@ function bestCloseLine(e: ExpiryData | undefined): BestCloseLine | null {
   const high = !b.atEdge && b.range && b.edge === null && b.range.high > b.range.low ? b.range.high : undefined;
   return { price, pnl: b.pnl, high };
 }
+
+/**
+ * Open P/L as a % of what the open entries were put on for: the credit received (so 100% = keep it all)
+ * or the debit paid. Each entry's net premium counts at its size.
+ */
+function openPct(open: number | null | undefined, groups: SpreadGroup[] | undefined): number | null {
+  if (open === null || open === undefined || !groups?.length) return null;
+  const basis = groups.reduce(
+    (s, g) => s + Math.abs(g.positions.reduce((t, p) => t + p.qty * p.avgPrice * (p.assetType === "OPTION" ? 100 : 1), 0)),
+    0,
+  );
+  return basis > 0 ? (open / basis) * 100 : null;
+}
+const signedPct = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`;
 
 export default function LivePage() {
   const { data, error, loading, refresh } = usePoll<LiveData>("/api/live");
@@ -40,7 +55,14 @@ export default function LivePage() {
     <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
       <Tile
         label="Open P/L"
-        value={money(data?.pl?.open, { sign: true })}
+        value={
+          <>
+            {money(data?.pl?.open, { sign: true })}
+            {openPct(data?.pl?.open, data?.groups) !== null && (
+              <span className="ml-1.5 text-base font-semibold md:text-lg">({signedPct(openPct(data?.pl?.open, data?.groups)!)})</span>
+            )}
+          </>
+        }
         tone={toneOf(data?.pl?.open)}
         sub={data?.pl ? openPositionsLabel(data.pl.entries, data.groups) : undefined}
       />
