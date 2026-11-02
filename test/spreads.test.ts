@@ -111,3 +111,27 @@ describe("splitByEntry (Schwab nets shared strikes; split them back per order)",
     expect(g[0].plOpen).toBeCloseTo(positions.reduce((s, p) => s + p.plOpen, 0), 6);
   });
 });
+
+describe("splitByEntry day P/L when a strike is shared with an older entry", () => {
+  // 2026-11-02: VIX-up PS (Fri) is long 5× 7460P at 5.80; the 5d IC (today 13:30) buys 13× 7460P at 0.07.
+  // Mark 0.08. Schwab nets 18 and reports one day P/L for the symbol (Fri close 3.60 → 0.08 on the old 5).
+  const sym = "SPXW  261102P07460000";
+  const p = normalizePosition(
+    opt(sym, 18, (5 * 5.8 + 13 * 0.07) / 18, 18 * 0.08 * 100, { currentDayProfitLoss: 5 * (0.08 - 3.6) * 100 + 13 * (0.08 - 0.07) * 100 }),
+  );
+  const fri = Date.parse("2026-10-30T19:51:26Z");
+  const mon = Date.parse("2026-11-02T18:30:03Z");
+  const lots = new Map<string, EntryLot[]>([[sym, [{ qty: 5, price: 5.8, orderId: "vix", time: fri }, { qty: 13, price: 0.07, orderId: "ic", time: mon }]]]);
+
+  it("gives today's entry its own P/L as day P/L, the rest to the older entry", () => {
+    const [ic, vix] = [...splitByEntry([p], lots, "2026-11-02")].sort((a, b) => (a.entryKey ?? "").localeCompare(b.entryKey ?? ""));
+    expect(ic.entryKey).toBe("order:ic");
+    expect(ic.plDay).toBeCloseTo(13, 6); // 13 × (0.08 − 0.07) × 100
+    expect(vix.plDay).toBeCloseTo(5 * (0.08 - 3.6) * 100, 6);
+  });
+
+  it("still splits by quantity when today isn't given", () => {
+    const parts = splitByEntry([p], lots);
+    expect(parts.reduce((s, x) => s + x.plDay, 0)).toBeCloseTo(p.plDay, 6);
+  });
+});

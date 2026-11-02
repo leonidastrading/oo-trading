@@ -221,7 +221,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
       : null,
     spx,
     pl,
-    groups: groupSpreads(splitByEntry(expired.open, openLots(fills.data ?? [])), today),
+    groups: groupSpreads(splitByEntry(expired.open, openLots(fills.data ?? []), today), today),
     expiring,
     closedCurve: closedCurve(
       [...groupClosesByOrder(closes), ...expired.orders],
@@ -293,6 +293,6 @@ export async function getTodayData(force = false): Promise<TodayData> {
     entries: countOpenEntries(allFills, positions),
     dayPl: b && b.netLiq !== null && b.startNetLiq !== null ? b.netLiq - b.startNetLiq : null,
     total: Math.round((realized + openPl) * 100) / 100,
-    groups: groupSpreads(splitByEntry(positions, openLots(allFills)), todayET(now)),
+    groups: groupSpreads(splitByEntry(positions, openLots(allFills), todayET(now)), todayET(now)),
   };
 }

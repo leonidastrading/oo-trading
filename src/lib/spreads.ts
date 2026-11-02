@@ -57,8 +57,11 @@ export interface EntryLot {
  * Split Schwab's netted positions back into strategy entries using the open lots from
  * fills: each opening order becomes its own set of legs at its own fill prices. Quantity
  * not covered by lots (opened before the lookback window) stays at Schwab's average price.
+ *
+ * Day P/L: with `today` (ET date), an entry opened today gets its own open P/L as its day P/L, and Schwab's
+ * remaining day P/L goes to the older entries sharing the symbol. Without it, day P/L is split by quantity.
  */
-export function splitByEntry(positions: Position[], lots: Map<string, EntryLot[]>): Position[] {
+export function splitByEntry(positions: Position[], lots: Map<string, EntryLot[]>, today?: string): Position[] {
   const out: Position[] = [];
   for (const p of positions) {
     if (p.qty === 0) continue;
@@ -79,12 +82,24 @@ export function splitByEntry(positions: Position[], lots: Map<string, EntryLot[]
       byOrder.set(lot.orderId, o);
     }
     const sign = Math.sign(p.qty);
+    const openedToday = (time: number) => today !== undefined && etParts(time).date === today;
+    const lotPl = (o: { qty: number; cost: number }) => sign * o.qty * (p.mark - o.cost / o.qty) * mult;
+    // Day P/L left for entries opened before today, shared by their quantity.
+    let olderQty = left;
+    let olderDayPl = p.plDay;
+    for (const o of byOrder.values()) {
+      if (openedToday(o.time)) olderDayPl -= lotPl(o);
+      else olderQty += o.qty;
+    }
+    const olderShare = (qty: number) => (olderQty > 0 ? (olderDayPl * Math.abs(qty)) / olderQty : 0);
     const share = (qty: number) => Math.abs(qty) / Math.abs(p.qty);
+    const dayPl = (qty: number, plOpen: number, time: number | null) =>
+      today === undefined ? p.plDay * share(qty) : time !== null && openedToday(time) ? plOpen : olderShare(qty);
     let explainedPl = 0;
     for (const [orderId, o] of byOrder) {
       const qty = sign * o.qty;
       const avg = o.cost / o.qty;
-      const plOpen = qty * (p.mark - avg) * mult;
+      const plOpen = lotPl(o);
       explainedPl += plOpen;
       out.push({
         ...p,
@@ -92,20 +107,21 @@ export function splitByEntry(positions: Position[], lots: Map<string, EntryLot[]
         avgPrice: avg,
         marketValue: qty * p.mark * mult,
         plOpen,
-        plDay: p.plDay * share(qty),
+        plDay: dayPl(qty, plOpen, o.time),
         entryKey: `order:${orderId}`,
         enteredAt: o.time,
       });
     }
     if (left > 0) {
       const qty = sign * left;
+      // Whatever Schwab's open P/L doesn't attribute to the entries above.
+      const plOpen = byOrder.size ? p.plOpen - explainedPl : p.plOpen;
       out.push({
         ...p,
         qty,
         marketValue: qty * p.mark * mult,
-        // Whatever Schwab's open P/L doesn't attribute to the entries above.
-        plOpen: byOrder.size ? p.plOpen - explainedPl : p.plOpen,
-        plDay: p.plDay * share(qty),
+        plOpen,
+        plDay: dayPl(qty, plOpen, null),
         entryKey: olderKey,
         enteredAt: null,
       });
