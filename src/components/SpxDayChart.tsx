@@ -64,6 +64,14 @@ const TIMEFRAMES = [
 ] as const;
 type Timeframe = (typeof TIMEFRAMES)[number]["key"];
 type Style = "bars" | "candles" | "line";
+/** Daily-close SMAs drawn as faint lines (the 5/8/10-day ones match the strategies' SMA filters). */
+const SMAS = [
+  { n: 4, color: "rgba(224, 183, 59, 0.45)" },
+  { n: 5, color: "rgba(57, 135, 229, 0.5)" },
+  { n: 8, color: "rgba(176, 132, 232, 0.5)" },
+  { n: 10, color: "rgba(200, 200, 195, 0.4)" },
+];
+
 const STYLES: { key: Style; icon: string; title: string }[] = [
   { key: "bars", icon: "┤├", title: "Bars" },
   { key: "candles", icon: "▮▯", title: "Candles" },
@@ -128,6 +136,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
   const [tf, setTf] = useState<Timeframe>("1m");
   const [style, setStyle] = useState<Style>("candles");
   const [daily, setDaily] = useState<SpxDailyData | null>(null);
+  const [showSma, setShowSma] = useState(true);
   // Keep the viewer's zoom/scroll across data refreshes (reset when the timeframe changes).
   const viewRef = useRef<{ tf: Timeframe; range: { from: number; to: number } | null } | null>(null);
   const bestPrice = best && best.pnl > 0 ? best.price : null;
@@ -139,16 +148,18 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     void Promise.resolve().then(() => {
       setTf(stored("spxChart.tf", TIMEFRAMES.map((t) => t.key), "1m"));
       setStyle(stored("spxChart.style", STYLES.map((t) => t.key), "candles"));
+      setShowSma(stored("spxChart.sma", ["on", "off"], "on") === "on");
     });
   }, []);
 
   useEffect(() => {
-    if (tf !== "D" || daily) return;
+    // Daily closes feed the daily view and the SMA lines.
+    if ((tf !== "D" && !showSma) || daily) return;
     fetch("/api/spx-daily", { cache: "no-store" })
       .then((r) => r.json())
       .then((d: SpxDailyData) => setDaily(d))
       .catch(() => setDaily({ bars: [], error: "Couldn't load daily bars" }));
-  }, [tf, daily]);
+  }, [tf, daily, showSma]);
 
   useEffect(() => {
     const isDaily = tf === "D";
@@ -207,6 +218,33 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
     } else {
       series = chart.addSeries(CandlestickSeries, { upColor: gain, downColor: loss, borderVisible: false, wickUpColor: gain, wickDownColor: loss });
       series.setData([...bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })), ...whitespace]);
+    }
+    // Faint SMA lines of daily closes (the 4/5/8/10-day SMAs the strategies' filters use). Intraday each point is
+    // the SMA as it stands at that bar: the prior N−1 daily closes plus the bar's own price as today's close.
+    if (showSma && daily?.bars.length) {
+      const prior = daily.bars.filter((b) => b.time < dayStart).map((b) => b.close);
+      for (const { n, color } of SMAS) {
+        const pts: { time: UTCTimestamp; value: number }[] = [];
+        if (isDaily) {
+          for (let i = n - 1; i < bars.length; i++) {
+            pts.push({ time: bars[i].time as UTCTimestamp, value: bars.slice(i - n + 1, i + 1).reduce((a, b) => a + b.close, 0) / n });
+          }
+        } else if (prior.length >= n - 1) {
+          const base = prior.slice(-(n - 1)).reduce((a, b) => a + b, 0);
+          for (const b of bars) pts.push({ time: b.time as UTCTimestamp, value: (base + b.close) / n });
+        }
+        if (!pts.length) continue;
+        const line = chart.addSeries(LineSeries, {
+          color,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+          // Don't let the SMAs stretch the price scale.
+          autoscaleInfoProvider: () => null,
+        });
+        line.setData(pts);
+      }
     }
     // Intraday price range: the bars plus label headroom (a little above, more below for entry labels), stretched
     // to keep the best-close line(s) on screen.
@@ -472,7 +510,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, daily, tf, style, bestPrice, bestHigh, bestPnl, names]);
+  }, [data, daily, tf, style, bestPrice, bestHigh, bestPnl, names, showSma]);
 
   const dateLabel = data ? new Date(data.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) : "";
 
@@ -515,6 +553,27 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
             {st.icon}
           </button>
         ))}
+        <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
+        <button
+          onClick={() => {
+            setShowSma(!showSma);
+            store("spxChart.sma", showSma ? "off" : "on");
+          }}
+          aria-pressed={showSma}
+          title="Show or hide the 4 / 5 / 8 / 10-day SMA lines"
+          className={`shrink-0 rounded-md px-2 py-1 ${showSma ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"}`}
+        >
+          SMA
+        </button>
+        {showSma && (
+          <span className="flex shrink-0 gap-1.5 pl-1 text-xs" aria-label="SMA colors">
+            {SMAS.map((m) => (
+              <span key={m.n} style={{ color: m.color }}>
+                {m.n}
+              </span>
+            ))}
+          </span>
+        )}
       </div>
       {(error || (data?.meta.errors.length ?? 0) > 0) && <p className="text-sm text-loss">{error ?? data?.meta.errors.join(" · ")}</p>}
       {data && !data.bars.length ? (
