@@ -229,9 +229,12 @@ export function groupSpreads(positions: Position[], today: string): SpreadGroup[
       plDay: sum(list.map((p) => p.plDay)),
       marketValue: sum(list.map((p) => p.marketValue)),
       enteredAt: first.enteredAt ?? null,
+      // Entry time from the fills; legs that expire today and aren't in the fills yet must have been opened today.
       strategy: first.enteredAt
         ? classifyBookEntry(list, etParts(first.enteredAt).date, etParts(first.enteredAt).minutesOfDay)
-        : null,
+        : first.expiration === today
+          ? classifyBookEntry(list, today)
+          : null,
     });
   }
   return groups.sort(
