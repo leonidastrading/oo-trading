@@ -59,7 +59,7 @@ export default function LivePage() {
           <>
             {money(data?.pl?.open, { sign: true })}
             {openPct(data?.pl?.open, data?.groups) !== null && (
-              <span className="ml-1.5 text-base font-semibold md:text-lg">({signedPct(openPct(data?.pl?.open, data?.groups)!)})</span>
+              <span className="ml-1.5 inline-block text-sm font-semibold md:text-lg">({signedPct(openPct(data?.pl?.open, data?.groups)!)})</span>
             )}
           </>
         }
