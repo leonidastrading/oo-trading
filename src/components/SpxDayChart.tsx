@@ -240,8 +240,6 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
-          // Don't let the SMAs stretch the price scale.
-          autoscaleInfoProvider: () => null,
         });
         line.setData(pts);
       }
