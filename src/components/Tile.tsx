@@ -4,7 +4,7 @@ export function Tile({
   sub,
   tone,
 }: {
-  label: string;
+  label: React.ReactNode;
   value: React.ReactNode;
   sub?: React.ReactNode;
   tone?: "gain" | "loss" | null;

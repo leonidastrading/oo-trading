@@ -54,15 +54,15 @@ export default function LivePage() {
   const tilesPanel = (
     <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
       <Tile
-        label="Open P/L"
-        value={
+        label={
           <>
-            {money(data?.pl?.open, { sign: true })}
+            Open P/L
             {openPct(data?.pl?.open, data?.groups) !== null && (
-              <span className="ml-1.5 inline-block text-sm font-semibold md:text-lg">({signedPct(openPct(data?.pl?.open, data?.groups)!)})</span>
+              <span className={`ml-1.5 font-semibold ${plClass(data?.pl?.open ?? 0)}`}>({signedPct(openPct(data?.pl?.open, data?.groups)!)})</span>
             )}
           </>
         }
+        value={money(data?.pl?.open, { sign: true })}
         tone={toneOf(data?.pl?.open)}
         sub={data?.pl ? openPositionsLabel(data.pl.entries, data.groups) : undefined}
       />
