@@ -146,3 +146,33 @@ describe("countOpenEntries", () => {
     expect(countOpenEntries(normalizeTransactions(ic, 0.88), [...book.slice(3), ...older])).toBe(2);
   });
 });
+
+describe("a multi-leg close takes the strike back from its own entry, not the oldest lot", () => {
+  // 2026-11-02: Friday's VIX-up spread is long 5× 7460P; today's 5d IC buys 13× 7460P, and its 14:21 stop
+  // sells those 13 with the IC's other legs. The VIX-up's 5 must stay open.
+  const S = (pc: "P" | "C", k: number) => `SPXW  261102${pc}0${k}000`;
+  const fills = normalizeTransactions([
+    tx(1, "2026-10-30T19:51:26+0000", 100, S("P", 7510), -5, 12.33, "OPENING"),
+    tx(2, "2026-10-30T19:51:26+0000", 100, S("P", 7490), -5, 9.12, "OPENING"),
+    tx(3, "2026-10-30T19:51:26+0000", 100, S("P", 7460), 5, 5.8, "OPENING"),
+    tx(4, "2026-10-30T19:51:26+0000", 100, S("P", 7440), 5, 4.4, "OPENING"),
+    tx(5, "2026-11-02T18:30:03+0000", 200, S("P", 7560), -13, 0.67, "OPENING"),
+    tx(6, "2026-11-02T18:30:03+0000", 200, S("P", 7460), 13, 0.07, "OPENING"),
+    tx(7, "2026-11-02T18:30:03+0000", 200, S("C", 7650), -13, 0.52, "OPENING"),
+    tx(8, "2026-11-02T18:30:03+0000", 200, S("C", 7750), 13, 0.07, "OPENING"),
+    tx(9, "2026-11-02T19:21:00+0000", 300, S("P", 7560), 13, 6, "CLOSING"),
+    tx(10, "2026-11-02T19:21:00+0000", 300, S("P", 7460), -13, 0.3, "CLOSING"),
+    tx(11, "2026-11-02T19:21:00+0000", 300, S("C", 7650), 13, 0.05, "CLOSING"),
+    tx(12, "2026-11-02T19:21:00+0000", 300, S("C", 7750), -13, 0.01, "CLOSING"),
+  ]);
+
+  it("leaves the VIX-up's 7460 puts open", async () => {
+    const { openLots } = await import("@/lib/realized");
+    expect(openLots(fills).get(S("P", 7460))?.map((l) => [l.orderId, l.qty])).toEqual([["100", 5]]);
+  });
+
+  it("books the IC's own 7460 basis on the close", () => {
+    const leg = realizedOn(fills, "2026-11-02").find((c) => c.fill.symbol === S("P", 7460))!;
+    expect(leg.realized).toBeCloseTo((0.3 - 0.07) * 1300 - 0.66 * 26, 2);
+  });
+});

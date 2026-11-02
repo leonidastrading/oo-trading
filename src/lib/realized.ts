@@ -156,6 +156,14 @@ function runFifo(
   onClose?: (f: Fill, matched: number, realized: number, unmatched: number) => void,
 ): Map<string, Lot[]> {
   const lots = new Map<string, Lot[]>();
+  // Symbols traded by each order, so a closing order can find the entry it belongs to.
+  const orderSymbols = new Map<string, Set<string>>();
+  for (const f of fills) orderSymbols.set(f.orderId, (orderSymbols.get(f.orderId) ?? new Set()).add(f.symbol));
+  const covers = (openId: string, closeId: string) => {
+    const open = orderSymbols.get(openId);
+    const close = orderSymbols.get(closeId);
+    return !!open && !!close && close.size > 1 && [...close].every((s) => open.has(s));
+  };
   for (const f of [...fills].sort((a, b) => a.time - b.time)) {
     const queue = lots.get(f.symbol) ?? [];
     lots.set(f.symbol, queue);
@@ -164,6 +172,15 @@ function runFifo(
     if (!closing) {
       queue.push({ qty: f.qty, cashPerUnit: f.cash / Math.abs(f.qty), orderId: f.orderId, price: f.price, time: f.time });
       continue;
+    }
+    // A multi-leg close (e.g. an iron condor's stop) closes the entry whose opening order had all of its
+    // legs first, even when an older entry shares the strike; otherwise plain FIFO.
+    if (queue.length > 1 && !f.settlement) {
+      const mine = queue.filter((l) => covers(l.orderId, f.orderId));
+      if (mine.length && mine.length < queue.length) {
+        const rest = queue.filter((l) => !mine.includes(l));
+        queue.splice(0, queue.length, ...mine, ...rest);
+      }
     }
     let remaining = Math.abs(f.qty);
     const closeCashPerUnit = f.cash / Math.abs(f.qty);
