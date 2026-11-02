@@ -1,5 +1,5 @@
 // Normalize Schwab positions and group them into spreads by underlying + expiration.
-import { MULTIPLIER, parseOptionSymbol, rootToUnderlying, type OptionLeg, type PutCall } from "./options";
+import { expiryPnl, MULTIPLIER, parseOptionSymbol, rootToUnderlying, type OptionLeg, type PutCall } from "./options";
 import { classifyBookEntry } from "./strategyRules";
 import { addDays, etParts } from "./time";
 
@@ -311,4 +311,17 @@ export function expirationLabel(expiration: string, today: string): string {
 
 function sum(xs: number[]): number {
   return xs.reduce((a, b) => a + b, 0);
+}
+
+/**
+ * Best P/L the group can make at expiration (same-expiration options; net of its entry prices, before
+ * closing fees): the payoff is piecewise linear, so its maximum is at a strike or at 0. Null when there are
+ * no option legs; Infinity when it keeps rising above the top strike (net long calls).
+ */
+export function maxExpiryPl(positions: Position[]): number | null {
+  const legs = positions.map(toLeg).filter((l): l is OptionLeg => l !== null);
+  if (!legs.length || new Set(legs.map((l) => l.expiration)).size > 1) return null;
+  const top = Math.max(...legs.map((l) => l.strike));
+  if (expiryPnl(legs, top + 1) > expiryPnl(legs, top) + 1e-9) return Infinity;
+  return Math.max(...[0, ...legs.map((l) => l.strike)].map((s) => expiryPnl(legs, s)));
 }

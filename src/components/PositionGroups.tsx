@@ -1,7 +1,7 @@
 "use client";
 
 import type { SpreadGroup } from "@/lib/spreads";
-import { expirationLabel } from "@/lib/spreads";
+import { expirationLabel, maxExpiryPl } from "@/lib/spreads";
 import { formatTimeET } from "@/lib/time";
 import { money, num, plClass, strike } from "./format";
 import { displayName, useStrategyNames } from "./useStrategyNames";
@@ -34,6 +34,14 @@ export function PositionGroups({ groups, today, empty }: { groups: SpreadGroup[]
                 <div className="text-[11px] uppercase tracking-wide text-muted">P/L day</div>
                 <div className={`num font-semibold ${plClass(g.plDay)}`}>{money(g.plDay, { sign: true })}</div>
               </div>
+              {maxExpiryPl(g.positions) !== null && (
+                <div title="Best P/L at expiration, from the entry prices (before closing fees)">
+                  <div className="text-[11px] uppercase tracking-wide text-muted">Max P/L</div>
+                  <div className={`num font-semibold ${plClass(maxExpiryPl(g.positions)!)}`}>
+                    {maxExpiryPl(g.positions) === Infinity ? "Unlimited" : money(maxExpiryPl(g.positions), { sign: true })}
+                  </div>
+                </div>
+              )}
             </div>
           </header>
           <div className="overflow-x-auto">

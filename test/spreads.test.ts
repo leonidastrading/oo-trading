@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifySpread, groupSpreads, normalizePosition, splitByEntry, toLeg, type EntryLot, type SchwabPosition } from "@/lib/spreads";
+import { classifySpread, groupSpreads, maxExpiryPl, normalizePosition, splitByEntry, toLeg, type EntryLot, type SchwabPosition } from "@/lib/spreads";
 
 const opt = (symbol: string, qty: number, avg: number, mv: number, extra: Partial<SchwabPosition> = {}): SchwabPosition => ({
   longQuantity: qty > 0 ? qty : 0,
@@ -133,5 +133,18 @@ describe("splitByEntry day P/L when a strike is shared with an older entry", () 
   it("still splits by quantity when today isn't given", () => {
     const parts = splitByEntry([p], lots);
     expect(parts.reduce((s, x) => s + x.plDay, 0)).toBeCloseTo(p.plDay, 6);
+  });
+});
+
+describe("maxExpiryPl", () => {
+  const leg = (symbol: string, qty: number, avg: number) => normalizePosition(opt(symbol, qty, avg, 0));
+  it("is the net credit for a credit spread and an iron condor", () => {
+    // 2DTE put spread from the screenshot: −19 7385P @8.04, +19 7310P @3.64 → 4.40 × 19 × 100
+    expect(maxExpiryPl([leg("SPXW  261104P07385000", -19, 8.04), leg("SPXW  261104P07310000", 19, 3.64)])).toBeCloseTo(8360, 2);
+    const ic = [leg("SPXW  261102P07425000", 13, 0.08), leg("SPXW  261102P07525000", -13, 0.7), leg("SPXW  261102C07620000", -13, 0.62), leg("SPXW  261102C07720000", 13, 0.09)];
+    expect(maxExpiryPl(ic)).toBeCloseTo((0.7 + 0.62 - 0.08 - 0.09) * 1300, 2);
+  });
+  it("is unlimited for net long calls", () => {
+    expect(maxExpiryPl([leg("SPXW  261102C07600000", 1, 5), leg("SPXW  261102P07600000", 1, 5)])).toBe(Infinity);
   });
 });
