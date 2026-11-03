@@ -35,13 +35,16 @@ export function PositionGroups({ groups, today, empty }: { groups: SpreadGroup[]
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-muted">P/L open</div>
                 <div className={`num font-semibold ${plClass(g.plOpen)}`}>{money(g.plOpen, { sign: true })}</div>
-                {premiumPct(g) !== null && (
-                  <div className={`num text-xs font-semibold ${plClass(g.plOpen)}`} title="Open P/L as a % of the entry's net premium">
+              </div>
+              {premiumPct(g) !== null && (
+                <div title="Open P/L as a % of the entry's net premium">
+                  <div className="text-[11px] uppercase tracking-wide text-muted">Open %</div>
+                  <div className={`num font-semibold ${plClass(g.plOpen)}`}>
                     {premiumPct(g)! >= 0 ? "+" : "−"}
                     {Math.abs(premiumPct(g)!).toFixed(1)}%
                   </div>
-                )}
-              </div>
+                </div>
+              )}
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-muted">P/L day</div>
                 <div className={`num font-semibold ${plClass(g.plDay)}`}>{money(g.plDay, { sign: true })}</div>
