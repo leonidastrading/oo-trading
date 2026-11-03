@@ -1,6 +1,6 @@
 import { requireKv } from "@/lib/apiGuard";
 import { NextResponse } from "next/server";
-import { cachedFills, cachedMinuteBars, type Bar } from "@/lib/schwab/data";
+import { cachedFills, cachedMinuteBars, cachedQuotes, type Bar } from "@/lib/schwab/data";
 import { uniqueEntries } from "@/lib/allocSim";
 import { cached } from "@/lib/cache";
 import { KEYS, kv } from "@/lib/kv";
@@ -19,7 +19,7 @@ import {
   type SerializedProfiles,
 } from "@/lib/scorecard";
 import { classifySpread, daysBetween } from "@/lib/spreads";
-import { closedMaxAge, lastSessionDate, marketSession } from "@/lib/time";
+import { closedMaxAge, etMidnightUtc, lastSessionDate, marketSession } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +63,7 @@ export interface SpxDayData {
 }
 
 const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+const withClosingBar = (bars: Bar[], close: Bar | null) => (close ? [...bars, close] : bars);
 
 export async function GET() {
   const missing = requireKv();
@@ -75,6 +76,18 @@ export async function GET() {
     cachedMinuteBars("$SPX", date, live ? 60_000 : closedMaxAge(now, 6 * 3600_000)),
     cachedFills(date, live ? 60_000 : closedMaxAge(now, 30 * 60_000)),
   ]);
+
+  // Schwab's minute history ends with the 15:59 bar; after the bell, add the 16:00 close (the index's
+  // official close, from the quote) as its own bar.
+  const bellMs = etMidnightUtc(date).getTime() + 16 * 3600_000;
+  let closeBar: Bar | null = null;
+  if (now > bellMs + 60_000 && (bars.data?.at(-1)?.time ?? Infinity) * 1000 < bellMs) {
+    const q = (await cachedQuotes(["$SPX"], live ? 15_000 : closedMaxAge(now, 30 * 60_000))).data?.["$SPX"];
+    if (q && typeof q.last === "number" && (q.time ?? 0) >= etMidnightUtc(date).getTime()) {
+      const prev = bars.data!.at(-1)!.close;
+      closeBar = { time: bellMs / 1000, open: prev, high: Math.max(prev, q.last), low: Math.min(prev, q.last), close: q.last };
+    }
+  }
 
   const byOrder = new Map<string, NonNullable<typeof fills.data>>();
   for (const f of fills.data ?? []) {
@@ -187,7 +200,7 @@ export async function GET() {
   const body: SpxDayData = {
     meta: { pollMs: live ? 60_000 : null, errors: [bars.error, fills.error].filter((e): e is string => !!e) },
     date,
-    bars: bars.data ?? [],
+    bars: withClosingBar(bars.data ?? [], closeBar),
     entries,
     exits,
   };
