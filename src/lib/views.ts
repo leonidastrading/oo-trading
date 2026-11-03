@@ -7,7 +7,7 @@ import { countOpenEntries, feesOn, groupClosesByOrder, openLots, realizedOn, typ
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
 import { tokenStatus, type TokenStatus } from "./schwab/tokens";
 import { classifySpread, groupSpreads, splitByEntry, toLeg, type Position, type SpreadGroup } from "./spreads";
-import { etMidnightUtc, etParts, lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
+import { closedMaxAge, etMidnightUtc, etParts, lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
 
 export interface Meta {
   now: number;
@@ -140,8 +140,8 @@ export function settlementSymbols(positions: Position[], sessionDate: string, fi
   ];
 }
 
-/** Max cache age: just under the poll interval while open; when closed, only refetch if empty. */
-const maxAge = (ms: number) => (Number.isFinite(ms) ? Math.max(ms - 2000, 5000) : Infinity);
+/** Max cache age: just under the poll interval while open; when closed, see closedMaxAge. */
+const maxAge = (ms: number, now = Date.now()) => (Number.isFinite(ms) ? Math.max(ms - 2000, 5000) : closedMaxAge(now));
 
 export async function getLiveData(force = false): Promise<LiveData> {
   const { now, session, policy, allowForce, manualRefreshBlocked, token } = await baseMeta(force);

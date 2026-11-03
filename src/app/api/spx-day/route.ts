@@ -19,7 +19,7 @@ import {
   type SerializedProfiles,
 } from "@/lib/scorecard";
 import { classifySpread, daysBetween } from "@/lib/spreads";
-import { lastSessionDate, marketSession } from "@/lib/time";
+import { closedMaxAge, lastSessionDate, marketSession } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -72,8 +72,8 @@ export async function GET() {
   const live = phase === "open" || phase === "final";
   const date = lastSessionDate(now);
   const [bars, fills] = await Promise.all([
-    cachedMinuteBars("$SPX", date, live ? 60_000 : 6 * 3600_000),
-    cachedFills(date, live ? 60_000 : 30 * 60_000),
+    cachedMinuteBars("$SPX", date, live ? 60_000 : closedMaxAge(now, 6 * 3600_000)),
+    cachedFills(date, live ? 60_000 : closedMaxAge(now, 30 * 60_000)),
   ]);
 
   const byOrder = new Map<string, NonNullable<typeof fills.data>>();

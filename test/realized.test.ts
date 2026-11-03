@@ -176,3 +176,15 @@ describe("a multi-leg close takes the strike back from its own entry, not the ol
     expect(leg.realized).toBeCloseTo((0.3 - 0.07) * 1300 - 0.66 * 26, 2);
   });
 });
+
+describe("closedMaxAge", () => {
+  it("refetches data saved before the close once the session has settled", async () => {
+    const { closedMaxAge } = await import("@/lib/time");
+    const now = Date.parse("2026-11-03T21:30:00Z"); // 16:30 ET, Tue
+    const age = closedMaxAge(now);
+    // The session ends 16:15 ET (SPX options); anything fetched before 16:25 ET (21:25Z) is older than the max age.
+    expect(age).toBe(5 * 60_000);
+    expect(closedMaxAge(Date.parse("2026-11-03T21:20:00Z"))).toBe(Infinity); // 16:20 ET: not settled yet
+    expect(closedMaxAge(Date.parse("2026-11-03T23:25:00Z"), 30 * 60_000)).toBe(30 * 60_000); // capped
+  });
+});

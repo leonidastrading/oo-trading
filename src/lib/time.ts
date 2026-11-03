@@ -168,6 +168,18 @@ export function refreshPolicy(phase: MarketPhase): RefreshPolicy {
 
 export const MANUAL_REFRESH_MIN_MS = 30_000;
 
+/**
+ * Cache max age while the market is closed: data saved before the last session ended (+10 min) is
+ * refetched once, so a page that slept through the close still gets the closing state; after that the
+ * cache is reused until the next session.
+ */
+export function closedMaxAge(now: number = Date.now(), cap = Infinity): number {
+  const day = lastSessionDate(now);
+  const closeMin = marketSession(etMidnightUtc(day).getTime() + 12 * 3600_000).closeMin;
+  const settled = etMidnightUtc(day).getTime() + (closeMin + 10) * 60_000;
+  return now >= settled ? Math.min(Math.max(now - settled, 5000), cap) : cap;
+}
+
 /** Date of the most recent session that has started (today after 9:30 ET on a trading day, else the prior trading day). */
 export function lastSessionDate(now: Date | number = Date.now()): string {
   const p = etParts(now);
