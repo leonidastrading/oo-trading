@@ -6,6 +6,12 @@ import { formatTimeET } from "@/lib/time";
 import { money, num, plClass, strike } from "./format";
 import { displayName, useStrategyNames } from "./useStrategyNames";
 
+/** Open P/L as a % of the entry's net premium: the credit taken in (100% = keep it all) or the debit paid. */
+function premiumPct(g: SpreadGroup): number | null {
+  const basis = Math.abs(g.positions.reduce((t, p) => t + p.qty * p.avgPrice * (p.assetType === "OPTION" ? 100 : 1), 0));
+  return basis > 0 ? (g.plOpen / basis) * 100 : null;
+}
+
 export function PositionGroups({ groups, today, empty }: { groups: SpreadGroup[]; today: string; empty?: string }) {
   const names = useStrategyNames();
   if (!groups.length) return <p className="text-sm text-muted">{empty ?? "No positions."}</p>;
@@ -29,6 +35,12 @@ export function PositionGroups({ groups, today, empty }: { groups: SpreadGroup[]
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-muted">P/L open</div>
                 <div className={`num font-semibold ${plClass(g.plOpen)}`}>{money(g.plOpen, { sign: true })}</div>
+                {premiumPct(g) !== null && (
+                  <div className={`num text-xs font-semibold ${plClass(g.plOpen)}`} title="Open P/L as a % of the entry's net premium">
+                    {premiumPct(g)! >= 0 ? "+" : "−"}
+                    {Math.abs(premiumPct(g)!).toFixed(1)}%
+                  </div>
+                )}
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-muted">P/L day</div>
