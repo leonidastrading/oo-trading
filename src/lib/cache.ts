@@ -39,13 +39,14 @@ export async function cached<T>(
 
   const locked = await store.set(KEYS.lock(name), 1, { px: 12_000, nx: true });
   if (!locked) {
-    if (entry) return { data: entry.data, fetchedAt: entry.fetchedAt, error: recentError };
-    // First load and someone else is fetching: wait for them.
+    // Someone else is fetching (e.g. several panels loading at once when a phone wakes): wait for their
+    // result rather than hand back a stale copy that would show as "Data delayed".
     for (let i = 0; i < 8; i++) {
       await new Promise((r) => setTimeout(r, 500));
       const e = await store.get<Entry<T>>(key);
-      if (e) return { data: e.data, fetchedAt: e.fetchedAt, error: null };
+      if (e && (!entry || e.fetchedAt > entry.fetchedAt)) return { data: e.data, fetchedAt: e.fetchedAt, error: null };
     }
+    if (entry) return { data: entry.data, fetchedAt: entry.fetchedAt, error: recentError };
     return { data: null, fetchedAt: null, error: "Timed out waiting for data" };
   }
 
