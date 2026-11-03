@@ -53,7 +53,7 @@ export function StatusBar({
           />
           {meta ? phaseLabel : "Loading…"}
         </span>
-        <span className="num">Last updated {formatTimeET(fetchedAt)}</span>
+        <span className="num">Last {formatTimeET(fetchedAt)}</span>
         <span className="ml-auto flex items-center gap-2">
           {actions}
           <button

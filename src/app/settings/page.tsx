@@ -64,7 +64,7 @@ function SettingsInner() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-bold">Settings</h1>
-        <span className="num text-sm text-ink-2">Last updated {formatTimeET(status?.now)}</span>
+        <span className="num text-sm text-ink-2">Last {formatTimeET(status?.now)}</span>
       </div>
 
       {status?.setupError && <Banner tone="error">{status.setupError}</Banner>}

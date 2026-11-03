@@ -83,7 +83,7 @@ export default function StatsPage() {
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-bold">Strategy stats</h1>
         <span className="num text-sm text-ink-2">
-          Last updated {formatTimeET(loadedAt)}
+          Last {formatTimeET(loadedAt)}
           {meta?.updatedAt ? ` · CSVs uploaded ${formatDateTimeET(meta.updatedAt)}` : ""}
         </span>
         <button onClick={() => setShowUpload((v) => !v)} className="rounded-lg border border-border px-3 py-1.5 text-sm text-ink hover:bg-surface-2">
