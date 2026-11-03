@@ -140,8 +140,14 @@ export function settlementSymbols(positions: Position[], sessionDate: string, fi
   ];
 }
 
-/** Max cache age: just under the poll interval while open; when closed, see closedMaxAge. */
-const maxAge = (ms: number, now = Date.now()) => (Number.isFinite(ms) ? Math.max(ms - 2000, 5000) : closedMaxAge(now));
+/**
+ * Max cache age: just under the poll interval while open. When closed, marks still move (after-hours and
+ * overnight SPX option quotes), so data is refetched every 5 minutes while someone has the page open, and
+ * always once after the session ends (closedMaxAge).
+ */
+const CLOSED_REFRESH_MS = 5 * 60_000;
+const maxAge = (ms: number, now = Date.now()) =>
+  Number.isFinite(ms) ? Math.max(ms - 2000, 5000) : Math.min(closedMaxAge(now), CLOSED_REFRESH_MS);
 
 export async function getLiveData(force = false): Promise<LiveData> {
   const { now, session, policy, allowForce, manualRefreshBlocked, token } = await baseMeta(force);
