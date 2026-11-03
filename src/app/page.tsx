@@ -14,7 +14,7 @@ import { Tile, toneOf } from "@/components/Tile";
 import { usePoll } from "@/components/usePoll";
 import { ExpiryChart } from "@/components/ExpiryChart";
 import type { LiveData } from "@/lib/views";
-import type { SpreadGroup } from "@/lib/spreads";
+import { expirationLabel, type SpreadGroup } from "@/lib/spreads";
 
 /** The best-close price as the panel shows it: the plateau edge when the max runs to a side, else the peak. */
 function bestCloseLine(e: ExpiryData | undefined): BestCloseLine | null {
@@ -45,8 +45,12 @@ export default function LivePage() {
   const [arranging, setArranging] = useState(false);
   const today = data?.meta.date ?? "";
   const spx = data?.spx;
-  const todays = data?.groups.filter((g) => g.isToday) ?? [];
-  const others = data?.groups.filter((g) => !g.isToday) ?? [];
+  // The focused expiration: today until the 16:15 close, then the next trading day's.
+  const expiryDate = data?.expiryDate ?? today;
+  const focus = (g: SpreadGroup) => (data?.expiryDate ? g.expiration === data.expiryDate : g.isToday);
+  const todays = data?.groups.filter(focus) ?? [];
+  const others = data?.groups.filter((g) => !focus(g)) ?? [];
+  const expiryWord = !today || expiryDate === today ? "today" : expirationLabel(expiryDate, today).replace("Tomorrow", "tomorrow");
   const spxExpiry = data?.expiring.find((e) => e.underlying === "SPX");
   const otherExpiry = data?.expiring.filter((e) => e.underlying !== "SPX") ?? [];
 
@@ -101,7 +105,7 @@ export default function LivePage() {
   const expiryPanel = (
     <div className="space-y-5">
       {spxExpiry ? (
-        <BestClosePanel data={spxExpiry} />
+        <BestClosePanel data={spxExpiry} when={expiryWord} />
       ) : (
         data?.account && <p className="card p-4 text-sm text-muted">No SPX/SPXW legs expiring today.</p>
       )}
@@ -122,11 +126,11 @@ export default function LivePage() {
   );
   const expiringPanel = (
     <section>
-      <h2 className="mb-2 text-lg font-bold text-accent">Expiring today</h2>
+      <h2 className="mb-2 text-lg font-bold text-accent">Expiring {expiryWord}</h2>
       <PositionGroups
         groups={todays}
         today={today}
-        empty={data?.pl?.expiredPending ? "Expired — valued at settlement in Closed P/L." : "Nothing expires today."}
+        empty={expiryWord === "today" && data?.pl?.expiredPending ? "Expired — valued at settlement in Closed P/L." : `Nothing expires ${expiryWord}.`}
       />
     </section>
   );

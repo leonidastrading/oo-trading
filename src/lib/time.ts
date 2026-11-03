@@ -169,6 +169,21 @@ export function refreshPolicy(phase: MarketPhase): RefreshPolicy {
 export const MANUAL_REFRESH_MIN_MS = 30_000;
 
 /**
+ * The expiration the Live page focuses on (best close, expiry curve, "Expiring" list): today until the session
+ * closes (16:15 ET), then the next trading day, so the next expiring positions show right after the close.
+ */
+export function expiryFocusDate(now: Date | number = Date.now()): string {
+  const s = marketSession(now);
+  if (s.tradingDay && etParts(now).minutesOfDay < s.closeMin) return s.date;
+  let d = s.date;
+  for (let i = 0; i < 10; i++) {
+    d = addDays(d, 1);
+    if (isTradingDay(d)) return d;
+  }
+  return s.date;
+}
+
+/**
  * Cache max age while the market is closed: data saved before the last session ended (+10 min) is
  * refetched once, so a page that slept through the close still gets the closing state; after that the
  * cache is reused until the next session.

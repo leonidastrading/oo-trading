@@ -27,7 +27,7 @@ function distance(spot: number, lower: number | null, upper: number | null): str
   return out;
 }
 
-export function BestClosePanel({ data }: { data: ExpiryData }) {
+export function BestClosePanel({ data, when = "today" }: { data: ExpiryData; when?: string }) {
   const a = data.analysis;
   const zone = a.profitZone;
   const inZone = zone && (zone.lower === null || a.spot >= zone.lower) && (zone.upper === null || a.spot <= zone.upper);
@@ -46,7 +46,9 @@ export function BestClosePanel({ data }: { data: ExpiryData }) {
       ) : (
         <header className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-lg font-bold text-accent">Best {underlying} close</h2>
-          <span className="text-xs text-muted">at 4:00 PM settlement; today&apos;s expirations only</span>
+          <span className="text-xs text-muted">
+            at 4:00 PM settlement; {when === "today" ? "today\u2019s" : `${when}\u2019s`} expirations only
+          </span>
         </header>
       )}
 

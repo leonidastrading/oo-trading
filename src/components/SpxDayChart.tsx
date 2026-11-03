@@ -658,7 +658,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
         Numbers match the # column: ▲ under a bar is an entry (one Schwab opening order), ▼ above is an exit of that entry (S = stop).{" "}
         <span className="text-accent">▲</span> credit entry, <span className="text-spot">▲</span> debit entry,{" "}
         <span className="text-loss">▼</span> stop (a loss that isn&apos;t the strategy&apos;s scheduled exit; a red line joins it to its entry), <span className="text-gain">▼</span> exit at a gain,{" "}
-        <span className="text-muted">▼</span> time exit at a loss. Expirations aren&apos;t marked. <span className="text-gain">- - -</span> best SPX close for today&apos;s expirations (two lines when it&apos;s a flat zone). Times ET.
+        <span className="text-muted">▼</span> time exit at a loss. Expirations aren&apos;t marked. <span className="text-gain">- - -</span> best SPX close for the next expiration (today&apos;s until the close, then the next day&apos;s; two lines when it&apos;s a flat zone). Times ET.
       </p>
     </section>
   );

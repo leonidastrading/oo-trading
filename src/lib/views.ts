@@ -7,7 +7,7 @@ import { countOpenEntries, feesOn, groupClosesByOrder, openLots, realizedOn, typ
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
 import { tokenStatus, type TokenStatus } from "./schwab/tokens";
 import { classifySpread, groupSpreads, splitByEntry, toLeg, type Position, type SpreadGroup } from "./spreads";
-import { closedMaxAge, etMidnightUtc, etParts, lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
+import { closedMaxAge, etMidnightUtc, expiryFocusDate, etParts, lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
 
 export interface Meta {
   now: number;
@@ -28,6 +28,8 @@ export interface ExpiryChart {
   markPl: number;
   /** After the session close (16:15 ET, 13:15 on early closes): spot is the settlement and P/L is final. */
   settled: boolean;
+  /** The expiration date this chart covers (see expiryFocusDate). */
+  expiration: string;
 }
 
 /** One closed trade (Schwab order, or today's expirations at settlement) on the cumulative closed-P/L line. */
@@ -74,6 +76,8 @@ export interface LiveData {
   groups: SpreadGroup[];
   /** Today's expirations, one chart per underlying. */
   expiring: ExpiryChart[];
+  /** Expiration the page focuses on: today until the close, then the next trading day. */
+  expiryDate: string;
   closedCurve: ClosedPoint[];
 }
 
@@ -157,7 +161,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
   };
   if (!token.connected) {
     meta.errors.push(token.lastError ?? "Schwab is not connected — connect it in Settings.");
-    return { meta, fetchedAt: null, account: null, spx: null, pl: null, groups: [], expiring: [], closedCurve: [] };
+    return { meta, fetchedAt: null, account: null, spx: null, pl: null, groups: [], expiring: [], expiryDate: expiryFocusDate(now), closedCurve: [] };
   }
 
   const sessionDate = lastSessionDate(now);
@@ -169,24 +173,27 @@ export async function getLiveData(force = false): Promise<LiveData> {
   const today = todayET(now);
   const positions = acct.data?.positions ?? [];
   const groups = groupSpreads(positions, today);
-  const todays = groups.filter((g) => g.isToday);
+  const expiryDate = expiryFocusDate(now);
+  const todays = groups.filter((g) => g.expiration === expiryDate);
 
   const symbols = new Set(["$SPX", ...todays.map((g) => quoteSymbol(g.underlying)), ...settlementSymbols(positions, sessionDate, fills.data ?? [])]);
   const quotes = await cachedQuotes([...symbols], maxAge(policy.positionsMs), allowForce);
   if (quotes.error && quotes.error !== acct.error) meta.errors.push(quotes.error);
   const spx = quotes.data?.["$SPX"] ?? null;
 
-  // One expiry curve per underlying, using only legs expiring today.
+  // One expiry curve per underlying, using only legs of the focused expiration.
   const byUnderlying = new Map<string, SpreadGroup[]>();
   for (const g of todays) byUnderlying.set(g.underlying, [...(byUnderlying.get(g.underlying) ?? []), g]);
   const expiring: ExpiryChart[] = [];
-  const settled = session.tradingDay && etParts(now).minutesOfDay >= session.closeMin;
+  // The focus moves to the next expiration at the close, so a chart is settled only for an expiration that
+  // has passed (kept for older payloads; normally false).
+  const settled = expiryDate < today;
   for (const [underlying, gs] of byUnderlying) {
     const spot = quotes.data?.[quoteSymbol(underlying)]?.last;
     const legs = gs.flatMap((g) => g.positions).map(toLeg).filter((l) => l !== null);
     const analysis = spot ? analyzeClose(legs, spot) : null;
     if (spot && analysis) {
-      expiring.push({ key: gs[0].key, underlying, spot, analysis, markPl: gs.reduce((s, g) => s + g.plOpen, 0), settled });
+      expiring.push({ key: gs[0].key, underlying, spot, analysis, markPl: gs.reduce((s, g) => s + g.plOpen, 0), settled, expiration: expiryDate });
     }
   }
   expiring.sort((a, b) => (a.underlying === "SPX" ? -1 : b.underlying === "SPX" ? 1 : a.underlying.localeCompare(b.underlying)));
@@ -229,6 +236,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
     pl,
     groups: groupSpreads(splitByEntry(expired.open, openLots(fills.data ?? []), today), today),
     expiring,
+    expiryDate,
     closedCurve: closedCurve(
       [...groupClosesByOrder(closes), ...expired.orders],
       etMidnightUtc(sessionDate).getTime() + (session.closeMin - 15) * 60000,

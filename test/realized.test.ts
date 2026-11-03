@@ -188,3 +188,14 @@ describe("closedMaxAge", () => {
     expect(closedMaxAge(Date.parse("2026-11-03T23:25:00Z"), 30 * 60_000)).toBe(30 * 60_000); // capped
   });
 });
+
+describe("expiryFocusDate", () => {
+  it("is today until the 16:15 close, then the next trading day", async () => {
+    const { expiryFocusDate } = await import("@/lib/time");
+    expect(expiryFocusDate(Date.parse("2026-11-03T21:14:00Z"))).toBe("2026-11-03"); // Tue 16:14 ET
+    expect(expiryFocusDate(Date.parse("2026-11-03T21:16:00Z"))).toBe("2026-11-04"); // Tue 16:16 ET
+    expect(expiryFocusDate(Date.parse("2026-11-06T22:00:00Z"))).toBe("2026-11-09"); // Fri evening → Mon
+    expect(expiryFocusDate(Date.parse("2026-11-07T15:00:00Z"))).toBe("2026-11-09"); // Saturday → Mon
+    expect(expiryFocusDate(Date.parse("2026-11-04T10:00:00Z"))).toBe("2026-11-04"); // Wed 05:00 ET
+  });
+});
