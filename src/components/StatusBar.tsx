@@ -45,16 +45,19 @@ export function StatusBar({
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-2">
-        <span className="inline-flex items-center gap-1.5">
-          <span
-            aria-hidden
-            className={`h-2 w-2 rounded-full ${meta?.phase === "closed" || !meta ? "bg-muted" : "bg-gain"}`}
-          />
-          {meta ? phaseLabel : "Loading…"}
-        </span>
-        <span className="num">Last {formatTimeET(fetchedAt)}</span>
-        <span className="ml-auto flex items-center gap-2">
+      {/* Status (two short lines) on the left, buttons on the right: one row even on a phone. */}
+      <div className="flex items-center gap-3 text-sm text-ink-2">
+        <div className="min-w-0 leading-tight">
+          <div className="inline-flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className={`h-2 w-2 shrink-0 rounded-full ${meta?.phase === "closed" || !meta ? "bg-muted" : "bg-gain"}`}
+            />
+            {meta ? phaseLabel : "Loading…"}
+          </div>
+          <div className="num">Last {formatTimeET(fetchedAt)}</div>
+        </div>
+        <span className="ml-auto flex shrink-0 items-center gap-2">
           {actions}
           <button
             onClick={() => {
