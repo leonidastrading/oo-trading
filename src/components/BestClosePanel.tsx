@@ -81,7 +81,7 @@ export function BestClosePanel({
           }
           sub={
             <>
-              <span className={plClass(a.best.pnl)}>{money(a.best.pnl, { sign: true })}</span>
+              <span className={`block text-xl font-bold md:text-2xl ${plClass(a.best.pnl)}`}>{money(a.best.pnl, { sign: true })}</span>
               {!a.best.atEdge && a.best.range && a.best.edge && (
                 <span className="block">
                   max anywhere {a.best.edge === "above" ? `at or above ${strike(a.best.range.low)}` : `at or below ${strike(a.best.range.high)}`}

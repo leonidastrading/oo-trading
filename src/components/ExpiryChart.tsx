@@ -141,7 +141,7 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
                 fill="var(--gain)"
                 stroke="var(--surface)"
                 strokeWidth={2}
-                label={{ value: `Max ${strike(best.price)}`, position: maxLabelPos, fill: "var(--ink-2)", fontSize: 11 }}
+                label={{ value: `Max ${strike(best.price)} (${money(best.pnl, { sign: true })})`, position: maxLabelPos, fill: "var(--ink-2)", fontSize: 11 }}
               />
             )}
             {breakevens.filter(inView).map((b) => (
