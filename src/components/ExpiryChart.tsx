@@ -59,6 +59,11 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
   for (let t = Math.ceil(first / tickStep) * tickStep; t <= last; t += tickStep) ticks.push(t);
   const inView = (x: number) => data.length > 0 && x >= data[0].price && x <= data[data.length - 1].price;
 
+  // The spot label sits above the chart at the spot line; when the max is close to it, put the max label
+  // beside its dot (away from the spot line) so the two don't overlap.
+  const span = data.length ? data[data.length - 1].price - data[0].price : 0;
+  const maxLabelPos: "top" | "right" | "left" =
+    inView(spot) && span > 0 && Math.abs(best.price - spot) < span * 0.15 ? (best.price >= spot ? "right" : "left") : "top";
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -136,7 +141,7 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
                 fill="var(--gain)"
                 stroke="var(--surface)"
                 strokeWidth={2}
-                label={{ value: `Max ${strike(best.price)}`, position: "top", fill: "var(--ink-2)", fontSize: 11 }}
+                label={{ value: `Max ${strike(best.price)}`, position: maxLabelPos, fill: "var(--ink-2)", fontSize: 11 }}
               />
             )}
             {breakevens.filter(inView).map((b) => (
