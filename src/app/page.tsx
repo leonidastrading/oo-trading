@@ -116,7 +116,7 @@ export default function LivePage() {
   const expiryPanel = (
     <div className="space-y-5">
       {spxExpiry ? (
-        <BestClosePanel data={spxExpiry} when={expiryWord} margin={marginUsed(data?.account)} />
+        <BestClosePanel data={spxExpiry} when={expiryWord} margin={marginUsed(data?.account)} netLiq={data?.account?.netLiq ?? null} />
       ) : (
         data?.account && <p className="card p-4 text-sm text-muted">No SPX/SPXW legs expiring today.</p>
       )}

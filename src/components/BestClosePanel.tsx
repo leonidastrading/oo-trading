@@ -31,10 +31,12 @@ export function BestClosePanel({
   data,
   when = "today",
   margin = null,
+  netLiq = null,
 }: {
   data: ExpiryData;
   when?: string;
   margin?: { amount: number; pct: number; schwabPct: number | null } | null;
+  netLiq?: number | null;
 }) {
   const a = data.analysis;
   const zone = a.profitZone;
@@ -81,7 +83,15 @@ export function BestClosePanel({
           }
           sub={
             <>
-              <span className={`block text-xl font-bold md:text-2xl ${plClass(a.best.pnl)}`}>{money(a.best.pnl, { sign: true })}</span>
+              <span className={`block text-xl font-bold md:text-2xl ${plClass(a.best.pnl)}`}>
+                {money(a.best.pnl, { sign: true })}
+                {netLiq ? (
+                  <span className="ml-1 text-base font-semibold md:text-lg" title="Best-close P/L as a % of account net liq">
+                    ({a.best.pnl >= 0 ? "+" : "−"}
+                    {Math.abs((a.best.pnl / netLiq) * 100).toFixed(2)}%)
+                  </span>
+                ) : null}
+              </span>
               {!a.best.atEdge && a.best.range && a.best.edge && (
                 <span className="block">
                   max anywhere {a.best.edge === "above" ? `at or above ${strike(a.best.range.low)}` : `at or below ${strike(a.best.range.high)}`}
