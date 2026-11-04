@@ -2,7 +2,7 @@
 import "server-only";
 import { takeManualRefresh } from "./cache";
 import { CASH_SETTLED, expiredOrders, ghostExpired, pendingExpired, settledSymbols } from "./expired";
-import { analyzeClose, type CloseAnalysis } from "./options";
+import { analyzeClose, expiryPnl, type CloseAnalysis, type OptionLeg } from "./options";
 import { countOpenEntries, feesOn, groupClosesByOrder, openLots, realizedOn, type ClosedOrder, type Fill } from "./realized";
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
 import { tokenStatus, type TokenStatus } from "./schwab/tokens";
@@ -57,7 +57,7 @@ export function closedCurve(orders: ClosedOrder[], settleTime: number): ClosedPo
 export interface LiveData {
   meta: Meta;
   fetchedAt: number | null;
-  account: (Balances & { last4: string; dayPl: number | null }) | null;
+  account: (Balances & { last4: string; dayPl: number | null; marginEst: number | null }) | null;
   spx: Quote | null;
   /** Session P/L: open (all positions), closed (realized today, net of fees), fees today. */
   pl: {
@@ -153,6 +153,25 @@ const CLOSED_REFRESH_MS = 5 * 60_000;
 const maxAge = (ms: number, now = Date.now()) =>
   Number.isFinite(ms) ? Math.max(ms - 2000, 5000) : Math.min(closedMaxAge(now), CLOSED_REFRESH_MS);
 
+/**
+ * Margin estimate when Schwab doesn't report one: for each expiration, the worst value the open legs can
+ * reach at expiry (e.g. a credit spread's width × contracts × 100). Null when any risk is unbounded.
+ */
+export function definedRiskMargin(positions: Position[]): number | null {
+  const byExp = new Map<string, OptionLeg[]>();
+  for (const p of positions) {
+    const l = toLeg(p);
+    if (l) byExp.set(l.expiration, [...(byExp.get(l.expiration) ?? []), { ...l, avgPrice: 0 }]);
+  }
+  let total = 0;
+  for (const legs of byExp.values()) {
+    const top = Math.max(...legs.map((l) => l.strike));
+    if (expiryPnl(legs, top + 1) < expiryPnl(legs, top) - 1e-9) return null; // naked calls
+    total += Math.max(0, -Math.min(...[0, ...legs.map((l) => l.strike), top + 1].map((s) => expiryPnl(legs, s))));
+  }
+  return total;
+}
+
 export async function getLiveData(force = false): Promise<LiveData> {
   const { now, session, policy, allowForce, manualRefreshBlocked, token } = await baseMeta(force);
   const meta: Meta = {
@@ -230,6 +249,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
           ...b,
           last4: process.env.SCHWAB_ACCOUNT_LAST4 ?? "",
           dayPl: b.netLiq !== null && b.startNetLiq !== null ? b.netLiq - b.startNetLiq : null,
+          marginEst: definedRiskMargin(expired.open),
         }
       : null,
     spx,

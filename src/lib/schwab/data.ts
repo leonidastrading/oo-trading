@@ -12,6 +12,8 @@ export interface Balances {
   buyingPower: number | null;
   optionBuyingPower: number | null;
   cash: number | null;
+  /** Margin held for open positions (Schwab maintenance requirement). */
+  maintenance: number | null;
 }
 
 export interface AccountSnapshot {
@@ -47,6 +49,7 @@ export async function fetchAccount(): Promise<AccountSnapshot> {
       buyingPower: num(cur.buyingPower, cur.availableFunds, cur.cashAvailableForTrading),
       optionBuyingPower: num(cur.optionBuyingPower, cur.buyingPowerNonMarginableTrade),
       cash: num(cur.cashBalance, cur.totalCash, cur.cashAvailableForTrading),
+      maintenance: num(cur.maintenanceRequirement),
     },
   };
 }

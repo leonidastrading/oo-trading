@@ -38,6 +38,12 @@ function openPct(open: number | null | undefined, groups: SpreadGroup[] | undefi
   );
   return basis > 0 ? (open / basis) * 100 : null;
 }
+/** Margin in use as a share of net liq: Schwab's maintenance requirement, else the defined-risk estimate. */
+function marginUsed(a: LiveData["account"] | undefined): { amount: number; pct: number; estimated: boolean } | null {
+  if (!a || !a.netLiq) return null;
+  const amount = a.maintenance ?? a.marginEst;
+  return amount === null || amount === undefined ? null : { amount, pct: (amount / a.netLiq) * 100, estimated: a.maintenance === null };
+}
 const signedPct = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`;
 
 export default function LivePage() {
@@ -105,7 +111,7 @@ export default function LivePage() {
   const expiryPanel = (
     <div className="space-y-5">
       {spxExpiry ? (
-        <BestClosePanel data={spxExpiry} when={expiryWord} />
+        <BestClosePanel data={spxExpiry} when={expiryWord} margin={marginUsed(data?.account)} />
       ) : (
         data?.account && <p className="card p-4 text-sm text-muted">No SPX/SPXW legs expiring today.</p>
       )}

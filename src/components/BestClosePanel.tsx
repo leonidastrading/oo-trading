@@ -27,7 +27,15 @@ function distance(spot: number, lower: number | null, upper: number | null): str
   return out;
 }
 
-export function BestClosePanel({ data, when = "today" }: { data: ExpiryData; when?: string }) {
+export function BestClosePanel({
+  data,
+  when = "today",
+  margin = null,
+}: {
+  data: ExpiryData;
+  when?: string;
+  margin?: { amount: number; pct: number; estimated: boolean } | null;
+}) {
   const a = data.analysis;
   const zone = a.profitZone;
   const inZone = zone && (zone.lower === null || a.spot >= zone.lower) && (zone.upper === null || a.spot <= zone.upper);
@@ -81,6 +89,12 @@ export function BestClosePanel({ data, when = "today" }: { data: ExpiryData; whe
               )}
               {a.best.atEdge && (
                 <span className="block">keeps rising {a.best.edge === "above" ? "above" : "below"} the strikes</span>
+              )}
+              {margin && (
+                <span className="block text-ink-2" title={margin.estimated ? "Estimated from the positions' worst case at expiry" : "Schwab maintenance requirement ÷ net liq"}>
+                  margin used <span className="num font-semibold text-ink">{margin.pct.toFixed(1)}%</span> ({money(margin.amount)}
+                  {margin.estimated ? ", est." : ""})
+                </span>
               )}
               {a.best.atEdge && a.spotZone && (
                 <span className="block">
