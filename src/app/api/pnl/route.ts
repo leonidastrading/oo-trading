@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 import { listSnapshots } from "@/lib/eod";
 import { weeklyRows, type WeekRow } from "@/lib/pnl";
 import { realizedOn } from "@/lib/realized";
-import { cachedAccount, cachedFillsSince, cachedTransfersSince, type Transfer } from "@/lib/schwab/data";
-import { addDays, marketSession, todayET } from "@/lib/time";
+import { cachedAccount, cachedFillsSince, cachedQuotes, cachedTransfersSince, type Transfer } from "@/lib/schwab/data";
+import { splitExpired } from "@/lib/views";
+import { addDays, lastSessionDate, marketSession, todayET } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,13 @@ export async function GET() {
       const r = realizedOn(fills.fills, d).reduce((s, c) => s + (c.realized ?? 0), 0);
       if (r) realized[d] = r;
     }
+  }
+  // Today's expirations count once the session has closed, valued at settlement until Schwab posts them.
+  if (acct.data) {
+    const session = lastSessionDate(now);
+    const quotes = await cachedQuotes(["$SPX"], open ? 60_000 : 30 * 60_000);
+    const pending = splitExpired(acct.data.positions, fills.fills, quotes.data, now).realized;
+    if (pending) realized[session] = (realized[session] ?? 0) + pending;
   }
   const transfers: Record<string, number> = {};
   for (const t of xfers.transfers) transfers[t.date] = (transfers[t.date] ?? 0) + t.amount;

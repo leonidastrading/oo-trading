@@ -24,10 +24,11 @@ describe("weekly P/L", () => {
     expect(days.find((d) => d.date === "2026-10-26")!.equity).toBe(1_001_000); // back-filled from today, minus the deposit
 
     const [w1, w2] = weeklyRows(input);
-    expect(w1).toMatchObject({ week: "2026-10-19", end: "2026-10-23", startEquity: 1_000_000, endEquity: 1_003_000, pl: 3000, estimated: true });
-    expect(w1.plPct).toBeCloseTo(0.003);
-    expect(w2).toMatchObject({ week: "2026-10-26", end: "2026-10-27", startEquity: 1_003_000, transfers: 50_000, pl: -2000, current: true });
-    expect(w2.plPct).toBeCloseTo(-2000 / 1_053_000); // deposit counts toward the base
+    // P/L is closed trades only (realized), not the change in equity.
+    expect(w1).toMatchObject({ week: "2026-10-19", end: "2026-10-23", startEquity: 1_000_000, endEquity: 1_003_000, pl: 1000, estimated: true });
+    expect(w1.plPct).toBeCloseTo(0.001);
+    expect(w2).toMatchObject({ week: "2026-10-26", end: "2026-10-27", startEquity: 1_003_000, transfers: 50_000, pl: 1000, current: true });
+    expect(w2.plPct).toBeCloseTo(1000 / 1_053_000); // deposit counts toward the base
   });
 });
 
@@ -41,7 +42,7 @@ describe("funding week", () => {
       realized: { "2026-10-23": -75_082.63 },
       transfers: { "2026-10-19": 4_620_956.92 },
     });
-    expect(w).toMatchObject({ startEquity: 0, pl: -74_981.19, estimated: false });
-    expect(w.plPct).toBeCloseTo(-74_981.19 / 4_620_956.92);
+    expect(w).toMatchObject({ startEquity: 0, pl: -75_082.63, estimated: false });
+    expect(w.plPct).toBeCloseTo(-75_082.63 / 4_620_956.92);
   });
 });

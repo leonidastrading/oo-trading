@@ -141,9 +141,10 @@ export default function PnlPage() {
         </table>
       </section>
       <p className="text-xs text-muted">
-        Equity is Schwab net liquidation at each week&apos;s last close (live for the current week). P/L = change in equity minus deposits and
-        withdrawals; % is of start-of-week equity plus any deposits that week.
-        {anyEstimated && " * Some closes before the daily 4:30 PM snapshots began are back-filled from realized trade P/L."}
+        P/L counts closed trades only: realized P/L of positions closed or expired that week, net of fees (today&apos;s expirations at
+        settlement once the session closes). Open positions don&apos;t count until they close. Equity is Schwab net liquidation at each
+        week&apos;s last close (live for the current week); % is of start-of-week equity plus any deposits that week.
+        {anyEstimated && " * Some equity values before the daily 4:30 PM snapshots began are back-filled from realized trade P/L."}
       </p>
     </div>
   );

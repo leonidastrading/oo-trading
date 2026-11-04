@@ -1,4 +1,5 @@
-// Weekly account performance from end-of-day net liquidation values.
+// Weekly performance: P/L from closed trades (realized, net of fees, incl. expirations at settlement);
+// equity from end-of-day net liquidation values.
 import { addDays, isTradingDay } from "./time";
 
 export interface WeekRow {
@@ -8,8 +9,9 @@ export interface WeekRow {
   end: string;
   startEquity: number;
   endEquity: number;
-  /** Net deposits (+) / withdrawals (−) during the week; excluded from P/L. */
+  /** Net deposits (+) / withdrawals (−) during the week. */
   transfers: number;
+  /** Realized P/L of trades closed (or expired) that week, net of fees; open positions don't count. */
   pl: number;
   /** P/L as a fraction of start-of-week equity plus any money added during the week. */
   plPct: number | null;
@@ -99,7 +101,9 @@ export function weeklyRows(input: WeeklyInput): WeekRow[] {
       prev = { ...prev, equity: 0, estimated: false };
       estimated = last.estimated;
     }
-    const pl = round2(last.equity - prev.equity - transfers);
+    let pl = 0;
+    for (const [d, v] of Object.entries(input.realized)) if (mondayOf(d) === week && d <= input.today) pl += v;
+    pl = round2(pl);
     rows.push({
       week,
       end: last.date,
