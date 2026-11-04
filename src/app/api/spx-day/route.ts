@@ -133,6 +133,8 @@ export async function GET() {
   for (const e of entries) {
     const l = liveTrades.get(e.orderId);
     e.strategy = l ? inferStrategy(l, profiles) : null;
+    // A book iron condor with both shorts on one strike is still an iron condor.
+    if (e.label === "Iron butterfly" && e.strategy && /IC$/.test(e.strategy)) e.label = "Iron condor";
   }
   // The Dip Add-On is a 1-lot copy of the $8 IC; when it comes in as its own order, name it.
   const icOrders = entries.filter((e) => e.strategy === "$8 IC");

@@ -237,6 +237,9 @@ export function groupSpreads(positions: Position[], today: string): SpreadGroup[
           : null,
     });
   }
+  // The book's iron condors sometimes land both shorts on one strike (e.g. the $8 IC when both sides price
+  // at $8): they are still iron condors, not iron butterflies.
+  for (const g of groups) if (g.label === "Iron butterfly" && g.strategy && /IC$/.test(g.strategy)) g.label = "Iron condor";
   return groups.sort(
     (a, b) =>
       (a.expiration ?? "9999").localeCompare(b.expiration ?? "9999") ||

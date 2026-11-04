@@ -148,3 +148,19 @@ describe("maxExpiryPl", () => {
     expect(maxExpiryPl([leg("SPXW  261102C07600000", 1, 5), leg("SPXW  261102P07600000", 1, 5)])).toBe(Infinity);
   });
 });
+
+describe("book iron condors with both shorts on one strike", () => {
+  it("stay labelled iron condor", () => {
+    const S = (pc: "P" | "C", k: number) => `SPXW  261104${pc}${String(k * 1000).padStart(8, "0")}`;
+    const P = (symbol: string, qty: number, avg: number) => normalizePosition(opt(symbol, qty, avg, 0));
+    const t = Date.parse("2026-11-04T18:35:03Z");
+    const legs = [P(S("P", 7655), 12, 0.77), P(S("P", 7705), -12, 7.94), P(S("C", 7705), -12, 9.03), P(S("C", 7755), 12, 0.2)].map((p) => ({
+      ...p,
+      entryKey: "order:1",
+      enteredAt: t,
+    }));
+    const [g] = groupSpreads(legs, "2026-11-04");
+    expect(g.strategy).toBe("$8 IC");
+    expect(g.label).toBe("Iron condor");
+  });
+});
