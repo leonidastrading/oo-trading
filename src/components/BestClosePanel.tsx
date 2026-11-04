@@ -34,7 +34,7 @@ export function BestClosePanel({
 }: {
   data: ExpiryData;
   when?: string;
-  margin?: { amount: number; pct: number; estimated: boolean } | null;
+  margin?: { amount: number; pct: number; schwabPct: number | null } | null;
 }) {
   const a = data.analysis;
   const zone = a.profitZone;
@@ -91,9 +91,9 @@ export function BestClosePanel({
                 <span className="block">keeps rising {a.best.edge === "above" ? "above" : "below"} the strikes</span>
               )}
               {margin && (
-                <span className="block text-ink-2" title={margin.estimated ? "Estimated from the positions' worst case at expiry" : "Schwab maintenance requirement ÷ net liq"}>
-                  margin used <span className="num font-semibold text-ink">{margin.pct.toFixed(1)}%</span> ({money(margin.amount)}
-                  {margin.estimated ? ", est." : ""})
+                <span className="block text-ink-2" title="Max loss at expiry of the open positions ÷ net liq (how Option Omega counts margin)">
+                  margin used <span className="num font-semibold text-ink">{margin.pct.toFixed(1)}%</span> ({money(margin.amount)})
+                  {margin.schwabPct !== null && <span className="block text-xs text-muted">Schwab requirement {margin.schwabPct.toFixed(1)}%</span>}
                 </span>
               )}
               {a.best.atEdge && a.spotZone && (

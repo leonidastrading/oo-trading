@@ -38,11 +38,16 @@ function openPct(open: number | null | undefined, groups: SpreadGroup[] | undefi
   );
   return basis > 0 ? (open / basis) * 100 : null;
 }
-/** Margin in use as a share of net liq: Schwab's maintenance requirement, else the defined-risk estimate. */
-function marginUsed(a: LiveData["account"] | undefined): { amount: number; pct: number; estimated: boolean } | null {
+/**
+ * Margin in use as a share of net liq, measured like Option Omega's Margin Req.: each expiration's
+ * worst case at expiry (an iron condor counts its wider side once). Schwab's maintenance requirement,
+ * which charges more for some structures, is shown alongside.
+ */
+function marginUsed(a: LiveData["account"] | undefined): { amount: number; pct: number; schwabPct: number | null } | null {
   if (!a || !a.netLiq) return null;
-  const amount = a.maintenance ?? a.marginEst;
-  return amount === null || amount === undefined ? null : { amount, pct: (amount / a.netLiq) * 100, estimated: a.maintenance === null };
+  const amount = a.marginEst ?? a.maintenance;
+  if (amount === null || amount === undefined) return null;
+  return { amount, pct: (amount / a.netLiq) * 100, schwabPct: a.maintenance !== null ? (a.maintenance / a.netLiq) * 100 : null };
 }
 const signedPct = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`;
 
