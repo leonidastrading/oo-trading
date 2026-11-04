@@ -32,11 +32,11 @@ function bestCloseLine(e: ExpiryData | undefined): BestCloseLine | null {
  */
 function openPct(open: number | null | undefined, groups: SpreadGroup[] | undefined): number | null {
   if (open === null || open === undefined || !groups?.length) return null;
-  const basis = groups.reduce(
-    (s, g) => s + Math.abs(g.positions.reduce((t, p) => t + p.qty * p.avgPrice * (p.assetType === "OPTION" ? 100 : 1), 0)),
-    0,
-  );
-  return basis > 0 ? (open / basis) * 100 : null;
+  // Options only: cash-like holdings (money-market funds) would swamp the premium base.
+  const options = groups.filter((g) => g.positions.every((p) => p.assetType === "OPTION"));
+  const basis = options.reduce((s, g) => s + Math.abs(g.positions.reduce((t, p) => t + p.qty * p.avgPrice * 100, 0)), 0);
+  const pl = options.reduce((s, g) => s + g.plOpen, 0);
+  return basis > 0 ? (pl / basis) * 100 : null;
 }
 /**
  * Margin in use as a share of net liq, measured like Option Omega's Margin Req.: each expiration's
