@@ -80,7 +80,7 @@ export function BestClosePanel({ data, when = "today" }: { data: ExpiryData; whe
                 </span>
               )}
               {a.best.atEdge && (
-                <span className="block">keeps rising {a.best.edge === "above" ? "above" : "below"} the ±3% range</span>
+                <span className="block">keeps rising {a.best.edge === "above" ? "above" : "below"} the strikes</span>
               )}
               {a.best.atEdge && a.spotZone && (
                 <span className="block">
@@ -119,7 +119,7 @@ export function BestClosePanel({ data, when = "today" }: { data: ExpiryData; whe
                 ))}
               </>
             ) : (
-              "No profitable settlement within ±3%"
+              "No profitable settlement"
             )
           }
         />
@@ -134,16 +134,16 @@ export function BestClosePanel({ data, when = "today" }: { data: ExpiryData; whe
           }
         />
         <Stat
-          label="Worst case (±3%)"
+          label="Worst case"
           value={<span className={plClass(a.worst.pnl)}>{money(a.worst.pnl, { sign: true })}</span>}
           sub={
             <>
               {a.worst.range && a.worst.edge === "below"
-                ? `at or below ${strike(a.worst.range.high)} (capped)`
+                ? `at or below ${strike(a.worst.range.high)} (max loss)`
                 : a.worst.range && a.worst.edge === "above"
-                  ? `at or above ${strike(a.worst.range.low)} (capped)`
+                  ? `at or above ${strike(a.worst.range.low)} (max loss)`
                   : `at ${a.worst.range ? `${strike(a.worst.range.low)}–${strike(a.worst.range.high)}` : strike(a.worst.price)}`}
-              {a.worst.atEdge ? " (edge of range — may extend further)" : ""}
+              {a.worst.atEdge ? " (keeps falling beyond the strikes)" : ""}
             </>
           }
         />

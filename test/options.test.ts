@@ -172,3 +172,20 @@ describe("put credit spread (flat max running to the range edge)", () => {
     expect(longCall.best.edge).toBe("above");
   });
 });
+
+describe("analyzeClose with strikes outside the ±3% window", () => {
+  // Nov 4 2DTE put spread with SPX far above it: the whole window is max profit.
+  const a = analyzeClose([leg(19, "P", 7310, 3.64), leg(-19, "P", 7385, 8.04)], 7691.9)!;
+  it("reports the real levels, not the window's edge", () => {
+    expect(a.best.range?.low).toBe(7385);
+    expect(a.best.edge).toBe("above");
+    expect(a.best.atEdge).toBe(false);
+    expect(a.worst.range?.high).toBe(7310);
+    expect(a.worst.edge).toBe("below");
+    expect(a.worst.pnl).toBeCloseTo(-(75 - 4.4) * 1900, 0);
+    expect(a.profitZone?.lower).toBeGreaterThan(7380);
+    expect(a.profitZone?.lower).toBeLessThan(7385);
+    // The chart curve stays on the ±3% window.
+    expect(a.curve[0].price).toBe(a.lo);
+  });
+});

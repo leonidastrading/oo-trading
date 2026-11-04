@@ -140,19 +140,25 @@ export function analyzeClose(
   const lo = Math.ceil(spot * (1 - pct));
   const hi = Math.floor(spot * (1 + pct));
   const curve = payoffCurve(legs, lo, hi, step, extraCost);
+  // Best/worst and the profit zone are read over the ±pct window widened to the strikes (+50), so legs
+  // outside the window (e.g. a far put spread) give their real levels instead of the window's edge.
+  const strikes = legs.map((l) => l.strike);
+  const eLo = Math.min(lo, Math.floor(Math.min(...strikes)) - 50);
+  const eHi = Math.max(hi, Math.ceil(Math.max(...strikes)) + 50);
+  const ext = eLo === lo && eHi === hi ? curve : payoffCurve(legs, eLo, eHi, step, extraCost);
 
   let bi = 0;
   let wi = 0;
-  curve.forEach((p, i) => {
-    if (p.pnl > curve[bi].pnl) bi = i;
-    if (p.pnl < curve[wi].pnl) wi = i;
+  ext.forEach((p, i) => {
+    if (p.pnl > ext[bi].pnl) bi = i;
+    if (p.pnl < ext[wi].pnl) wi = i;
   });
-  const best = curve[bi];
-  const bestRange = flatRange(curve, bi, best.pnl);
-  const worst = curve[wi];
-  const worstRange = flatRange(curve, wi, worst.pnl);
+  const best = ext[bi];
+  const bestRange = flatRange(ext, bi, best.pnl);
+  const worst = ext[wi];
+  const worstRange = flatRange(ext, wi, worst.pnl);
 
-  const bes = breakevens(curve);
+  const bes = breakevens(ext);
   let profitZone: CloseAnalysis["profitZone"] = null;
   if (best.pnl > 0) {
     const ref = bestRange ? bestRange.low : best.price;
@@ -168,10 +174,10 @@ export function analyzeClose(
   }
   const tableBest = rows.reduce((m, r) => (r.pnl > m ? r.pnl : m), -Infinity);
   const tableFlat = rows.every((r) => r.pnl === rows[0].pnl);
-  const last = curve.length - 1;
-  // Which end of the range the extreme reaches, if any.
+  const last = ext.length - 1;
+  // Which end of the (widened) range the extreme reaches, if any.
   const edgeOf = (i: number, r: PriceRange | null): "above" | "below" | null =>
-    (r ? r.high === hi : i === last) ? "above" : (r ? r.low === lo : i === 0) ? "below" : null;
+    (r ? r.high === eHi : i === last) ? "above" : (r ? r.low === eLo : i === 0) ? "below" : null;
   // Still sloping at the edge: a single extreme point sitting on the boundary (no flat run).
   const sloping = (i: number, r: PriceRange | null) => r === null && (i === 0 || i === last);
   const si = Math.min(curve.length - 1, Math.max(0, Math.round((spot - lo) / step)));
@@ -192,7 +198,7 @@ export function analyzeClose(
       edge: edgeOf(wi, worstRange),
     },
     profitZone,
-    breakevens: bes,
+    breakevens: breakevens(curve),
     pnlAtSpot: expiryPnl(legs, spot, extraCost),
     curve,
     table: rows.map((r) => ({ ...r, isCurrent: r.price === center, isBest: !tableFlat && r.pnl === tableBest })),
