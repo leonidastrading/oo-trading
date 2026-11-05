@@ -123,8 +123,8 @@ export function toSimTrades(trades: OOTrade[]): SimTrade[] {
  * contracts = floor(allocation × funds at entry ÷ margin per contract), so the allocation is the largest
  * contracts × margin ÷ funds across a strategy's entries (exact to ~0.01%; snapped to 0.1% when that close).
  * Funds at entry are rebuilt from the log: the starting funds plus the P/L of trades closed before it.
- * A strategy that always trades 1 contract is a 100% / 1-contract add-on; one that repeatedly hits the same
- * top size gets that as its contract cap.
+ * A strategy that always trades 1 contract is a 100% / 1-contract add-on; one whose top-size entries could have
+ * afforded another contract gets that size as its contract cap.
  */
 export function impliedAllocations(trades: OOTrade[]): Record<string, StrategyAlloc> {
   // Sizing differs between OO runs: read it from one run per strategy (the upload with the most of its rows).
@@ -168,16 +168,18 @@ export function impliedAllocations(trades: OOTrade[]): Record<string, StrategyAl
     });
   }
 
-  const by = new Map<string, { ratio: number; contracts: number[] }>();
+  // ratio: contracts × margin ÷ funds (≤ the allocation); next: the same with one more contract (> it, unless capped).
+  const by = new Map<string, { ratio: number; contracts: number[]; nextAtTop: number[] }>();
   for (const t of rows) {
     const name = t.strategy.trim();
     if (withMargin.has(name) && !(typeof t.margin === "number" && t.margin > 0)) continue;
     const [sim] = toSimTrades([t]);
     const funds = fundsAt.get(t.source ?? "")!(openKey(t));
     if (!sim || !(funds > 0)) continue;
-    const v = by.get(name) ?? { ratio: 0, contracts: [] };
+    const v = by.get(name) ?? { ratio: 0, contracts: [], nextAtTop: [] };
     v.ratio = Math.max(v.ratio, (t.contracts * sim.riskPerLot) / funds);
     v.contracts.push(t.contracts);
+    v.nextAtTop.push(((t.contracts + 1) * sim.riskPerLot) / funds);
     by.set(name, v);
   }
   const out: Record<string, StrategyAlloc> = {};
@@ -186,8 +188,9 @@ export function impliedAllocations(trades: OOTrade[]): Record<string, StrategyAl
       out[s] = { pct: 100, maxContracts: 1 };
       continue;
     }
+    // A contract cap shows as entries at the top size that could have afforded another contract.
     const top = Math.max(...v.contracts);
-    const capped = v.contracts.filter((c) => c === top).length >= Math.max(3, v.contracts.length * 0.3);
+    const capped = v.contracts.some((c, i) => c === top && v.nextAtTop[i] < v.ratio * 0.999);
     let pct = Math.round(v.ratio * 10_000) / 100;
     if (Math.abs(pct - Math.round(pct * 10) / 10) <= 0.011) pct = Math.round(pct * 10) / 10;
     out[s] = { pct, ...(capped ? { maxContracts: top } : {}) };
@@ -494,6 +497,8 @@ export type Objective = "pl" | "cagr" | "mar" | "sharpe" | "sortino" | "dd";
 
 export interface OptimizeOptions {
   objective: Objective;
+  /** Set by optimize(): fewest trades a result may have (MIN_TRADE_SHARE of the starting point's). */
+  minTrades?: number;
   /** Strategies the search may change; the rest keep their allocation. */
   include: string[];
   /** Limits as fractions (0.25 = 25%); null = no limit. */
@@ -520,7 +525,13 @@ export interface OptimizeResult {
   runs: number;
 }
 
+/** MAR's drawdown floor: below 1% a drawdown is too small to rank on (a near-empty book would score huge). */
+const MAR_DD_FLOOR = 0.01;
+/** A suggestion must keep at least this share of the starting point's trades, so "switch nearly everything off" can't win. */
+const MIN_TRADE_SHARE = 0.25;
+
 function score(r: SimResult, o: OptimizeOptions): number {
+  if (o.minTrades !== undefined && r.trades < o.minTrades) return -Infinity;
   if (o.maxAvgMargin !== null && r.avgMarginUtil > o.maxAvgMargin) return -Infinity;
   if (o.maxPeakMargin !== null && r.maxMarginUtil > o.maxPeakMargin) return -Infinity;
   if (o.maxDrawdown !== null && -r.maxDdPct > o.maxDrawdown) return -Infinity;
@@ -531,7 +542,7 @@ function score(r: SimResult, o: OptimizeOptions): number {
     case "cagr":
       return r.cagr ?? -Infinity;
     case "mar":
-      return r.mar ?? -Infinity;
+      return r.cagr !== null ? r.cagr / Math.max(-r.maxDdPct, MAR_DD_FLOOR) : -Infinity;
     case "sharpe":
       return r.sharpe ?? -Infinity;
     case "sortino":
@@ -558,6 +569,7 @@ export async function optimize(
   const maxPct = o.maxPct ?? 20;
   let alloc = { ...start };
   let best = simulate(trades, alloc, equity);
+  o = { ...o, minTrades: Math.ceil(best.trades * MIN_TRADE_SHARE) };
   let bestScore = score(best, o);
   let runs = 1;
   // Start infeasible (e.g. margin above the limit)? Scale everything down until it fits.
