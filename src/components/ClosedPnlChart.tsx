@@ -85,8 +85,13 @@ export function ClosedPnlChart({ points }: { points: ClosedPoint[] }) {
           </LineChart>
         </ResponsiveContainer>
       </div>
-      <div className="overflow-x-auto">
-        <table className="data w-full text-sm">
+      <div>
+        <table className="data w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-24" />
+            <col />
+            <col className="w-28" />
+          </colgroup>
           <thead>
             <tr>
               <th>Closed</th>
@@ -97,12 +102,12 @@ export function ClosedPnlChart({ points }: { points: ClosedPoint[] }) {
           <tbody>
             {points.map((p, i) => (
               <tr key={i}>
-                <td className="whitespace-nowrap">{p.expired ? "4:00 expired" : timeET(p.time)}</td>
-                <td>
+                <td className="whitespace-nowrap">{p.expired ? "Expired" : timeET(p.time)}</td>
+                <td className="whitespace-normal">
                   {p.strategy && <span className="font-medium">{displayName(names, p.strategy)} · </span>}
-                  <span className="text-ink-2">{p.label}</span>
+                  <span className="text-ink-2">{p.label.replace(/ · expired$/, "")}</span>
                 </td>
-                <td className={`num ${plClass(p.realized)}`}>{money(p.realized, { sign: true })}</td>
+                <td className={`num whitespace-nowrap ${plClass(p.realized)}`}>{money(p.realized, { sign: true })}</td>
               </tr>
             ))}
           </tbody>
