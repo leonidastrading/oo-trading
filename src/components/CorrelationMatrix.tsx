@@ -74,7 +74,7 @@ export function CorrelationMatrix({ trades, strategies, label }: { trades: SimTr
                       style={{ background: i === j ? "var(--surface-2)" : shade(r) }}
                       title={`${label(a)} vs ${label(b)}: ${r === null ? "n/a" : r.toFixed(2)}`}
                     >
-                      {i === j ? "—" : r === null ? "·" : r.toFixed(2)}
+                      {i === j ? "—" : r === null ? "·" : (Math.abs(r) < 0.005 ? 0 : r).toFixed(2)}
                     </td>
                   );
                 })}
