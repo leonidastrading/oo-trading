@@ -8,6 +8,7 @@ import { addDays, todayET } from "@/lib/time";
 import { money, plClass } from "./format";
 import { ordered } from "./Arrangeable";
 import { MonthlyReturnsChart } from "./MonthlyReturnsChart";
+import { CorrelationMatrix } from "./CorrelationMatrix";
 import { OptimizerPanel } from "./OptimizerPanel";
 import { RangeSlider } from "./RangeSlider";
 
@@ -291,6 +292,8 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
           }}
         />
       )}
+
+      <CorrelationMatrix trades={simTrades} strategies={rows} label={shortName} />
 
       {sim.equity.length > 1 && (
         <div className="card flex h-96 flex-col p-3 md:h-[28rem]">
