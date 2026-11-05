@@ -293,7 +293,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
         />
       )}
 
-      <CorrelationMatrix trades={simTrades} strategies={rows} label={shortName} />
+      <CorrelationMatrix daily={sim.daily} strategies={rows} label={shortName} />
 
       {sim.equity.length > 1 && (
         <div className="card flex h-96 flex-col p-3 md:h-[28rem]">

@@ -246,6 +246,8 @@ export interface SimResult {
   equity: { date: string; equity: number; dd: number }[];
   /** Entries skipped by each strategy's VIX range. */
   vixSkipped: Record<string, number>;
+  /** Each strategy's sized P/L per day ($, by close date, aligned with `days`), e.g. for correlations. */
+  daily: { days: string[]; pl: Record<string, number[]> };
 }
 
 interface Sized extends SimTrade {
@@ -473,6 +475,12 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
     months,
     equity,
     vixSkipped,
+    daily: (() => {
+      const at = new Map(days.map((d, i) => [d, i]));
+      const pl: Record<string, number[]> = {};
+      for (const t of sized) (pl[t.strategy] ??= new Array<number>(days.length).fill(0))[at.get(t.closeDate)!] += t.pl;
+      return { days, pl };
+    })(),
   };
 }
 
