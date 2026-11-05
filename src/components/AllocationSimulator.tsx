@@ -36,6 +36,8 @@ interface Saved {
   equity: number;
   range: number;
   alloc: Record<string, StrategyAlloc>;
+  /** The OO setting (from the log) each slider tweak was made against; a new log with a different one resets it. */
+  base?: Record<string, number>;
   mode?: Mode;
   lots?: Record<string, number>;
   /** Strategies whose next trade after a stop-out is doubled. */
@@ -72,10 +74,11 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
 
 export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; colorOf: (s: string) => string }) {
   const strategies = useMemo(() => [...new Set(trades.map((t) => t.strategy.trim()))].sort(), [trades]);
-  // Your Schwab Port 2026 settings where the strategy is known; otherwise the sizing read from the log.
+  // The OO settings the uploaded log was run with, read from its sizing (so a re-run with new allocations shows
+  // up as soon as it's uploaded); the built-in Schwab Port 2026 settings only when a strategy can't be read.
   const defaults = useMemo(() => {
     const implied = impliedAllocations(trades);
-    return Object.fromEntries(strategies.map((s) => [s, portfolioAlloc(s) ?? implied[s] ?? { pct: 1 }]));
+    return Object.fromEntries(strategies.map((s) => [s, implied[s] ?? portfolioAlloc(s) ?? { pct: 1 }]));
   }, [trades, strategies]);
   const [equity, setEquity] = useState(1_000_000);
   const [range, setRange] = useState(0);
@@ -88,6 +91,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   const [vixRange, setVixRange] = useState<Record<string, VixRange>>({});
   const [dragging, setDragging] = useState<string | null>(null);
 
+  const [base, setBase] = useState<Record<string, number>>({});
   // Restore this device's last settings after hydration.
   const [restored, setRestored] = useState(false);
   useEffect(() => {
@@ -99,6 +103,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       setEquity(s.equity > 0 ? s.equity : 1_000_000);
       setRange(s.range >= 0 && s.range < RANGES.length ? s.range : 0);
       setAlloc(s.alloc ?? {});
+      setBase(s.base ?? {});
       setMode(s.mode === "lots" ? "lots" : "pct");
       setLots(s.lots ?? {});
       setDoubled(new Set(s.doubled ?? []));
@@ -109,9 +114,22 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
   useEffect(() => {
     if (!restored) return; // don't overwrite the saved settings with the defaults on first render
     try {
-      localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc, mode, lots, doubled: [...doubled], order, vix: vixRange } satisfies Saved));
+      localStorage.setItem(STORE, JSON.stringify({ equity, range, alloc, base, mode, lots, doubled: [...doubled], order, vix: vixRange } satisfies Saved));
     } catch {}
-  }, [restored, equity, range, alloc, mode, lots, doubled, order, vixRange]);
+  }, [restored, equity, range, alloc, base, mode, lots, doubled, order, vixRange]);
+  // When the uploaded log's OO setting for a strategy changes, drop that strategy's slider tweak so the slider
+  // follows the new setting.
+  useEffect(() => {
+    if (!restored || !trades.length) return;
+    const now = Object.fromEntries(Object.entries(defaults).map(([k, v]) => [k, v.pct]));
+    const changed = Object.keys(now).filter((k) => base[k] !== undefined && base[k] !== now[k]);
+    const same = Object.keys(now).length === Object.keys(base).length && Object.keys(now).every((k) => base[k] === now[k]);
+    if (same) return;
+    void Promise.resolve().then(() => {
+      if (changed.length) setAlloc((a) => Object.fromEntries(Object.entries(a).filter(([k]) => !changed.includes(k))));
+      setBase(now);
+    });
+  }, [restored, trades.length, defaults, base]);
 
   const effective = useMemo(() => {
     const out: Record<string, StrategyAlloc> = {};

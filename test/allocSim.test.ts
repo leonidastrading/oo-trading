@@ -54,11 +54,19 @@ describe("allocation simulator", () => {
   });
 
   it("infers OO's sizing, including a contract cap", () => {
+    // 10% of $1M, capped at 50 contracts: cheap entries ($1,000/lot) hit the cap; a $4,000/lot entry gets 25.
     const rows = [1, 2, 3, 4, 5].map((i) =>
-      t({ dateOpened: `2026-03-0${i}`, dateClosed: `2026-03-0${i}`, contracts: 50, margin: 50_000, fundsAtClose: 4_000_000 + 2000, pl: 2000 }),
+      t({ dateOpened: `2026-03-0${i}`, dateClosed: `2026-03-0${i}`, contracts: 50, margin: 50_000, fundsAtClose: 1_000_000, pl: 0 }),
     );
-    rows.push(t({ dateOpened: "2026-03-09", dateClosed: "2026-03-09", contracts: 40, margin: 40_000, fundsAtClose: 400_000 + 2000, pl: 2000 }));
+    rows.push(t({ dateOpened: "2026-03-09", dateClosed: "2026-03-09", contracts: 25, margin: 100_000, fundsAtClose: 1_000_000, pl: 0 }));
     expect(impliedAllocations(rows).PS).toEqual({ pct: 10, maxContracts: 50 });
+  });
+
+  it("reads funds at entry from the log's running P/L", () => {
+    // Starts at $100k; the first trade makes $10k, so the second (7.2% of $110k at $1,000/lot) gets 7 contracts.
+    const a = t({ dateOpened: "2026-03-02", dateClosed: "2026-03-02", contracts: 7, margin: 7_000, fundsAtClose: 110_000, pl: 10_000 });
+    const b = t({ dateOpened: "2026-03-03", dateClosed: "2026-03-03", contracts: 7, margin: 7_000, fundsAtClose: 110_500, pl: 500 });
+    expect(impliedAllocations([a, b]).PS.pct).toBe(7);
   });
 });
 
