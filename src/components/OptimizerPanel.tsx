@@ -284,6 +284,23 @@ export function OptimizerPanel({
                     );
                   })}
                 </tbody>
+                <tfoot>
+                  {(() => {
+                    const lotsMode = unit === "lots";
+                    // Total of the sizing column; a 1-contract add-on at 100% (the Dip) isn't a share of equity, so it's left out.
+                    const val = (x?: StrategyAlloc) => (lotsMode ? (x?.fixed ?? 0) : x && x.pct < 100 ? x.pct : 0);
+                    const a = strategies.reduce((t, s) => t + val(alloc[s]), 0);
+                    const b = strategies.reduce((t, s) => t + val(result.alloc[s]), 0);
+                    const fmt = (v: number) => (lotsMode ? `${v} lots` : `${Math.round(v * 100) / 100}%`);
+                    return (
+                      <tr className="font-semibold">
+                        <td>Total</td>
+                        <td>{fmt(a)}</td>
+                        <td className={b > a ? "text-gain" : b < a ? "text-loss" : "text-ink-2"}>{fmt(b)}</td>
+                      </tr>
+                    );
+                  })()}
+                </tfoot>
               </table>
             </div>
             <div className="overflow-x-auto">
