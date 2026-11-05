@@ -15,8 +15,13 @@ export interface StreakRow {
   byN: Record<number, { runs: number; pct: number }>;
 }
 
-/** Back-to-back stop-outs per strategy, in entry order (OO's "Stop Loss" closes), worst first. */
-export function stopStreaks(trades: SimTrade[]): StreakRow[] {
+export type StreakKind = "stop" | "loss";
+/** A stop-out (OO closed it with a stop loss), or any losing trade (stop, expiry or time exit at a loss). */
+const isBad = (kind: StreakKind) => (t: SimTrade) => (kind === "stop" ? t.stopped : t.plPerLot < 0);
+
+/** Back-to-back stop-outs (or losses) per strategy, in entry order, worst first. */
+export function stopStreaks(trades: SimTrade[], kind: StreakKind = "stop"): StreakRow[] {
+  const bad = isBad(kind);
   const by = new Map<string, SimTrade[]>();
   for (const t of trades) by.set(t.strategy, [...(by.get(t.strategy) ?? []), t]);
   const rows: StreakRow[] = [];
@@ -25,7 +30,7 @@ export function stopStreaks(trades: SimTrade[]): StreakRow[] {
     const runs: number[] = [];
     let run = 0;
     for (const t of ts) {
-      if (t.stopped) run++;
+      if (bad(t)) run++;
       else if (run) {
         runs.push(run);
         run = 0;
@@ -37,7 +42,7 @@ export function stopStreaks(trades: SimTrade[]): StreakRow[] {
       const long = runs.filter((r) => r >= n);
       byN[n] = { runs: long.length, pct: ts.length ? long.reduce((s, r) => s + r, 0) / ts.length : 0 };
     }
-    rows.push({ strategy, trades: ts.length, stops: ts.filter((t) => t.stopped).length, longest: Math.max(0, ...runs), byN });
+    rows.push({ strategy, trades: ts.length, stops: ts.filter(bad).length, longest: Math.max(0, ...runs), byN });
   }
   // Worst first: longest streak, then how often 3+ and 2+ stops come in a row.
   return rows.sort((a, b) => b.longest - a.longest || b.byN[3].pct - a.byN[3].pct || b.byN[2].pct - a.byN[2].pct);
@@ -46,13 +51,14 @@ export function stopStreaks(trades: SimTrade[]): StreakRow[] {
 const pct = (v: number) => (v === 0 ? "—" : `${(v * 100).toFixed(1)}%`);
 const heat = (v: number) => (v === 0 ? "transparent" : `rgba(230, 103, 103, ${Math.min(0.75, 0.15 + v * 4)})`);
 
-export function StopStreaks({ trades, label }: { trades: SimTrade[]; label: (s: string) => string }) {
-  const rows = useMemo(() => stopStreaks(trades), [trades]);
+export function StopStreaks({ trades, label, kind = "stop" }: { trades: SimTrade[]; label: (s: string) => string; kind?: StreakKind }) {
+  const rows = useMemo(() => stopStreaks(trades, kind), [trades, kind]);
   if (!rows.length) return null;
+  const word = kind === "stop" ? "stop-outs" : "losses";
   return (
     <section className="card space-y-2 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-bold text-accent">Stop-outs in a row</h3>
+        <h3 className="font-bold text-accent">{kind === "stop" ? "Stop-outs in a row" : "Losses in a row"}</h3>
         <span className="text-xs text-muted">per strategy, worst first, in the selected range</span>
       </div>
       <div className="overflow-x-auto">
@@ -61,7 +67,7 @@ export function StopStreaks({ trades, label }: { trades: SimTrade[]; label: (s: 
             <tr>
               <th>Strategy</th>
               <th>Trades</th>
-              <th>Stops</th>
+              <th>{kind === "stop" ? "Stops" : "Losses"}</th>
               {STREAKS.map((n) => (
                 <th key={n}>{n}+ in a row</th>
               ))}
@@ -79,7 +85,12 @@ export function StopStreaks({ trades, label }: { trades: SimTrade[]; label: (s: 
                   {r.stops} <span className="text-xs text-muted">({pct(r.trades ? r.stops / r.trades : 0)})</span>
                 </td>
                 {STREAKS.map((n) => (
-                  <td key={n} className="num" style={{ background: heat(r.byN[n].pct) }} title={`${r.byN[n].runs} run${r.byN[n].runs === 1 ? "" : "s"} of ${n}+ stops`}>
+                  <td
+                    key={n}
+                    className="num"
+                    style={{ background: heat(r.byN[n].pct) }}
+                    title={`${r.byN[n].runs} run${r.byN[n].runs === 1 ? "" : "s"} of ${n}+ ${word}`}
+                  >
                     {pct(r.byN[n].pct)}
                     {r.byN[n].runs > 0 && <span className="block text-[10px] text-ink-2">{r.byN[n].runs}×</span>}
                   </td>
@@ -91,9 +102,12 @@ export function StopStreaks({ trades, label }: { trades: SimTrade[]; label: (s: 
         </table>
       </div>
       <p className="text-xs text-muted">
-        Each strategy&apos;s trades in entry order; a stop is a trade OO closed with a stop loss. &quot;N+ in a row&quot; = share of the
-        strategy&apos;s trades that were part of a run of at least N back-to-back stop-outs (below it: how many such runs). Sorted by the
-        longest run, then by how often 3+ and 2+ stops came together.
+        Each strategy&apos;s trades in entry order;{" "}
+        {kind === "stop"
+          ? "a stop is a trade OO closed with a stop loss."
+          : "a loss is any trade that lost money, whether stopped out, expired at a loss or closed at its time exit."}{" "}
+        &quot;N+ in a row&quot; = share of the strategy&apos;s trades that were part of a run of at least N back-to-back {word} (below it:
+        how many such runs). Sorted by the longest run, then by how often 3+ and 2+ {word} came together.
       </p>
     </section>
   );
