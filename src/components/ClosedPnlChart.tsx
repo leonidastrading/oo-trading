@@ -3,6 +3,7 @@
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ClosedPoint } from "@/lib/views";
 import { money, plClass } from "./format";
+import { displayName, useStrategyNames } from "./useStrategyNames";
 
 const compact = (v: number) =>
   Math.abs(v) >= 1000 ? `${v < 0 ? "−" : ""}$${(Math.abs(v) / 1000).toFixed(Math.abs(v) >= 10000 ? 0 : 1)}k` : money(v);
@@ -11,10 +12,11 @@ const timeET = (ms: number) =>
   new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }).format(new Date(ms));
 
 export function ClosedPnlChart({ points }: { points: ClosedPoint[] }) {
+  const names = useStrategyNames();
   if (points.length === 0) return null;
   const total = points[points.length - 1].cum;
   const winners = points.filter((p) => p.realized > 0).length;
-  const data = [{ i: 0, cum: 0, time: 0, label: "Start", realized: 0, expired: false }, ...points.map((p, i) => ({ ...p, i: i + 1 }))];
+  const data = [{ i: 0, cum: 0, time: 0, label: "Start", strategy: null as string | null, realized: 0, expired: false }, ...points.map((p, i) => ({ ...p, i: i + 1 }))];
 
   return (
     <section className="card space-y-2 p-4 md:p-5">
@@ -37,7 +39,10 @@ export function ClosedPnlChart({ points }: { points: ClosedPoint[] }) {
               type="number"
               domain={[0, data.length - 1]}
               ticks={data.map((d) => d.i)}
-              tickFormatter={(i: number) => (i === 0 ? "" : data[i].expired ? "settle" : timeET(data[i].time))}
+              // One "settle" tick for all of the session's expirations.
+              tickFormatter={(i: number) =>
+                i === 0 ? "" : data[i].expired ? (data[i - 1]?.expired ? "" : "settle") : timeET(data[i].time)
+              }
               tick={{ fill: "var(--muted)", fontSize: 11 }}
               tickLine={false}
               axisLine={{ stroke: "var(--axis)" }}
@@ -71,15 +76,41 @@ export function ClosedPnlChart({ points }: { points: ClosedPoint[] }) {
               itemStyle={{ color: "var(--ink)" }}
               labelFormatter={(i) => {
                 const d = data[Number(i)];
-                return d.i === 0 ? "Start" : `${d.expired ? "4:00 PM settlement" : timeET(d.time)} · ${d.label} ${money(d.realized, { sign: true })}`;
+                return d.i === 0
+                  ? "Start"
+                  : `${d.expired ? "4:00 PM settlement" : timeET(d.time)} · ${d.strategy ? `${displayName(names, d.strategy)} · ` : ""}${d.label} ${money(d.realized, { sign: true })}`;
               }}
               formatter={(v) => [money(Number(v), { sign: true }), "Cumulative"]}
             />
           </LineChart>
         </ResponsiveContainer>
       </div>
+      <div className="overflow-x-auto">
+        <table className="data w-full text-sm">
+          <thead>
+            <tr>
+              <th>Closed</th>
+              <th>Trade</th>
+              <th>P/L</th>
+            </tr>
+          </thead>
+          <tbody>
+            {points.map((p, i) => (
+              <tr key={i}>
+                <td className="whitespace-nowrap">{p.expired ? "4:00 expired" : timeET(p.time)}</td>
+                <td>
+                  {p.strategy && <span className="font-medium">{displayName(names, p.strategy)} · </span>}
+                  <span className="text-ink-2">{p.label}</span>
+                </td>
+                <td className={`num ${plClass(p.realized)}`}>{money(p.realized, { sign: true })}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       <p className="text-xs text-muted">
-        Each dot is one closed trade (Schwab order), net of fees; today&apos;s expirations land at the 4:00 PM settlement.{" "}
+        Each dot is one closed trade (Schwab order), net of fees; each expiring trade is its own dot at the 4:00 PM settlement, at its
+        full P/L (a trade that expires worthless keeps its whole credit).{" "}
         <span className="text-gain">●</span> winner <span className="text-loss">●</span> loser
       </p>
     </section>

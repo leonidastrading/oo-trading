@@ -6,6 +6,7 @@ import { analyzeClose, expiryPnl, type CloseAnalysis, type OptionLeg } from "./o
 import { countOpenEntries, feesOn, groupClosesByOrder, openLots, realizedOn, type ClosedOrder, type Fill } from "./realized";
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
 import { tokenStatus, type TokenStatus } from "./schwab/tokens";
+import { classifyBookEntry } from "./strategyRules";
 import { classifySpread, groupSpreads, splitByEntry, toLeg, type Position, type SpreadGroup } from "./spreads";
 import { closedMaxAge, etMidnightUtc, expiryFocusDate, etParts, lastSessionDate, MANUAL_REFRESH_MIN_MS, marketSession, refreshPolicy, todayET, type MarketPhase } from "./time";
 
@@ -32,25 +33,36 @@ export interface ExpiryChart {
   expiration: string;
 }
 
-/** One closed trade (Schwab order, or today's expirations at settlement) on the cumulative closed-P/L line. */
+/** One closed trade (Schwab order, or an entry's expiration at settlement) on the cumulative closed-P/L line. */
 export interface ClosedPoint {
   time: number;
   label: string;
+  /** Book strategy, when its structure matches one (strategyRules.ts). */
+  strategy: string | null;
   realized: number;
   cum: number;
   expired: boolean;
 }
 
-/** Today's closed orders in close order with a running total; ends at pl.closed. */
+/** Today's closed orders in close order with a running total; ends at pl.closed. Expirations sit at the settlement. */
 export function closedCurve(orders: ClosedOrder[], settleTime: number): ClosedPoint[] {
   let cum = 0;
   return orders
-    .map((o) => ({ o, time: o.pending ? settleTime : o.time }))
+    .map((o) => ({ o, time: o.pending || o.settled ? settleTime : o.time }))
     .sort((a, b) => a.time - b.time)
     .map(({ o, time }) => {
       cum = Math.round((cum + o.realized) * 100) / 100;
-      const legs = o.legs.map((l) => ({ putCall: l.fill.putCall, strike: l.fill.strike, qty: -Math.sign(l.fill.qty) * l.closedQty }));
-      return { time, label: `${o.underlying} ${o.pending ? "expired" : classifySpread(legs)}`, realized: o.realized, cum, expired: !!o.pending };
+      // The legs as they were opened (closing fills run the other way).
+      const legs = o.legs.map((l) => ({
+        putCall: l.fill.putCall,
+        strike: l.fill.strike,
+        qty: -Math.sign(l.fill.qty) * l.closedQty,
+        expiration: l.fill.expiration,
+      }));
+      const opened = o.legs.find((l) => l.openTime)?.openTime;
+      const strategy = opened ? classifyBookEntry(legs, etParts(opened).date, etParts(opened).minutesOfDay) : null;
+      const expired = !!o.pending || !!o.settled;
+      return { time, label: `${o.underlying} ${classifySpread(legs)}${expired ? " · expired" : ""}`, strategy, realized: o.realized, cum, expired };
     });
 }
 
@@ -124,7 +136,15 @@ export function splitExpired(
     ...pending.map((p) => p.symbol),
     ...settledSymbols(fills, opts.today),
   ]);
-  const orders = expiredOrders(pending, opts);
+  // One closed row per entry (each strategy's expired trade at its own P/L), not one lump per underlying.
+  const byEntry = new Map<string, Position[]>();
+  for (const p of splitByEntry(pending, openLots(fills))) byEntry.set(p.entryKey ?? "", [...(byEntry.get(p.entryKey ?? "") ?? []), p]);
+  const orders = [...byEntry].flatMap(([key, ps]) =>
+    expiredOrders(ps, opts, key).map((o) => ({
+      ...o,
+      legs: o.legs.map((l) => ({ ...l, openTime: ps[0].enteredAt ?? undefined })),
+    })),
+  );
   return {
     open: positions.filter((p) => !gone.has(p.symbol)),
     pending,

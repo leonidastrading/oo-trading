@@ -199,3 +199,15 @@ describe("expiryFocusDate", () => {
     expect(expiryFocusDate(Date.parse("2026-11-04T10:00:00Z"))).toBe("2026-11-04"); // Wed 05:00 ET
   });
 });
+
+describe("settled expirations group by entry", () => {
+  it("puts each entry's posted settlement legs in one closed trade", () => {
+    const leg = (symbol: string, openOrderId: string, realized: number) =>
+      ({ fill: { symbol, orderId: `settle-${symbol}`, settlement: true, time: 1, underlying: "SPX" }, closedQty: 1, realized, openOrderId }) as never;
+    const orders = groupClosesByOrder([leg("A", "ic", 300), leg("B", "ic", -50), leg("C", "bwb", 120)]);
+    expect(orders.map((o) => [o.orderId, o.realized, o.settled]).sort()).toEqual([
+      ["settled:bwb", 120, true],
+      ["settled:ic", 250, true],
+    ]);
+  });
+});

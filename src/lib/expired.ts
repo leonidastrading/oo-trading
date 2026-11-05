@@ -77,8 +77,11 @@ export function pendingExpired(positions: Position[], o: ExpiredOpts): Position[
   );
 }
 
-/** One "Expired (pending Schwab posting)" closed row per underlying, valued at settlement. */
-export function expiredOrders(pending: Position[], o: ExpiredOpts): ClosedOrder[] {
+/**
+ * "Expired (pending Schwab posting)" closed rows valued at settlement: one per underlying, or per entry when
+ * `group` names the entry (its orderId gets that suffix).
+ */
+export function expiredOrders(pending: Position[], o: ExpiredOpts, group?: string): ClosedOrder[] {
   const byUnderlying = new Map<string, Position[]>();
   for (const p of pending) byUnderlying.set(p.underlying, [...(byUnderlying.get(p.underlying) ?? []), p]);
   return [...byUnderlying].map(([underlying, ps]) => {
@@ -89,7 +92,7 @@ export function expiredOrders(pending: Position[], o: ExpiredOpts): ClosedOrder[
       const fill: Fill = {
         id: `expired-${p.symbol}`,
         time: 0,
-        orderId: `expired-${underlying}-${o.sessionDate}`,
+        orderId: `expired-${underlying}-${o.sessionDate}${group ? `-${group}` : ""}`,
         type: "EXPIRED_PENDING",
         symbol: p.symbol,
         assetType: p.assetType,
@@ -109,7 +112,7 @@ export function expiredOrders(pending: Position[], o: ExpiredOpts): ClosedOrder[
       return { fill, closedQty: Math.abs(p.qty), realized };
     });
     return {
-      orderId: `expired-${underlying}-${o.sessionDate}`,
+      orderId: `expired-${underlying}-${o.sessionDate}${group ? `-${group}` : ""}`,
       time: 0,
       underlying,
       legs,

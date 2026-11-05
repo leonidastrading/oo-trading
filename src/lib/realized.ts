@@ -140,6 +140,9 @@ export interface ClosedLeg {
   closedQty: number;
   /** null when the opening lot predates the lookback window. */
   realized: number | null;
+  /** The opening order (and its time) this close was matched to, when known. */
+  openOrderId?: string;
+  openTime?: number;
 }
 
 interface Lot {
@@ -153,7 +156,7 @@ interface Lot {
 /** FIFO-match fills; calls onClose for each closing fill and returns the still-open lots per symbol. */
 function runFifo(
   fills: Fill[],
-  onClose?: (f: Fill, matched: number, realized: number, unmatched: number) => void,
+  onClose?: (f: Fill, matched: number, realized: number, unmatched: number, opened: { orderId: string; time: number } | null) => void,
 ): Map<string, Lot[]> {
   const lots = new Map<string, Lot[]>();
   // Symbols traded by each order, so a closing order can find the entry it belongs to.
@@ -186,8 +189,10 @@ function runFifo(
     const closeCashPerUnit = f.cash / Math.abs(f.qty);
     let realized = 0;
     let matched = 0;
+    let opened: { orderId: string; time: number } | null = null;
     while (remaining > 0 && queue.length && Math.sign(queue[0].qty) !== Math.sign(f.qty)) {
       const lot = queue[0];
+      opened ??= { orderId: lot.orderId, time: lot.time };
       const m = Math.min(remaining, Math.abs(lot.qty));
       realized += (lot.cashPerUnit + closeCashPerUnit) * m;
       matched += m;
@@ -195,7 +200,7 @@ function runFifo(
       lot.qty -= Math.sign(lot.qty) * m;
       if (lot.qty === 0) queue.shift();
     }
-    onClose?.(f, matched, realized, remaining);
+    onClose?.(f, matched, realized, remaining, opened);
   }
   return lots;
 }
@@ -206,9 +211,10 @@ function runFifo(
  */
 export function realizedOn(fills: Fill[], date: string): ClosedLeg[] {
   const out: ClosedLeg[] = [];
-  runFifo(fills, (f, matched, realized, remaining) => {
+  runFifo(fills, (f, matched, realized, remaining, opened) => {
     if (f.bookDate !== date) return;
-    if (matched > 0) out.push({ fill: f, closedQty: matched, realized: round2(realized) });
+    if (matched > 0)
+      out.push({ fill: f, closedQty: matched, realized: round2(realized), ...(opened ? { openOrderId: opened.orderId, openTime: opened.time } : {}) });
     if (remaining > 0) out.push({ fill: f, closedQty: remaining, realized: null });
   });
   return out;
@@ -237,18 +243,23 @@ export interface ClosedOrder {
   unknownBasis: boolean;
   /** Set for expired options valued at settlement that Schwab hasn't posted yet. */
   pending?: { settle: number };
+  /** Expired options Schwab has settled (posted overnight), grouped by the entry they belonged to. */
+  settled?: boolean;
 }
 
 export function groupClosesByOrder(closes: ClosedLeg[]): ClosedOrder[] {
   const map = new Map<string, ClosedOrder>();
   for (const c of closes) {
+    // Schwab posts each expired leg as its own settlement; group those by the entry they closed instead.
+    const settled = c.fill.settlement && !!c.openOrderId;
+    const key = settled ? `settled:${c.openOrderId}` : c.fill.orderId;
     const o =
-      map.get(c.fill.orderId) ??
-      ({ orderId: c.fill.orderId, time: c.fill.time, underlying: c.fill.underlying, legs: [], realized: 0, unknownBasis: false } as ClosedOrder);
+      map.get(key) ??
+      ({ orderId: key, time: c.fill.time, underlying: c.fill.underlying, legs: [], realized: 0, unknownBasis: false, ...(settled ? { settled: true } : {}) } as ClosedOrder);
     o.legs.push(c);
     if (c.realized === null) o.unknownBasis = true;
     else o.realized = round2(o.realized + c.realized);
-    map.set(c.fill.orderId, o);
+    map.set(key, o);
   }
   return [...map.values()].sort((a, b) => b.time - a.time);
 }
