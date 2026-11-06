@@ -188,7 +188,7 @@ export default function LivePage() {
           { id: "tiles", label: "P/L, SPX & fees", node: tilesPanel },
           { id: "expiry", label: "Best SPX close / expiry chart", node: expiryPanel },
           { id: "closed", label: "Closed P/L today", node: <ClosedPnlChart points={data?.closedCurve ?? []} /> },
-          { id: "spx", label: "SPX chart", node: <SpxDayChart best={bestCloseLine(spxExpiry)} /> },
+          { id: "spx", label: "SPX chart", node: <SpxDayChart best={bestCloseLine(spxExpiry)} spot={spx} /> },
           { id: "expiring", label: "Expiring today", node: expiringPanel },
           { id: "other", label: "Other positions", node: otherPanel },
         ]}

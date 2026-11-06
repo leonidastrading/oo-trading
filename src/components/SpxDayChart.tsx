@@ -127,7 +127,21 @@ export interface BestCloseLine {
   high?: number;
 }
 
-export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
+/** The chart's main series and its bars, so the live quote can move the last candle between candle fetches. */
+interface LiveSeries {
+  series: ISeriesApi<SeriesType>;
+  style: Style;
+  isDaily: boolean;
+  bars: Ohlc[];
+  anchor: number;
+  shift: number;
+  step: number;
+  sessionEnd: number;
+  dayStart: number;
+}
+
+export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?: { last: number | null; time: number | null } | null }) {
+  const liveRef = useRef<LiveSeries | null>(null);
   const { data, error } = usePoll<SpxDayData>("/api/spx-day");
   const names = useStrategyNames();
   const box = useRef<HTMLDivElement>(null);
@@ -219,6 +233,7 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       series = chart.addSeries(CandlestickSeries, { upColor: gain, downColor: loss, borderVisible: false, wickUpColor: gain, wickDownColor: loss });
       series.setData([...bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })), ...whitespace]);
     }
+    liveRef.current = { series, style, isDaily, bars: [...bars], anchor, shift, step, sessionEnd, dayStart };
     // Faint SMA lines of daily closes (the 4/5/8/10-day SMAs the strategies' filters use). Intraday each point is
     // the SMA as it stands at that bar: the prior N−1 daily closes plus the bar's own price as today's close.
     if (showSma && daily?.bars.length) {
@@ -505,10 +520,36 @@ export function SpxDayChart({ best }: { best?: BestCloseLine | null }) {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(relayout);
       overlay?.replaceChildren();
       viewRef.current = { tf, range: chart.timeScale().getVisibleLogicalRange() };
+      liveRef.current = null;
       chart.remove();
       chartRef.current = null;
     };
   }, [data, daily, tf, style, bestPrice, bestHigh, bestPnl, names, showSma]);
+
+  // Between candle fetches (every minute), move the last candle with the live SPX quote (every 15 s on Live).
+  const spotLast = spot?.last ?? null;
+  const spotTime = spot?.time ?? null;
+  useEffect(() => {
+    const L = liveRef.current;
+    if (!L || spotLast === null || spotTime === null) return;
+    const t = Math.floor(spotTime / 1000) + L.shift;
+    if (t < L.anchor || t >= L.anchor + 390 * 60) return; // only during this chart's session (9:30–4:00)
+    const bucket = L.isDaily ? L.dayStart : L.anchor + Math.floor((t - L.anchor) / L.step) * L.step;
+    const last = L.bars[L.bars.length - 1];
+    if (!last || bucket < last.time) return;
+    if (bucket === last.time) {
+      L.bars[L.bars.length - 1] = { ...last, high: Math.max(last.high, spotLast), low: Math.min(last.low, spotLast), close: spotLast };
+    } else {
+      L.bars.push({ time: bucket, open: last.close, high: Math.max(last.close, spotLast), low: Math.min(last.close, spotLast), close: spotLast });
+    }
+    const whitespace: { time: UTCTimestamp }[] = [];
+    if (!L.isDaily) for (let w = L.bars[L.bars.length - 1].time + L.step; w <= L.sessionEnd; w += L.step) whitespace.push({ time: w as UTCTimestamp });
+    const rows =
+      L.style === "line"
+        ? L.bars.map((b) => ({ time: b.time as UTCTimestamp, value: b.close }))
+        : L.bars.map((b) => ({ ...b, time: b.time as UTCTimestamp }));
+    L.series.setData([...rows, ...whitespace]);
+  }, [spotLast, spotTime]);
 
   const dateLabel = data ? new Date(data.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) : "";
 
