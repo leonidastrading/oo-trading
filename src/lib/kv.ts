@@ -185,4 +185,6 @@ export const KEYS = {
   eod: "eod:snapshots",
   /** Display names the viewer chose for the book strategies (canonical name → display name). */
   strategyNames: "settings:strategy-names",
+  /** Live/Today show option positions only (hides cash-like holdings such as money-market ETFs). "0" = show all. */
+  optionsOnly: "settings:options-only",
 } as const;

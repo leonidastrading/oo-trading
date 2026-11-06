@@ -1,6 +1,7 @@
 // Server-side assembly of the Live and Today page payloads.
 import "server-only";
 import { takeManualRefresh } from "./cache";
+import { KEYS, kv } from "./kv";
 import { CASH_SETTLED, expiredOrders, ghostExpired, pendingExpired, settledSymbols } from "./expired";
 import { analyzeClose, expiryPnl, type CloseAnalysis, type OptionLeg } from "./options";
 import { countOpenEntries, feesOn, groupClosesByOrder, openLots, realizedOn, type ClosedOrder, type Fill } from "./realized";
@@ -164,6 +165,16 @@ export function settlementSymbols(positions: Position[], sessionDate: string, fi
   ];
 }
 
+/** Whether Live/Today show option positions only (Settings; on unless turned off). */
+export async function optionsOnly(): Promise<boolean> {
+  return (await kv().get<string>(KEYS.optionsOnly)) !== "0";
+}
+
+/** The positions Live/Today work with: options only unless the setting is off. */
+async function visiblePositions(positions: Position[]): Promise<Position[]> {
+  return (await optionsOnly()) ? positions.filter((p) => p.assetType === "OPTION") : positions;
+}
+
 /**
  * Max cache age: just under the poll interval while open. When closed, marks still move (after-hours and
  * overnight SPX option quotes), so data is refetched every 5 minutes while someone has the page open, and
@@ -210,7 +221,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
   ]);
   for (const e of [acct.error, fills.error]) if (e && !meta.errors.includes(e)) meta.errors.push(e);
   const today = todayET(now);
-  const positions = acct.data?.positions ?? [];
+  const positions = await visiblePositions(acct.data?.positions ?? []);
   const groups = groupSpreads(positions, today);
   const expiryDate = expiryFocusDate(now);
   const todays = groups.filter((g) => g.expiration === expiryDate);
@@ -322,7 +333,7 @@ export async function getTodayData(force = false): Promise<TodayData> {
 
   const allFills = fills.data ?? [];
   const closes = realizedOn(allFills, sessionDate);
-  const allPositions = acct.data?.positions ?? [];
+  const allPositions = await visiblePositions(acct.data?.positions ?? []);
   const settleSymbols = settlementSymbols(allPositions, sessionDate, allFills);
   const quotes = settleSymbols.length
     ? await cachedQuotes(["$SPX", ...settleSymbols.filter((s) => s !== "$SPX")], maxAge(policy.positionsMs), allowForce)
