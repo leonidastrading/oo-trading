@@ -530,23 +530,33 @@ const MAR_DD_FLOOR = 0.01;
 /** A suggestion must keep at least this share of the starting point's trades, so "switch nearly everything off" can't win. */
 const MIN_TRADE_SHARE = 0.25;
 
+/**
+ * Results that break a limit score below every feasible one, by how far they break it (summed relative
+ * excess), so the search can walk an infeasible start toward the limits instead of stopping at it.
+ */
+const INFEASIBLE = -1e15;
+const isFeasible = (sc: number) => sc > INFEASIBLE / 2;
+
 function score(r: SimResult, o: OptimizeOptions): number {
-  if (o.minTrades !== undefined && r.trades < o.minTrades) return -Infinity;
-  if (o.maxAvgMargin !== null && r.avgMarginUtil > o.maxAvgMargin) return -Infinity;
-  if (o.maxPeakMargin !== null && r.maxMarginUtil > o.maxPeakMargin) return -Infinity;
-  if (o.maxDrawdown !== null && -r.maxDdPct > o.maxDrawdown) return -Infinity;
-  if (o.objective === "dd" && o.minPl !== null && o.minPl !== undefined && r.pl < o.minPl) return -Infinity;
+  const over = (v: number, max: number | null | undefined) => (max !== null && max !== undefined && v > max ? (v - max) / Math.max(max, 1e-9) : 0);
+  const violation =
+    (o.minTrades !== undefined && r.trades < o.minTrades ? (o.minTrades - r.trades) / o.minTrades : 0) +
+    over(r.avgMarginUtil, o.maxAvgMargin) +
+    over(r.maxMarginUtil, o.maxPeakMargin) +
+    over(-r.maxDdPct, o.maxDrawdown) +
+    (o.objective === "dd" && o.minPl !== null && o.minPl !== undefined && r.pl < o.minPl ? (o.minPl - r.pl) / Math.max(Math.abs(o.minPl), 1) : 0);
+  if (violation > 0) return INFEASIBLE - violation * 1e12;
   switch (o.objective) {
     case "pl":
       return r.pl;
     case "cagr":
-      return r.cagr ?? -Infinity;
+      return r.cagr ?? INFEASIBLE;
     case "mar":
-      return r.cagr !== null ? r.cagr / Math.max(-r.maxDdPct, MAR_DD_FLOOR) : -Infinity;
+      return r.cagr !== null ? r.cagr / Math.max(-r.maxDdPct, MAR_DD_FLOOR) : INFEASIBLE;
     case "sharpe":
-      return r.sharpe ?? -Infinity;
+      return r.sharpe ?? INFEASIBLE;
     case "sortino":
-      return r.sortino ?? -Infinity;
+      return r.sortino ?? INFEASIBLE;
     case "dd":
       return r.maxDdPct; // closer to 0 is better
   }
@@ -573,7 +583,7 @@ export async function optimize(
   let bestScore = score(best, o);
   let runs = 1;
   // Start infeasible (e.g. margin above the limit)? Scale everything down until it fits.
-  for (let f = 0.9; !o.optimizeVix && bestScore === -Infinity && f > 0.05; f *= 0.9) {
+  for (let f = 0.9; !o.optimizeVix && !isFeasible(bestScore) && f > 0.05; f *= 0.9) {
     const scaled = Object.fromEntries(
       Object.entries(start).map(([k, a]) => [
         k,
@@ -588,7 +598,7 @@ export async function optimize(
     );
     const r = simulate(trades, scaled, equity);
     runs++;
-    if (score(r, o) > -Infinity) {
+    if (isFeasible(score(r, o))) {
       alloc = scaled;
       best = r;
       bestScore = score(r, o);
@@ -672,5 +682,5 @@ export async function optimize(
     }
     if (!improved) break;
   }
-  return { alloc, result: best, feasible: bestScore > -Infinity, runs };
+  return { alloc, result: best, feasible: isFeasible(bestScore), runs };
 }
