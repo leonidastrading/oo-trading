@@ -294,10 +294,6 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
         />
       )}
 
-      <CorrelationMatrix daily={sim.daily} strategies={rows} label={shortName} />
-      <StopStreaks trades={simTrades} label={shortName} />
-      <StopStreaks trades={simTrades} label={shortName} kind="loss" />
-      <StopStreaks trades={simTrades} label={shortName} kind="win" />
 
       {sim.equity.length > 1 && (
         <div className="card flex h-96 flex-col p-3 md:h-[28rem]">
@@ -363,6 +359,11 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
         <Stat label="Account peak" value={money(sim.peak)} />
         <Stat label="Margin used" value={`${p1(sim.avgMarginUtil)} avg`} sub={`${p1(sim.maxMarginUtil)} max day`} />
       </div>
+
+      <CorrelationMatrix daily={sim.daily} strategies={rows} label={shortName} />
+      <StopStreaks trades={simTrades} label={shortName} />
+      <StopStreaks trades={simTrades} label={shortName} kind="loss" />
+      <StopStreaks trades={simTrades} label={shortName} kind="win" />
 
       <MonthlyReturnsChart months={sim.months} />
       {!hasVix && (
