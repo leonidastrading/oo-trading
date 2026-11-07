@@ -375,3 +375,20 @@ describe("scheduled exits", () => {
     expect(s.has("Short")).toBe(false);
   });
 });
+
+describe("strategy names and split orders", () => {
+  it("files the VIX-split 2DTE spreads under 2DTE, not VIX>30", async () => {
+    const { canonicalStrategy } = await import("@/lib/scorecard");
+    expect(canonicalStrategy("! SPX 2DTE Down-Trend Put Spread - VIX>20")).toBe("2DTE");
+    expect(canonicalStrategy("! SPX 2DTE Down-Trend Put Spread - VIX<20")).toBe("2DTE");
+    expect(canonicalStrategy("! SPX 1DTE VIX up ≥5% 1DTE put spread 3:50pm VIX>20")).toBe("VIX-up PS");
+    expect(canonicalStrategy("! SPX 1DTE Vix >30 1:30pm ")).toBe("VIX>30 1DTE");
+  });
+
+  it("folds a split fill of the same order into one entry", async () => {
+    const { mergeSplitOrders } = await import("@/lib/scorecard");
+    const f = (orderId: string, symbol: string, qty: number, time: number) => ({ orderId, symbol, qty, time, effect: "OPENING", settlement: false }) as never;
+    const fills = [f("100", "A", -8, 0), f("100", "B", 4, 0), f("101", "A", -2, 5000), f("101", "B", 1, 5000), f("200", "A", -2, 600_000), f("200", "B", 1, 600_000)];
+    expect(mergeSplitOrders(fills).map((x: { orderId: string }) => x.orderId)).toEqual(["100", "100", "100", "100", "200", "200"]);
+  });
+});

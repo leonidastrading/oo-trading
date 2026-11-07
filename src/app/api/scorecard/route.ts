@@ -12,12 +12,18 @@ import { MANUAL_REFRESH_MIN_MS, marketSession } from "@/lib/time";
 export const dynamic = "force-dynamic";
 
 /** First live day of the book. */
-const inception = () => process.env.LIVE_SINCE ?? "2026-10-27";
+const liveSince = () => process.env.LIVE_SINCE ?? "2026-10-27";
+/** Earliest date a `?since=` override may go back to (the account's first fills). */
+const EARLIEST = "2026-10-19";
 
 export async function GET(req: NextRequest) {
   const missing = requireKv();
   if (missing) return missing;
   const errors: string[] = [];
+  // ?since=YYYY-MM-DD scores from an earlier (or later) date than the book's inception, e.g. for an export.
+  const sinceParam = req.nextUrl.searchParams.get("since");
+  const since = sinceParam && /^\d{4}-\d{2}-\d{2}$/.test(sinceParam) && sinceParam >= EARLIEST ? sinceParam : liveSince();
+  const inception = () => since;
   const session = marketSession();
   const wantsForce = req.nextUrl.searchParams.get("force") === "1";
   const force = wantsForce && (await takeManualRefresh("scorecard", MANUAL_REFRESH_MIN_MS));

@@ -28,8 +28,9 @@ export function canonicalStrategy(name: string): string {
   const n = name.toLowerCase();
   if (/fomc|straddle/.test(n)) return "FOMC";
   if (/vix\s*up/.test(n)) return "VIX-up PS";
-  if (/vix/.test(n)) return "VIX>30 1DTE";
+  // Before the generic VIX test: the 2DTE spreads are split by VIX ("… VIX<20" / "… VIX>20").
   if (/2\s*dte/.test(n)) return "2DTE";
+  if (/vix/.test(n)) return "VIX>30 1DTE";
   if (/bwb|butterfly|fly/.test(n)) return "BWB";
   if (/5d\s*ic/.test(n)) return "5d IC";
   if (/\$\s*8\s*ic/.test(n)) return "$8 IC"; // includes the Dip add-on
@@ -188,8 +189,41 @@ function allocateExits(options: Fill[], entries: Remaining[]): Map<string, ExitF
 }
 
 /** Group opening fills by Schwab order into live trades and attach their exits. */
+/**
+ * Schwab can split one bot order into several (consecutive order numbers, the same legs, seconds apart).
+ * Fold such an opening order into the first one so it counts as one entry, not an extra.
+ */
+export function mergeSplitOrders(fills: Fill[], windowMs = 60_000): Fill[] {
+  const opening = new Map<string, { time: number; key: string }>();
+  for (const f of fills) {
+    if (f.effect === "CLOSING" || f.settlement) continue;
+    const o = opening.get(f.orderId) ?? { time: f.time, key: "" };
+    o.time = Math.min(o.time, f.time);
+    opening.set(f.orderId, o);
+  }
+  // Each opening order's symbols with their sides, e.g. "P7720-|P7675+|P7750+".
+  const legsOf = new Map<string, Set<string>>();
+  for (const f of fills) if (opening.has(f.orderId) && f.effect !== "CLOSING" && !f.settlement) {
+    legsOf.set(f.orderId, (legsOf.get(f.orderId) ?? new Set()).add(`${f.symbol}${f.qty > 0 ? "+" : "-"}`));
+  }
+  for (const [id, o] of opening) o.key = [...(legsOf.get(id) ?? [])].sort().join("|");
+  const ordered = [...opening].sort((a, b) => a[1].time - b[1].time);
+  const into = new Map<string, string>();
+  for (let i = 0; i < ordered.length; i++) {
+    const [id, o] = ordered[i];
+    for (let j = i - 1; j >= 0 && o.time - ordered[j][1].time <= windowMs; j--) {
+      const [prevId, prev] = ordered[j];
+      if (prev.key === o.key) {
+        into.set(id, into.get(prevId) ?? prevId);
+        break;
+      }
+    }
+  }
+  return into.size ? fills.map((f) => (into.has(f.orderId) ? { ...f, orderId: into.get(f.orderId)! } : f)) : fills;
+}
+
 export function buildLiveTrades(fills: Fill[], since: string): LiveTrade[] {
-  const options = fills.filter((f) => f.assetType === "OPTION");
+  const options = mergeSplitOrders(fills.filter((f) => f.assetType === "OPTION"));
   const opens = new Map<string, Fill[]>();
   for (const f of options) {
     if (f.effect === "CLOSING" || f.settlement || f.bookDate < since) continue;
