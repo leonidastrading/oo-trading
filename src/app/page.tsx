@@ -8,6 +8,7 @@ import { BestClosePanel } from "@/components/BestClosePanel";
 import { ClosedPnlChart } from "@/components/ClosedPnlChart";
 import { SpxDayChart, type BestCloseLine } from "@/components/SpxDayChart";
 import { money, num, openPositionsLabel, plClass, signed } from "@/components/format";
+import { GaugePanel } from "@/components/GaugePanel";
 import { PositionGroups } from "@/components/PositionGroups";
 import { StatusBar } from "@/components/StatusBar";
 import { Tile, toneOf } from "@/components/Tile";
@@ -191,6 +192,7 @@ export default function LivePage() {
           { id: "spx", label: "SPX chart", node: <SpxDayChart best={bestCloseLine(spxExpiry)} spot={spx} /> },
           { id: "expiring", label: "Expiring today", node: expiringPanel },
           { id: "other", label: "Other positions", node: otherPanel },
+          { id: "gauge", label: "0DTE premium gauge", node: <GaugePanel /> },
         ]}
       />
     </div>

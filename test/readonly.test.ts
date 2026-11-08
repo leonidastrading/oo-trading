@@ -8,6 +8,8 @@ describe("read-only Schwab guard", () => {
     expect(isAllowedSchwabPath("GET", "/trader/v1/accounts/ABC123/transactions?types=TRADE")).toBe(true);
     expect(isAllowedSchwabPath("GET", "/marketdata/v1/quotes?symbols=$SPX")).toBe(true);
     expect(isAllowedSchwabPath("GET", "/marketdata/v1/pricehistory?symbol=$SPX")).toBe(true);
+    expect(isAllowedSchwabPath("GET", "/marketdata/v1/chains?symbol=$SPX")).toBe(true);
+    expect(isAllowedSchwabPath("POST", "/marketdata/v1/chains")).toBe(false);
   });
   it("blocks orders and any non-GET", () => {
     expect(isAllowedSchwabPath("GET", "/trader/v1/accounts/ABC123/orders")).toBe(false);

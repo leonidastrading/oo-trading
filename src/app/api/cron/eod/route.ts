@@ -1,6 +1,7 @@
 import { requireKv } from "@/lib/apiGuard";
 import { NextResponse, type NextRequest } from "next/server";
 import { hasSnapshot, takeEodSnapshot } from "@/lib/eod";
+import { captureClose } from "@/lib/gaugeCapture";
 import { etParts, isTradingDay } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,8 @@ export async function GET(req: NextRequest) {
   }
   const p = etParts();
   const force = req.nextUrl.searchParams.get("force") === "1";
+  // Backup for the 0DTE premium gauge: complete today's row with the close if nothing else did.
+  if (isTradingDay(p.date) && p.minutesOfDay >= 16 * 60 + 1) await captureClose().catch(() => null);
   if (!force) {
     if (!isTradingDay(p.date)) return NextResponse.json({ skipped: "not a trading day", date: p.date });
     if (p.minutesOfDay < 16 * 60 + 15 || p.minutesOfDay >= 18 * 60) {
