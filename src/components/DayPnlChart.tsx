@@ -17,7 +17,7 @@ function niceStep(span: number) {
   return [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw) ?? 10 * p;
 }
 
-/** Day equity P/L from the open, sampled each minute: $ on the right axis, % of the prior close on the left. */
+/** Day equity P/L from the open, sampled each minute: $ on the right axis, % of the day's average open premium on the left. */
 export function DayPnlChart({ curve }: { curve: DayCurve | undefined }) {
   if (!curve || !curve.from) return null;
   const base = curve.base && curve.base > 0 ? curve.base : null;
@@ -45,7 +45,7 @@ export function DayPnlChart({ curve }: { curve: DayCurve | undefined }) {
         <h2 className="text-lg font-bold text-accent">Day P/L</h2>
         <span className="text-sm">
           <span className={`font-semibold ${plClass(last.pl)}`}>{money(last.pl, { sign: true })}</span>
-          {base && <span className={plClass(last.pl)}> ({pctFmt(last.pct)})</span>}
+          {base && <span className={plClass(last.pl)}> ({pctFmt(last.pct, 1)})</span>}
           <span className="text-muted"> · {curve.samples.length ? `as of ${timeET(last.t)}` : "starts at the open"}</span>
         </span>
       </header>
@@ -78,7 +78,7 @@ export function DayPnlChart({ curve }: { curve: DayCurve | undefined }) {
               domain={pctDomain}
               ticks={base ? ticks.map((v) => (v / base) * 100) : ticks}
               allowDataOverflow
-              tickFormatter={(v: number) => (base ? pctFmt(v) : "")}
+              tickFormatter={(v: number) => (base ? pctFmt(v, 1) : "")}
               tick={{ fill: "var(--muted)", fontSize: 11 }}
               tickLine={false}
               axisLine={false}
@@ -129,7 +129,13 @@ export function DayPnlChart({ curve }: { curve: DayCurve | undefined }) {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <p className="text-xs text-muted">Day equity P/L (net liq vs. the prior close), sampled every minute. Left axis: % of the prior close.</p>
+      <p className="text-xs text-muted">
+        Day equity P/L (net liq vs. the prior close), sampled every minute. Left axis:{" "}
+        {curve.baseKind === "netliq"
+          ? "% of the prior close (no open positions yet)"
+          : `% of the day's average open premium${base ? ` (${money(base)})` : ""}, the same base as the Open P/L %`}
+        .
+      </p>
     </section>
   );
 }

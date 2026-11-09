@@ -103,10 +103,13 @@ export interface DaySample {
   pl: number;
   open: number;
   closed: number;
+  /** Premium of the open option entries at this minute (credit received or debit paid, each entry's size). */
+  basis?: number;
 }
 export interface DayCurve {
-  /** Prior session's closing net liq, the base for %. */
+  /** Base for %: the day's average open premium (samples with positions on); prior close net liq before any. */
   base: number | null;
+  baseKind: "premium" | "netliq" | null;
   /** Session open and close (ms) for the x axis. */
   from: number;
   to: number;
@@ -114,12 +117,16 @@ export interface DayCurve {
 }
 
 /** Store this minute's day P/L for the session's curve (first write per minute wins). Only during the session. */
-async function recordDaySample(date: string, s: DaySample, base: number | null) {
+async function recordDaySample(date: string, s: DaySample) {
   const minute = new Date(s.t).toISOString().slice(11, 16);
-  await kv().hsetnxMany(KEYS.dayCurve(date), [
-    [minute, s],
-    ["base", base],
-  ]);
+  await kv().hsetnxMany(KEYS.dayCurve(date), [[minute, s]]);
+}
+
+/** Open premium, measured like the Open P/L % tile: per entry |Σ qty × avg price × 100|, options only. */
+export function premiumBasis(groups: SpreadGroup[]): number {
+  return groups
+    .filter((g) => g.positions.every((p) => p.assetType === "OPTION"))
+    .reduce((s, g) => s + Math.abs(g.positions.reduce((t, p) => t + p.qty * p.avgPrice * 100, 0)), 0);
 }
 
 async function readDayCurve(date: string, from: number, to: number): Promise<DayCurve> {
@@ -128,8 +135,9 @@ async function readDayCurve(date: string, from: number, to: number): Promise<Day
     .filter(([k, v]) => k !== "base" && v && typeof v === "object")
     .map(([, v]) => v as DaySample)
     .sort((a, b) => a.t - b.t);
-  const base = typeof h.base === "number" ? h.base : null;
-  return { base, from, to, samples };
+  const withPos = samples.filter((x) => (x.basis ?? 0) > 0);
+  const base = withPos.length ? withPos.reduce((s, x) => s + x.basis!, 0) / withPos.length : null;
+  return { base, baseKind: base ? "premium" : null, from, to, samples };
 }
 
 async function baseMeta(force: boolean) {
@@ -249,7 +257,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
   };
   if (!token.connected) {
     meta.errors.push(token.lastError ?? "Schwab is not connected — connect it in Settings.");
-    return { meta, fetchedAt: null, account: null, spx: null, pl: null, groups: [], expiring: [], expiryDate: expiryFocusDate(now), closedCurve: [], dayCurve: { base: null, from: 0, to: 0, samples: [] } };
+    return { meta, fetchedAt: null, account: null, spx: null, pl: null, groups: [], expiring: [], expiryDate: expiryFocusDate(now), closedCurve: [], dayCurve: { base: null, baseKind: null, from: 0, to: 0, samples: [] } };
   }
 
   const sessionDate = lastSessionDate(now);
@@ -314,21 +322,26 @@ export async function getLiveData(force = false): Promise<LiveData> {
   // Intraday day-P/L curve: one sample a minute while the market is open, from fresh data only.
   const dayFrom = etMidnightUtc(sessionDate).getTime() + session.openMin * 60_000;
   const dayTo = etMidnightUtc(sessionDate).getTime() + session.closeMin * 60_000;
+  const openGroups = groupSpreads(splitByEntry(expired.open, openLots(fills.data ?? []), today), today);
   if (pl && b && session.phase !== "closed" && Number.isFinite(fetchedAt) && now - fetchedAt < 90_000) {
     const equity = b.netLiq !== null && b.startNetLiq !== null ? b.netLiq - b.startNetLiq : null;
     const t = Math.floor(now / 60_000) * 60_000;
     try {
       await recordDaySample(
         sessionDate,
-        { t, pl: Math.round((equity ?? pl.open + pl.closed) * 100) / 100, open: pl.open, closed: pl.closed },
-        b.startNetLiq,
+        { t, pl: Math.round((equity ?? pl.open + pl.closed) * 100) / 100, open: pl.open, closed: pl.closed, basis: Math.round(premiumBasis(openGroups)) },
       );
     } catch (e) {
       meta.errors.push(`day P/L sample: ${(e as Error).message}`);
     }
   }
-  const dayCurve: DayCurve = await readDayCurve(sessionDate, dayFrom, dayTo).catch(() => ({ base: null, from: dayFrom, to: dayTo, samples: [] }));
-  dayCurve.base ??= b?.startNetLiq ?? null;
+  const dayCurve: DayCurve = await readDayCurve(sessionDate, dayFrom, dayTo).catch(() => ({ base: null, baseKind: null, from: dayFrom, to: dayTo, samples: [] }));
+  if (!dayCurve.base) {
+    // No sample with positions yet: the current open premium, else the prior close.
+    const now = premiumBasis(openGroups);
+    if (now > 0) Object.assign(dayCurve, { base: now, baseKind: "premium" });
+    else if (b?.startNetLiq) Object.assign(dayCurve, { base: b.startNetLiq, baseKind: "netliq" });
+  }
 
   return {
     meta,
@@ -343,7 +356,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
       : null,
     spx,
     pl,
-    groups: groupSpreads(splitByEntry(expired.open, openLots(fills.data ?? []), today), today),
+    groups: openGroups,
     expiring,
     expiryDate,
     closedCurve: closedCurve(
