@@ -198,7 +198,7 @@ export function tenDeltaPut(puts: { strike: number; mid: number }[], s: number, 
     const iv = impliedVolPut(p.mid, s, p.strike, t);
     if (iv === null) continue;
     const delta = putDelta(s, p.strike, t, iv);
-    if (!best || Math.abs(delta + 0.1) < Math.abs(best.delta + 0.1)) best = { strike: p.strike, mid: p.mid, iv: round(iv), delta: round(delta) };
+    if (!best || Math.abs(delta + 0.1) < Math.abs(best.delta + 0.1)) best = { strike: p.strike, mid: round(p.mid, 2), iv: round(iv), delta: round(delta) };
   }
   return best;
 }
