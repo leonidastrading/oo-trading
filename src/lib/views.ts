@@ -327,7 +327,8 @@ export async function getLiveData(force = false): Promise<LiveData> {
       meta.errors.push(`day P/L sample: ${(e as Error).message}`);
     }
   }
-  const dayCurve = await readDayCurve(sessionDate, dayFrom, dayTo).catch(() => ({ base: null, from: dayFrom, to: dayTo, samples: [] }));
+  const dayCurve: DayCurve = await readDayCurve(sessionDate, dayFrom, dayTo).catch(() => ({ base: null, from: dayFrom, to: dayTo, samples: [] }));
+  dayCurve.base ??= b?.startNetLiq ?? null;
 
   return {
     meta,
