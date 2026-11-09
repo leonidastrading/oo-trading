@@ -1,5 +1,6 @@
 import { requireKv } from "@/lib/apiGuard";
 import { NextResponse, type NextRequest } from "next/server";
+import { cronAuthorized } from "@/lib/cronAuth";
 import { captureClose, captureDue, captureOpen } from "@/lib/gaugeCapture";
 
 export const dynamic = "force-dynamic";
@@ -11,9 +12,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const missing = requireKv();
   if (missing) return missing;
-  const tokens = [process.env.GAUGE_CRON_TOKEN, process.env.CRON_SECRET].filter((t): t is string => !!t);
-  const given = req.headers.get("authorization")?.replace(/^Bearer\s+/, "").trim() ?? req.nextUrl.searchParams.get("key");
-  if (!given || !tokens.includes(given)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!cronAuthorized(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const step = req.nextUrl.searchParams.get("step");
   try {
     if (step === "open") return NextResponse.json({ step, row: await captureOpen() });

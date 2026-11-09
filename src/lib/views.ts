@@ -92,6 +92,44 @@ export interface LiveData {
   /** Expiration the page focuses on: today until the close, then the next trading day. */
   expiryDate: string;
   closedCurve: ClosedPoint[];
+  /** The session's day P/L, one sample per minute from the open (see recordDaySample). */
+  dayCurve: DayCurve;
+}
+
+export interface DaySample {
+  /** Sample time (ms), its minute floored. */
+  t: number;
+  /** Day equity P/L: net liq − prior close net liq (falls back to open + closed). */
+  pl: number;
+  open: number;
+  closed: number;
+}
+export interface DayCurve {
+  /** Prior session's closing net liq, the base for %. */
+  base: number | null;
+  /** Session open and close (ms) for the x axis. */
+  from: number;
+  to: number;
+  samples: DaySample[];
+}
+
+/** Store this minute's day P/L for the session's curve (first write per minute wins). Only during the session. */
+async function recordDaySample(date: string, s: DaySample, base: number | null) {
+  const minute = new Date(s.t).toISOString().slice(11, 16);
+  await kv().hsetnxMany(KEYS.dayCurve(date), [
+    [minute, s],
+    ["base", base],
+  ]);
+}
+
+async function readDayCurve(date: string, from: number, to: number): Promise<DayCurve> {
+  const h = await kv().hgetall<DaySample | number | null>(KEYS.dayCurve(date));
+  const samples = Object.entries(h)
+    .filter(([k, v]) => k !== "base" && v && typeof v === "object")
+    .map(([, v]) => v as DaySample)
+    .sort((a, b) => a.t - b.t);
+  const base = typeof h.base === "number" ? h.base : null;
+  return { base, from, to, samples };
 }
 
 async function baseMeta(force: boolean) {
@@ -211,7 +249,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
   };
   if (!token.connected) {
     meta.errors.push(token.lastError ?? "Schwab is not connected — connect it in Settings.");
-    return { meta, fetchedAt: null, account: null, spx: null, pl: null, groups: [], expiring: [], expiryDate: expiryFocusDate(now), closedCurve: [] };
+    return { meta, fetchedAt: null, account: null, spx: null, pl: null, groups: [], expiring: [], expiryDate: expiryFocusDate(now), closedCurve: [], dayCurve: { base: null, from: 0, to: 0, samples: [] } };
   }
 
   const sessionDate = lastSessionDate(now);
@@ -272,6 +310,25 @@ export async function getLiveData(force = false): Promise<LiveData> {
     : null;
   const fetchedAt = Math.min(acct.fetchedAt ?? Infinity, quotes.fetchedAt ?? Infinity);
   meta.delayed = isDelayed(session.phase, Number.isFinite(fetchedAt) ? fetchedAt : null, policy.positionsMs, now);
+
+  // Intraday day-P/L curve: one sample a minute while the market is open, from fresh data only.
+  const dayFrom = etMidnightUtc(sessionDate).getTime() + session.openMin * 60_000;
+  const dayTo = etMidnightUtc(sessionDate).getTime() + session.closeMin * 60_000;
+  if (pl && b && session.phase !== "closed" && Number.isFinite(fetchedAt) && now - fetchedAt < 90_000) {
+    const equity = b.netLiq !== null && b.startNetLiq !== null ? b.netLiq - b.startNetLiq : null;
+    const t = Math.floor(now / 60_000) * 60_000;
+    try {
+      await recordDaySample(
+        sessionDate,
+        { t, pl: Math.round((equity ?? pl.open + pl.closed) * 100) / 100, open: pl.open, closed: pl.closed },
+        b.startNetLiq,
+      );
+    } catch (e) {
+      meta.errors.push(`day P/L sample: ${(e as Error).message}`);
+    }
+  }
+  const dayCurve = await readDayCurve(sessionDate, dayFrom, dayTo).catch(() => ({ base: null, from: dayFrom, to: dayTo, samples: [] }));
+
   return {
     meta,
     fetchedAt: Number.isFinite(fetchedAt) ? fetchedAt : null,
@@ -292,6 +349,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
       [...groupClosesByOrder(closes), ...expired.orders],
       etMidnightUtc(sessionDate).getTime() + (session.closeMin - 15) * 60000,
     ),
+    dayCurve,
   };
 }
 

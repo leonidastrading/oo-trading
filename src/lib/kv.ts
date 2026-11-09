@@ -189,4 +189,5 @@ export const KEYS = {
   optionsOnly: "settings:options-only",
   /** 0DTE premium gauge: one row per trading day (date → GaugeRow). */
   gaugeDays: "gauge:days",
+  dayCurve: (date: string) => `daypl:${date}`,
 } as const;

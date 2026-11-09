@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Arrangeable } from "@/components/Arrangeable";
 import { BestClosePanel } from "@/components/BestClosePanel";
 import { ClosedPnlChart } from "@/components/ClosedPnlChart";
+import { DayPnlChart } from "@/components/DayPnlChart";
 import { SpxDayChart, type BestCloseLine } from "@/components/SpxDayChart";
 import { money, num, openPositionsLabel, plClass, signed } from "@/components/format";
 import { GaugePanel } from "@/components/GaugePanel";
@@ -188,6 +189,7 @@ export default function LivePage() {
         panels={[
           { id: "tiles", label: "P/L, SPX & fees", node: tilesPanel },
           { id: "expiry", label: "Best SPX close / expiry chart", node: expiryPanel },
+          { id: "day", label: "Day P/L", node: <DayPnlChart curve={data?.dayCurve} /> },
           { id: "closed", label: "Closed P/L today", node: <ClosedPnlChart points={data?.closedCurve ?? []} /> },
           { id: "spx", label: "SPX chart", node: <SpxDayChart best={bestCloseLine(spxExpiry)} spot={spx} /> },
           { id: "expiring", label: "Expiring today", node: expiringPanel },
