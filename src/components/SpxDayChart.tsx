@@ -272,8 +272,8 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
           return {
             ...r,
             priceRange: {
-              minValue: Math.min(r.priceRange.minValue - span * 0.33, ...bestLevels),
-              maxValue: Math.max(r.priceRange.maxValue + span * 0.06, ...bestLevels),
+              minValue: Math.min(r.priceRange.minValue - span * 0.16, ...bestLevels),
+              maxValue: Math.max(r.priceRange.maxValue + span * 0.12, ...bestLevels),
             },
           };
         },
@@ -468,17 +468,21 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
         // Keep clear of the price scale on the right and the chart's left edge.
         const fitX = (left: number) => Math.min(Math.max(2, left), Math.max(2, paneW - w - 2));
         const at = (left: number, top: number) => ({ l: fitX(left), t: top, r: fitX(left) + w, b: top + h });
-        let rect = at(x - w / 2, clamp(l.exit ? y - base - h : y + base));
-        // 1) Stack outward while there's room.
-        for (let k = 1; !free(rect) && k < 8; k++) {
-          const t = l.exit ? y - base - h - k * (h + 4) : y + base + k * (h + 4);
-          if (t < minTop || t > maxTop) break;
-          rect = at(x - w / 2, t);
-        }
-        // 2) Out of room: slide along the row, alternating right and left.
-        for (let k = 1; !free(rect) && k < 12; k++) {
-          const dx = Math.ceil(k / 2) * (w + 4) * (k % 2 ? 1 : -1);
-          rect = at(x - w / 2 + dx, rect.t);
+        // The free spot nearest the arrow: stacked outward (away from the bar) and/or slid sideways, closest first.
+        const home = clamp(l.exit ? y - base - h : y + base);
+        let rect = at(x - w / 2, home);
+        if (!free(rect)) {
+          const cands: { r: ReturnType<typeof at>; d: number }[] = [];
+          for (let k = 0; k <= 8; k++) {
+            const t = clamp(l.exit ? home - k * (h + 2) : home + k * (h + 2));
+            for (let j = -6; j <= 6; j++) {
+              const dx = j * (w / 2 + 3);
+              const r = at(x - w / 2 + dx, t);
+              cands.push({ r, d: Math.hypot(r.l + w / 2 - x, (r.t - home) * 1.4) });
+            }
+          }
+          cands.sort((a, b) => a.d - b.d);
+          rect = cands.find((c) => free(c.r))?.r ?? rect;
         }
         placed.push(rect);
         el.style.left = `${rect.l}px`;

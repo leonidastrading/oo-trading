@@ -27,6 +27,7 @@ export const STRATEGIES = Object.keys(EXPECTED);
 export function canonicalStrategy(name: string): string {
   const n = name.toLowerCase();
   if (/fomc|straddle/.test(n)) return "FOMC";
+  if (/\b3\s*delta\b/.test(n)) return "3 Delta";
   if (/vix\s*up/.test(n)) return "VIX-up PS";
   // Before the generic VIX test: the 2DTE spreads are split by VIX ("… VIX<20" / "… VIX>20").
   if (/2\s*dte/.test(n)) return "2DTE";

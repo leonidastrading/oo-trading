@@ -148,6 +148,7 @@ describe("helpers", () => {
     expect(canonicalStrategy("! SPX 0 DTE - Short (sell calls) RE-TUNED +costs")).toBe("Short");
     expect(canonicalStrategy("! SPX 0 DTE 8SMA IC +costs")).toBe("8SMA IC");
     expect(canonicalStrategy("! SPX 0DTE $8 IC 1:35 10SMA")).toBe("$8 IC");
+    expect(canonicalStrategy("() SPX 3 Delta - copy new nov 5")).toBe("3 Delta");
     expect(canonicalStrategy("! SPX 0DTE $8 IC 1:35 10SMA - Dip Add-On")).toBe("$8 IC");
     expect(canonicalStrategy("! SPX 0DTE 5d IC 100-wide 1:30+2:30pm SL300")).toBe("5d IC");
     expect(canonicalStrategy("! SPX 0DTE Put BWB Fly - 3 Entries Above 5SMA")).toBe("BWB");
