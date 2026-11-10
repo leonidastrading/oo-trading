@@ -11,6 +11,7 @@
 //   VIX-up PS 15:50                 two put credit spreads, 50 wide each              1 trading day
 //   VIX>30    13:30                 short put, long put 50 below                      1 trading day
 //   FOMC      14:35                 long ATM call + put (straddle)                    0DTE
+//   3 Delta   Mon 9:32              short 3-delta put, long put 200 below             4 days (Friday)
 import { addDays, isTradingDay } from "./time";
 
 export interface RuleLeg {
@@ -45,6 +46,7 @@ const WINDOWS: Record<string, [number, number][]> = {
   "VIX-up PS": [[15 * 60 + 45, 16 * 60 + 0]],
   "VIX>30 1DTE": [[13 * 60 + 25, 13 * 60 + 40]],
   FOMC: [[14 * 60 + 30, 14 * 60 + 45]],
+  "3 Delta": [[9 * 60 + 30, 9 * 60 + 40]],
 };
 
 export function inWindow(strategy: string, minutes: number): boolean {
@@ -82,6 +84,8 @@ export function classifyBookEntry(legs: RuleLeg[], entryDate: string, minutes: n
       if (dte === 0 && near(w, 100)) candidates.push("Long");
       if (dte === 2 && near(w, 75)) candidates.push("2DTE");
       if (dte === 1 && near(w, 50)) candidates.push("VIX>30 1DTE");
+      // Monday → Friday expiry: 4 trading days, 3 in a holiday week.
+      if ((dte === 4 || dte === 3) && near(w, 200)) candidates.push("3 Delta");
     }
   }
   if (puts.length === 0 && calls.length === 2 && dte === 0) {

@@ -17,6 +17,7 @@ const HINT: Record<string, string> = {
   "VIX>30 1DTE": "13:30 put spread, 50 wide, 1 day",
   "VIX-up PS": "15:50 two 1DTE put spreads, 50 wide",
   FOMC: "14:35 long straddle on FOMC days",
+  "3 Delta": "Mon 9:32 put spread, 3Δ short, 200 wide, Friday expiry",
 };
 
 /** Rename how the book strategies are shown on the chart, positions and Scorecard. */

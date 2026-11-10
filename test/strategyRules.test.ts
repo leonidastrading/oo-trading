@@ -20,6 +20,7 @@ describe("book strategy rules", () => {
     const d = "2026-11-02";
     expect(classifyBookEntry([leg("P", 6800, -10, d), leg("P", 6700, 10, d)], d, 600)).toBe("Long");
     expect(classifyBookEntry([leg("P", 6800, -3, "2026-11-04"), leg("P", 6725, 3, "2026-11-04")], d, 930)).toBe("2DTE");
+    expect(classifyBookEntry([leg("P", 7000, -22, "2026-11-13"), leg("P", 6800, 22, "2026-11-13")], "2026-11-09", 572)).toBe("3 Delta");
     expect(classifyBookEntry([leg("P", 6800, -3, "2026-11-03"), leg("P", 6750, 3, "2026-11-03")], d, 810)).toBe("VIX>30 1DTE");
     expect(classifyBookEntry([leg("C", 6900, -4, d), leg("C", 7000, 4, d)], d, 700)).toBe("Short");
   });
