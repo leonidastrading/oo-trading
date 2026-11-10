@@ -475,10 +475,11 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
           const cands: { r: ReturnType<typeof at>; d: number }[] = [];
           for (let k = 0; k <= 8; k++) {
             const t = clamp(l.exit ? home - k * (h + 2) : home + k * (h + 2));
-            for (let j = -6; j <= 6; j++) {
+            for (let j = -3; j <= 3; j++) {
               const dx = j * (w / 2 + 3);
               const r = at(x - w / 2 + dx, t);
-              cands.push({ r, d: Math.hypot(r.l + w / 2 - x, (r.t - home) * 1.4) });
+              // Sideways costs more than stacking: a label far along the row reads as another bar's.
+              cands.push({ r, d: Math.hypot((r.l + w / 2 - x) * 1.5, r.t - home) });
             }
           }
           cands.sort((a, b) => a.d - b.d);

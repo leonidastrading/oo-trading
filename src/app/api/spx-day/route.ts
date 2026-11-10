@@ -123,7 +123,7 @@ export async function GET() {
   entries.sort((a, b) => a.time - b.time);
 
   // Which strategy each entry is, and when that strategy is scheduled to exit (learned from the OO backtests).
-  const model = await cached<{ profiles: SerializedProfiles; schedule: [string, number][] }>("oo:stopmodel:v1", 6 * 3600_000, async () => {
+  const model = await cached<{ profiles: SerializedProfiles; schedule: [string, number][] }>("oo:stopmodel:v2", 6 * 3600_000, async () => {
     const oo = uniqueEntries(Object.values(await kv().hgetall<OOTrade>(KEYS.ooTrades)));
     const bt = oo.map(toBacktest).filter((b): b is BacktestTrade => b !== null);
     return { profiles: serializeProfiles(buildProfiles(bt)), schedule: [...scheduledExits(bt)] };
