@@ -1,6 +1,6 @@
 import { requireKv } from "@/lib/apiGuard";
 import { NextResponse } from "next/server";
-import { cachedFills, cachedMinuteBars, cachedQuotes, type Bar } from "@/lib/schwab/data";
+import { cachedFills, cachedMinuteBars, cachedQuotes, dedupeBars, type Bar } from "@/lib/schwab/data";
 import { uniqueEntries } from "@/lib/allocSim";
 import { cached } from "@/lib/cache";
 import { KEYS, kv } from "@/lib/kv";
@@ -77,6 +77,7 @@ export async function GET() {
     cachedFills(date, live ? 60_000 : closedMaxAge(now, 30 * 60_000)),
   ]);
 
+  if (bars.data) bars.data = dedupeBars(bars.data); // also repairs copies cached before the fix
   // Schwab's minute history ends with the 15:59 bar; after the bell, add the 16:00 close (the index's
   // official close, from the quote) as its own bar.
   const bellMs = etMidnightUtc(date).getTime() + 16 * 3600_000;

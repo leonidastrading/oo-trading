@@ -198,7 +198,8 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
     });
     chartRef.current = chart;
     const minutes = TIMEFRAMES.find((t) => t.key === tf)!.min;
-    const shifted = data.bars.map((b) => ({ ...b, time: b.time + shift }));
+    // One bar per minute, in order (the chart rejects or garbles duplicate / out-of-order times).
+    const shifted = [...new Map(data.bars.map((b) => [b.time, { ...b, time: b.time + shift }])).values()].sort((a, b) => a.time - b.time);
     const anchor = Math.floor(shifted[0].time / 86_400) * 86_400 + (9 * 60 + 30) * 60;
     let bars: Ohlc[] = isDaily ? daily!.bars : aggregate(shifted, minutes, anchor);
     // Schwab adds the session to its daily history overnight: build today's daily bar from the 1-minute bars.

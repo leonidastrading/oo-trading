@@ -112,9 +112,16 @@ export async function fetchMinuteBars(symbol: string, date: string): Promise<Bar
       needExtendedHoursData: "false",
     },
   );
-  return (raw.candles ?? [])
-    .filter((c) => c.datetime >= start && c.datetime < start + 86_400_000)
-    .map((c) => ({ time: Math.floor(c.datetime / 1000), open: c.open, high: c.high, low: c.low, close: c.close }));
+  return dedupeBars(
+    (raw.candles ?? [])
+      .filter((c) => c.datetime >= start && c.datetime < start + 86_400_000)
+      .map((c) => ({ time: Math.floor(c.datetime / 1000), open: c.open, high: c.high, low: c.low, close: c.close })),
+  );
+}
+
+/** One bar per time, ascending (Schwab sometimes returns the session's candles twice). Last copy wins. */
+export function dedupeBars(bars: Bar[]): Bar[] {
+  return [...new Map(bars.map((b) => [b.time, b])).values()].sort((a, b) => a.time - b.time);
 }
 
 /** Daily bars for the last year; `time` is the ET session date as epoch seconds at 00:00 UTC. */
