@@ -273,7 +273,7 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
             ...r,
             priceRange: {
               minValue: Math.min(r.priceRange.minValue - span * 0.16, ...bestLevels),
-              maxValue: Math.max(r.priceRange.maxValue + span * 0.12, ...bestLevels),
+              maxValue: Math.max(r.priceRange.maxValue + span * 0.16, ...bestLevels),
             },
           };
         },
@@ -425,7 +425,8 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
         ln.setAttribute("x2", String(x2));
         ln.setAttribute("y2", String(y2));
       });
-      const placed: { l: number; t: number; r: number; b: number }[] = [];
+      // The library's attribution logo sits in the pane's bottom-left corner: keep labels off it.
+      const placed: { l: number; t: number; r: number; b: number }[] = [{ l: 0, t: paneH - 34, r: 50, b: paneH }];
       // Best-close P/L in the price-axis column at its line's level (no candles there), nudged clear of the
       // live price label when the two are close.
       for (const { price, el } of bestTags) {
@@ -473,17 +474,21 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
         let rect = at(x - w / 2, home);
         if (!free(rect)) {
           const cands: { r: ReturnType<typeof at>; d: number }[] = [];
-          for (let k = 0; k <= 8; k++) {
-            const t = clamp(l.exit ? home - k * (h + 2) : home + k * (h + 2));
-            for (let j = -3; j <= 3; j++) {
-              const dx = j * (w / 2 + 3);
-              const r = at(x - w / 2 + dx, t);
-              // Sideways costs more than stacking: a label far along the row reads as another bar's.
-              cands.push({ r, d: Math.hypot((r.l + w / 2 - x) * 1.5, r.t - home) });
+          // The other side of the bar (below an exit, above an entry) when its own side is crowded, at a cost.
+          const yb = bar ? series.priceToCoordinate(l.exit ? bar.low : bar.high) : null;
+          const away = yb === null ? null : clamp(l.exit ? yb + GAP : yb - GAP - h);
+          for (const [start, dir, cost] of [[home, l.exit ? -1 : 1, 0], ...(away === null ? [] : [[away, l.exit ? 1 : -1, 70]])] as [number, number, number][]) {
+            for (let k = 0; k <= 8; k++) {
+              const t = clamp(start + dir * k * (h + 2));
+              for (let j = -5; j <= 5; j++) {
+                const r = at(x - w / 2 + j * (w / 2 + 3), t);
+                // Sideways costs more than stacking: a label far along the row reads as another bar's.
+                cands.push({ r, d: cost + Math.hypot((r.l + w / 2 - x) * 1.5, r.t - start) });
+              }
             }
           }
           cands.sort((a, b) => a.d - b.d);
-          rect = cands.find((c) => free(c.r))?.r ?? rect;
+          rect = cands.find((c) => free(c.r) && c.r.t >= minTop && c.r.t <= maxTop)?.r ?? rect;
         }
         placed.push(rect);
         el.style.left = `${rect.l}px`;
