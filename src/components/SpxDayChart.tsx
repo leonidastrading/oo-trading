@@ -447,6 +447,28 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
       }
       const free = (r: { l: number; t: number; r: number; b: number }) =>
         !placed.some((p) => r.l < p.r + 4 && r.r > p.l - 4 && r.t < p.b + 2 && r.b > p.t - 2);
+      // Candles and arrows are obstacles too, so a label never sits on the price.
+      const half = Math.max(1, paneW / Math.max(1, bars.length + whitespace.length) / 2);
+      const blocks: { l: number; t: number; r: number; b: number }[] = [];
+      for (const b of bars) {
+        const bx = chart.timeScale().timeToCoordinate(b.time as UTCTimestamp);
+        const yh = series.priceToCoordinate(b.high);
+        const yl = series.priceToCoordinate(b.low);
+        if (bx === null || yh === null || yl === null) continue;
+        blocks.push({ l: bx - half, r: bx + half, t: yh - 1, b: yl + 1 });
+      }
+      for (const l of labels) {
+        const bar = barAt.get(l.time);
+        const bx = chart.timeScale().timeToCoordinate(l.time);
+        const by = bar ? series.priceToCoordinate(l.exit ? bar.high : bar.low) : null;
+        if (bx === null || by === null) continue;
+        const n = arrowsOn.get(`${l.time}|${l.exit}`) ?? 1;
+        const reach = 6 + n * 20;
+        blocks.push(l.exit ? { l: bx - 9, r: bx + 9, t: by - reach, b: by } : { l: bx - 9, r: bx + 9, t: by, b: by + reach });
+      }
+      let near: typeof blocks = blocks; // narrowed to the blocks around each label's arrow below
+      const clear = (r: { l: number; t: number; r: number; b: number }) =>
+        free(r) && !near.some((p) => r.l < p.r + 2 && r.r > p.l - 2 && r.t < p.b + 2 && r.b > p.t - 2);
       labels.forEach((l, i) => {
         const el = els[i];
         const bar = barAt.get(l.time);
@@ -470,25 +492,27 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
         const fitX = (left: number) => Math.min(Math.max(2, left), Math.max(2, paneW - w - 2));
         const at = (left: number, top: number) => ({ l: fitX(left), t: top, r: fitX(left) + w, b: top + h });
         // The free spot nearest the arrow: stacked outward (away from the bar) and/or slid sideways, closest first.
+        near = blocks.filter((p) => p.r > x - 3 * w && p.l < x + 3 * w);
         const home = clamp(l.exit ? y - base - h : y + base);
         let rect = at(x - w / 2, home);
-        if (!free(rect)) {
+        if (!clear(rect)) {
           const cands: { r: ReturnType<typeof at>; d: number }[] = [];
           // The other side of the bar (below an exit, above an entry) when its own side is crowded, at a cost.
           const yb = bar ? series.priceToCoordinate(l.exit ? bar.low : bar.high) : null;
           const away = yb === null ? null : clamp(l.exit ? yb + GAP : yb - GAP - h);
           for (const [start, dir, cost] of [[home, l.exit ? -1 : 1, 0], ...(away === null ? [] : [[away, l.exit ? 1 : -1, 70]])] as [number, number, number][]) {
-            for (let k = 0; k <= 8; k++) {
-              const t = clamp(start + dir * k * (h + 2));
-              for (let j = -5; j <= 5; j++) {
-                const r = at(x - w / 2 + j * (w / 2 + 3), t);
+            for (let k = 0; k <= 24; k++) {
+              const t = clamp(start + (dir * k * h) / 2);
+              for (let j = -8; j <= 8; j++) {
+                const r = at(x - w / 2 + (j * w) / 4, t);
                 // Sideways costs more than stacking: a label far along the row reads as another bar's.
                 cands.push({ r, d: cost + Math.hypot((r.l + w / 2 - x) * 1.5, r.t - start) });
               }
             }
           }
           cands.sort((a, b) => a.d - b.d);
-          rect = cands.find((c) => free(c.r) && c.r.t >= minTop && c.r.t <= maxTop)?.r ?? rect;
+          const inPane = (c: (typeof cands)[number]) => c.r.t >= minTop && c.r.t <= maxTop;
+          rect = (cands.find((c) => inPane(c) && clear(c.r)) ?? cands.find((c) => inPane(c) && free(c.r)))?.r ?? rect;
         }
         placed.push(rect);
         el.style.left = `${rect.l}px`;
