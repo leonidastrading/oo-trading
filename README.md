@@ -9,7 +9,7 @@ Next.js (App Router, TypeScript) + Tailwind + Recharts, deployed on Vercel, with
 
 ## Security model
 
-- **Everything requires login** (`src/proxy.ts`). Only `/login`, `/api/auth/*` (NextAuth) and `/api/cron/*` (checks `CRON_SECRET`) skip the session check. The Schwab OAuth callback also requires your session *and* a one-time `state` value.
+- **Everything requires login** (`src/proxy.ts`). Only `/login`, `/api/auth/*` (NextAuth), `/api/cron/*` (checks `CRON_SECRET`), `/api/ingest/*` (checks `OO_INGEST_TOKEN`) and `/api/export/*` (checks `OO_EXPORT_TOKEN`) skip the session check. The Schwab OAuth callback also requires your session *and* a one-time `state` value.
 - **Single allowed account**: `ALLOWED_EMAIL`, enforced at sign-in and on every request.
 - **Read-only Schwab**: `src/lib/schwab/readonly.ts` allows only `GET` on account numbers, account/positions/balances, transactions and quotes. There is no order code; a unit test asserts order paths are blocked.
 - Secrets live only in Vercel env vars; tokens live only in Redis. The full account number is never sent to the browser.
@@ -66,6 +66,18 @@ All Schwab calls go through server routes (`/api/live`, `/api/today`) backed by 
 - A **"data delayed"** banner appears when data is older than 2× the refresh interval during market hours.
 - "Last updated HH:MM:SS ET" is shown on every page.
 - NYSE holidays and 1 PM early closes are listed in `src/lib/time.ts` for 2025–2027. Extend the list when needed.
+
+### Book advisor export
+
+`GET /api/export/advisor?since=<ISO>` is a read-only feed for the spx-ai-agent entry advisor (spec: that repo's
+`docs/oo-trading-export.md`, which also holds the contract the response is validated against). It needs
+`Authorization: Bearer <OO_EXPORT_TOKEN>` (its own env var; timing-safe compare) and is polled every ~10 s during
+market hours, so it reads Schwab only through the shared caches: transactions ≤ 15 s old, quotes ≤ 10 s, 1-minute
+bars ≤ 20 s, the per-bot backtest/scorecard block every 10 min. It names no account: entry ids are a truncated
+sha256 of the Schwab order id, and no order/activity ids, account number, hash or last-4 are in the response. Bot
+matching is `classifyBookEntry`'s rules (`match` = exact / ambiguous / none with a 0–1 confidence); `filledAt` is
+Schwab's fill time. If the Vercel project has Vercel Authentication on, requests to a `*.vercel.app` URL are turned
+away before the token check: use a custom production domain or a Protection Bypass for Automation secret.
 
 ### End-of-day snapshot (Vercel Cron)
 `vercel.json` schedules `/api/cron/eod` at 20:30 and 21:30 UTC on weekdays, which covers 16:30 ET in both EDT and EST. The handler runs once per trading day inside 16:15–18:00 ET and saves net liq, day P/L, realized/open P/L and per-position P/L to Redis. On the Hobby plan, cron timing is only accurate to the hour, so the window is deliberately wide. You can also save a snapshot from Settings.

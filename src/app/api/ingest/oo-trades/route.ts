@@ -1,22 +1,16 @@
 // Write-only endpoint for the automated backtest refresh (Bearer OO_INGEST_TOKEN).
 // Upserts trades by strategy + date/time opened, so a re-run with different contract
 // counts replaces the old rows instead of duplicating them.
-import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { requireKv } from "@/lib/apiGuard";
+import { bearerMatches } from "@/lib/bearerAuth";
 import { KEYS, kv } from "@/lib/kv";
 import { fillVix, rememberVix } from "@/lib/ooVix";
 import { isValidTrade, tradeKey, tradeSlot, type OOTrade } from "@/lib/ooCsv";
 
 export const dynamic = "force-dynamic";
 
-function authorized(req: NextRequest): boolean {
-  const token = process.env.OO_INGEST_TOKEN;
-  const given = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  if (!token || !given) return false;
-  const h = (s: string) => createHash("sha256").update(s).digest();
-  return timingSafeEqual(h(token), h(given));
-}
+const authorized = (req: NextRequest) => bearerMatches(req, process.env.OO_INGEST_TOKEN);
 
 const slot = tradeSlot;
 
