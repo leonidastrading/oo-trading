@@ -336,7 +336,7 @@ export function toBacktest(t: OOTrade): BacktestTrade | null {
   };
 }
 
-interface Profile {
+export interface Profile {
   signatures: Set<string>;
   /** Distinct entry times seen in the backtest (minutes of day). */
   times: number[];
@@ -404,21 +404,44 @@ export const MAX_INFER_MINUTES = 30;
  * time (≤ 30 min), and a credit inside its usual range.
  */
 export function inferStrategy(l: LiveTrade, profiles: Map<string, Profile>): string | null {
-  const t = minutesET(l.time);
   // The book's own rules (structure, wing widths, DTE) first; the backtest profiles only as a fallback.
-  const ruled = classifyBookEntry(l.legs, l.date, t);
+  const ruled = classifyBookEntry(l.legs, l.date, minutesET(l.time));
   if (ruled) return ruled;
-  let best: { s: string; score: number } | null = null;
+  return profileMatch(l, profiles)?.strategy ?? null;
+}
+
+export interface ProfileMatch {
+  strategy: string;
+  /** Minutes from the strategy's nearest typical entry time. */
+  minutesOff: number;
+  /** How far the credit sits outside the strategy's 5–95% credit range, in range widths (0 = inside). */
+  creditOutside: number;
+  creditLo: number;
+  creditHi: number;
+  /** The runner-up's score minus the winner's (lower score is better); null when only one fits. */
+  margin: number | null;
+}
+
+/**
+ * The backtest-profile half of `inferStrategy`: same leg signature and DTE as a strategy's backtests, nearest
+ * typical entry time (≤ 30 min), credit inside its usual range. This is what labels live entries on the Live tab
+ * when the structure rules don't fit (e.g. an IC whose wings filled at other widths than its rule says).
+ */
+export function profileMatch(l: Pick<LiveTrade, "time" | "signature" | "credit">, profiles: Map<string, Profile>): ProfileMatch | null {
+  const t = minutesET(l.time);
+  const fits: (ProfileMatch & { score: number })[] = [];
   for (const [s, p] of profiles) {
     if (!p.signatures.has(l.signature)) continue;
     const dt = Math.min(...p.times.map((x) => Math.abs(t - x)));
     if (dt > MAX_INFER_MINUTES) continue;
     const width = Math.max(p.creditHi - p.creditLo, 0.1);
     const outside = l.credit < p.creditLo ? (p.creditLo - l.credit) / width : l.credit > p.creditHi ? (l.credit - p.creditHi) / width : 0;
-    const score = dt + 10 * outside;
-    if (!best || score < best.score) best = { s, score };
+    fits.push({ strategy: s, minutesOff: dt, creditOutside: Math.round(outside * 100) / 100, creditLo: p.creditLo, creditHi: p.creditHi, margin: null, score: dt + 10 * outside });
   }
-  return best?.s ?? null;
+  fits.sort((a, b) => a.score - b.score);
+  if (!fits.length) return null;
+  const { score, ...best } = fits[0];
+  return { ...best, margin: fits[1] ? Math.round((fits[1].score - score) * 100) / 100 : null };
 }
 
 /** User annotation on a live entry (keyed by Schwab opening orderId). */

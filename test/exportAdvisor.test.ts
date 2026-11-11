@@ -9,6 +9,7 @@ import { normalizeTransactions, type SchwabTransaction } from "@/lib/realized";
 import type { Bar } from "@/lib/schwab/data";
 import type { Position } from "@/lib/spreads";
 import { classifySpread } from "@/lib/spreads";
+import { profileMatch } from "@/lib/scorecard";
 import { bookEntryCandidates } from "@/lib/strategyRules";
 import { addDays, etMidnightUtc, isTradingDay } from "@/lib/time";
 import {
@@ -19,6 +20,7 @@ import {
   ExportUnavailable,
   matchBot,
   parseSince,
+  profileBotMatch,
   VIX_BUCKETS,
   type AdvisorInput,
 } from "@/lib/export/advisor";
@@ -275,6 +277,35 @@ describe("GET /api/export/advisor: response", () => {
     expect(matchBot(odd, d, 600)).toMatchObject({ match: "none", bot: null, candidates: [], matchConfidence: 0 });
     expect(bookEntryCandidates(odd, d)).toEqual([]);
     expect(bookEntryCandidates(ic, d)).toEqual(["$8 IC"]);
+  });
+
+  it("labels ICs the rules miss with the Live tab's backtest profiles (Nov 11: puts 55 / calls 50 at 13:30 and 13:35)", () => {
+    const profiles = new Map([
+      ["8SMA IC", { signatures: new Set(["P+1@0,P-1@0,C-1@0,C+1@0"]), times: [810], creditLo: 7.5, creditHi: 10.5 }],
+      ["$8 IC", { signatures: new Set(["P+1@0,P-1@0,C-1@0,C+1@0"]), times: [815], creditLo: 12, creditHi: 16.5 }],
+    ]);
+    const live = (min: number, credit: number) => ({ time: etMidnightUtc(TODAY).getTime() + min * 60_000 + 3000, signature: "P+1@0,P-1@0,C-1@0,C+1@0", credit });
+    const rules = matchBot([], TODAY, 810);
+    const sma = profileMatch(live(810, 8.05), profiles)!;
+    const ic8 = profileMatch(live(815, 14.7), profiles)!;
+    expect(sma.strategy).toBe("8SMA IC");
+    expect(ic8.strategy).toBe("$8 IC");
+    const m1 = profileBotMatch(sma, rules);
+    expect(m1).toMatchObject({ bot: "8SMA IC", match: "exact" });
+    expect(m1.matchConfidence).toBeGreaterThanOrEqual(0.6);
+    expect(m1.matchReason).toMatch(/live profile/);
+    // A credit far outside every range at an odd time: low confidence (the advisor then gives no opinion).
+    const odd = profileMatch(live(835, 30), profiles)!;
+    expect(profileBotMatch(odd, rules).matchConfidence).toBeLessThan(0.6);
+  });
+
+  it("passes net liquidation value (now and each end of day) and today's open entries, no account ids", () => {
+    expect(buildAdvisorExport(input).account).toBeNull();
+    const x = buildAdvisorExport({ ...input, balances: { netLiq: 380_000, startNetLiq: 381_000 } });
+    expect(x.account).toMatchObject({ netLiq: 380_000, startNetLiq: 381_000 });
+    expect(x.account!.eod).toHaveLength(3);
+    expect(exportSchema.safeParse(x).success).toBe(true);
+    for (const o of x.book.open) expect(x.entries.some((e) => e.id === o.entryId) || o.entryId.length > 5).toBe(true);
   });
 
   it("scores outcomes and today's book from the fills", () => {
