@@ -54,16 +54,16 @@ export function inWindow(strategy: string, minutes: number): boolean {
 }
 
 /**
- * The book strategy an entry's legs describe, or null when they match none of the rules.
- * `minutes` is the entry time (minutes after midnight ET); it only breaks ties.
+ * Every book strategy whose rules (legs, wing widths, DTE) an entry's structure satisfies, in rule order. Empty
+ * when none fits; more than one means the structure alone can't tell them apart (the entry time may).
  */
-export function classifyBookEntry(legs: RuleLeg[], entryDate: string, minutes: number | null = null): string | null {
+export function bookEntryCandidates(legs: RuleLeg[], entryDate: string): string[] {
   const opts = legs.filter((l) => l.putCall && l.strike !== null && l.expiration && l.qty !== 0);
-  if (!opts.length) return null;
+  if (!opts.length) return [];
   const units = opts.map((l) => Math.abs(l.qty)).reduce(gcd);
   const ls = opts.map((l) => ({ pc: l.putCall!, k: l.strike!, q: l.qty / units, dte: tradingDte(entryDate, l.expiration!) }));
   const dtes = new Set(ls.map((l) => l.dte));
-  if (dtes.size !== 1) return null;
+  if (dtes.size !== 1) return [];
   const dte = ls[0].dte;
   const puts = ls.filter((l) => l.pc === "P").sort((a, b) => a.k - b.k);
   const calls = ls.filter((l) => l.pc === "C").sort((a, b) => a.k - b.k);
@@ -124,6 +124,15 @@ export function classifyBookEntry(legs: RuleLeg[], entryDate: string, minutes: n
     candidates.push("FOMC");
   }
 
+  return candidates;
+}
+
+/**
+ * The book strategy an entry's legs describe, or null when they match none of the rules.
+ * `minutes` is the entry time (minutes after midnight ET); it only breaks ties.
+ */
+export function classifyBookEntry(legs: RuleLeg[], entryDate: string, minutes: number | null = null): string | null {
+  const candidates = bookEntryCandidates(legs, entryDate);
   if (candidates.length <= 1 || minutes === null) return candidates[0] ?? null;
   return candidates.find((s) => inWindow(s, minutes)) ?? candidates[0];
 }

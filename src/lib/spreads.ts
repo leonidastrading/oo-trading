@@ -293,6 +293,11 @@ export function classifySpread(legs: Pick<Position, "putCall" | "strike" | "qty"
     const f = fly(calls);
     if (f) return `Call ${f}`;
   }
+  // One put + one call on the same side (e.g. the FOMC long straddle).
+  if (puts.length === 1 && calls.length === 1 && puts[0].qty === calls[0].qty) {
+    const side = puts[0].qty > 0 ? "Long" : "Short";
+    return puts[0].strike === calls[0].strike ? `${side} straddle` : `${side} strangle`;
+  }
   return `Custom (${opts.length} legs)`;
 }
 

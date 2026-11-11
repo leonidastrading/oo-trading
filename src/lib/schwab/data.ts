@@ -124,6 +124,19 @@ export function dedupeBars(bars: Bar[]): Bar[] {
   return [...new Map(bars.map((b) => [b.time, b])).values()].sort((a, b) => a.time - b.time);
 }
 
+/** Regular-session 5-minute bars for the last `days` trading days (Schwab counts the days). */
+export async function fetchFiveMinuteBars(symbol: string, days: number): Promise<Bar[]> {
+  const raw = await schwabGet<{ candles?: { open: number; high: number; low: number; close: number; datetime: number }[] }>(
+    "/marketdata/v1/pricehistory",
+    { symbol, periodType: "day", period: String(days), frequencyType: "minute", frequency: "5", needExtendedHoursData: "false" },
+  );
+  return dedupeBars((raw.candles ?? []).map((c) => ({ time: Math.floor(c.datetime / 1000), open: c.open, high: c.high, low: c.low, close: c.close })));
+}
+
+export function cachedFiveMinuteBars(symbol: string, days: number, maxAgeMs: number): Promise<CacheResult<Bar[]>> {
+  return cached(`bars5m:v1:${symbol}:${days}d`, maxAgeMs, () => fetchFiveMinuteBars(symbol, days));
+}
+
 /** Daily bars for the last year; `time` is the ET session date as epoch seconds at 00:00 UTC. */
 export async function fetchDailyBars(symbol: string): Promise<Bar[]> {
   const raw = await schwabGet<{ candles?: { open: number; high: number; low: number; close: number; datetime: number }[] }>(

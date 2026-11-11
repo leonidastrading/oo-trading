@@ -190,4 +190,8 @@ export const KEYS = {
   /** 0DTE premium gauge: one row per trading day (date → GaugeRow). */
   gaugeDays: "gauge:days",
   dayCurve: (date: string) => `daypl:${date}`,
+  /** Advisor export: recent SPX/VIX quote snapshots (ring buffer, ~10 minutes). */
+  exportSnapshots: "export:quote-snapshots",
+  /** Advisor export: when each entry (by export id) was first seen, per entry date. */
+  exportSeen: (date: string) => `export:seen:${date}`,
 } as const;
