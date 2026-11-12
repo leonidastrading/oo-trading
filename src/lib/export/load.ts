@@ -8,7 +8,7 @@ import { gaugeRows } from "../gaugeCapture";
 import { KEYS, kv } from "../kv";
 import { uniqueEntries } from "../allocSim";
 import type { OOTrade } from "../ooCsv";
-import { buildScorecard } from "../scorecard";
+import { buildProfiles, buildScorecard, deserializeProfiles, serializeProfiles, toBacktest, type BacktestTrade, type SerializedProfiles } from "../scorecard";
 import { cachedAccount, cachedDailyBars, cachedFillsSince, cachedFiveMinuteBars, cachedMinuteBars, cachedQuotes } from "../schwab/data";
 import { tokenStatus } from "../schwab/tokens";
 import { addDays, closedMaxAge, marketSession, todayET } from "../time";
@@ -34,6 +34,15 @@ async function botRecords(now: number): Promise<{ data: Record<string, BotRecord
     return buildBotRecords(trades, sc);
   });
   return { data: res.data ?? {}, error: res.error };
+}
+
+/** The Live tab's backtest profiles (entry times, leg signature, credit range per strategy), rebuilt every 6 hours. */
+async function liveProfiles(): Promise<{ data: SerializedProfiles; error: string | null }> {
+  const res = await cached<SerializedProfiles>("export:profiles:v1", 6 * 3600_000, async () => {
+    const oo = uniqueEntries(Object.values(await kv().hgetall<OOTrade>(KEYS.ooTrades)));
+    return serializeProfiles(buildProfiles(oo.map(toBacktest).filter((b): b is BacktestTrade => b !== null)));
+  });
+  return { data: res.data ?? [], error: res.error };
 }
 
 /** Append the latest quotes to the ring buffer (keyed by Schwab's quote time) and return the recent snapshots. */
@@ -105,7 +114,7 @@ export async function loadAdvisorExport(since: number, now = Date.now()): Promis
     });
   }
 
-  const [fills, acct, quotes, spx1m, spx5m, spxDaily, vixDaily, vix9dDaily, gauge, eod, bots] = await Promise.all([
+  const [fills, acct, quotes, spx1m, spx5m, spxDaily, vixDaily, vix9dDaily, gauge, eod, bots, profiles] = await Promise.all([
     cachedFillsSince(fillsFrom, age(15_000, now, live)),
     cachedAccount(age(15_000, now, live)),
     cachedQuotes(["$SPX", "$VIX", "$VIX9D"], age(10_000, now, live)),
@@ -123,10 +132,12 @@ export async function loadAdvisorExport(since: number, now = Date.now()): Promis
       return [];
     }),
     botRecords(now),
+    liveProfiles(),
   ]);
   fills.errors.forEach(push);
   for (const r of [acct, quotes, spx1m, spx5m, spxDaily, vixDaily, vix9dDaily]) push(r.error);
   push(bots.error);
+  push(profiles.error);
 
   // The current week's window is the one that reaches today.
   const liveWindow = fills.windows.find((w) => w.from <= today && today < w.to) ?? fills.windows.at(-1);
@@ -147,6 +158,8 @@ export async function loadAdvisorExport(since: number, now = Date.now()): Promis
     gauge,
     eod,
     bots: bots.data,
+    profiles: deserializeProfiles(profiles.data),
+    balances: acct.data?.balances ? { netLiq: acct.data.balances.netLiq, startNetLiq: acct.data.balances.startNetLiq } : null,
   };
   const first = buildAdvisorExport(input);
   if (!first.entries.length) return first;

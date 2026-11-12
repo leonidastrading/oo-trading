@@ -10,7 +10,7 @@ import { uniqueEntries } from "../allocSim";
 import { intrinsic } from "../options";
 import type { OOTrade } from "../ooCsv";
 import type { Fill } from "../realized";
-import { buildLiveTrades, canonicalStrategy, mergeSplitOrders, OO_TIME_EXITS, STRATEGIES, type LiveTrade, type Scorecard } from "../scorecard";
+import { buildLiveTrades, canonicalStrategy, mergeSplitOrders, OO_TIME_EXITS, profileMatch, STRATEGIES, type LiveTrade, type Profile, type Scorecard } from "../scorecard";
 import type { Bar, Quote } from "../schwab/data";
 import { classifySpread, type Position } from "../spreads";
 import { bookEntryCandidates, inWindow, tradingDte, type RuleLeg } from "../strategyRules";
@@ -36,6 +36,8 @@ export interface ExportEntry {
   match: MatchKind;
   matchConfidence: number;
   matchReason: string;
+  /** How the bot was found: the structure rules, or (when they don't fit) the Live tab's backtest profiles. */
+  matchSource: "rules" | "live_profile" | null;
   structure: string;
   underlying: string;
   legs: ExportLeg[];
@@ -90,7 +92,11 @@ export interface AdvisorExport {
     daily: { date: string; pl: number }[];
     /** ≤ 0: today's running total against the high of the cumulative daily series (0 = at the high). */
     drawdownFromHigh: number;
+    /** Entries still open now: legs, size and open P/L (marks), for the morning advisor. */
+    open: { entryId: string; bot: string | null; filledAt: string; legs: ExportLeg[]; contracts: number; pl: number }[];
   };
+  /** Schwab net liquidation value now and at each stored end of day (no account identifiers). Null when unknown. */
+  account: { netLiq: number | null; startNetLiq: number | null; asOf: string; eod: { date: string; netLiq: number }[] } | null;
   bots: Record<string, BotRecord & { last10Days: { date: string; trades: { time: string; pl: number }[] }[] }>;
   market: {
     spx: ExportQuote;
@@ -129,6 +135,10 @@ export interface AdvisorInput {
   bots: Record<string, BotRecord>;
   /** Export id → when oo-trading first saw the entry (ms). */
   seenAt: Record<string, number>;
+  /** Backtest profiles per strategy (the Live tab's attribution), for entries the structure rules don't fit. */
+  profiles?: Map<string, Profile>;
+  /** Schwab balances (net liquidation value now and at the start of the day). */
+  balances?: { netLiq: number | null; startNetLiq: number | null } | null;
 }
 
 /** Thrown when a required block (the SPX or VIX quote) can't be produced; the route answers 503. */
@@ -229,6 +239,28 @@ export function matchBot(legs: RuleLeg[], entryDate: string, minutes: number, ca
   };
 }
 
+/**
+ * A Live-tab profile match as a BotMatch. Confidence starts at 0.9 and drops for an entry time away from the
+ * strategy's usual ones, a credit outside its usual range, and a close runner-up; the advisor gives no opinion
+ * below its threshold (0.6).
+ */
+export function profileBotMatch(pm: NonNullable<ReturnType<typeof profileMatch>>, rules: BotMatch): BotMatch {
+  let c = 0.9;
+  if (pm.minutesOff > 5) c -= 0.15;
+  if (pm.minutesOff > 15) c -= 0.15;
+  if (pm.creditOutside > 0) c -= Math.min(0.4, 0.4 * pm.creditOutside);
+  if (pm.margin !== null && pm.margin < 2) c -= 0.2;
+  const conf = r2(Math.max(0, c));
+  const desc = rules.matchReason.replace(/:[^:]*$/, "");
+  return {
+    bot: pm.strategy,
+    candidates: rules.candidates,
+    match: "exact",
+    matchConfidence: conf,
+    matchReason: `${desc}: ${pm.strategy} by its live profile (Live tab): ${pm.minutesOff.toFixed(0)} min from its usual entry time, credit ${pm.creditOutside ? `${pm.creditOutside} range-widths outside` : "inside"} its usual ${pm.creditLo}–${pm.creditHi}${pm.margin !== null ? `, runner-up ${pm.margin} behind` : ""}`,
+  };
+}
+
 // ---------- Per-bot records (stored OO trades + scorecard) ----------
 
 function bucketStats(trades: OOTrade[]): BotBucket {
@@ -300,6 +332,7 @@ interface TradeView {
   underlying: string;
   legs: ExportLeg[];
   match: BotMatch;
+  matchSource: "rules" | "live_profile" | null;
   /** P/L so far ($, net of Schwab fees): closed legs at their exit, open legs at the mark or settlement. */
   pl: number;
   status: "open" | "closed" | "stopped" | "expired";
@@ -398,13 +431,21 @@ function buildTradeViews(input: AdvisorInput): TradeView[] {
     } else status = "open";
 
     const minutes = etParts(filledAt).minutesOfDay;
-    const match = matchBot(legs, trade.date, minutes);
+    let match = matchBot(legs, trade.date, minutes);
+    let matchSource: TradeView["matchSource"] = match.bot ? "rules" : null;
+    if (match.match !== "exact" && input.profiles) {
+      const pm = profileMatch(trade, input.profiles);
+      if (pm) {
+        match = { ...profileBotMatch(pm, match), candidates: match.candidates.length ? match.candidates : [pm.strategy] };
+        matchSource = "live_profile";
+      }
+    }
     if (match.bot === "$8 IC" && trade.units === 1) match.matchReason += " (1 lot: possibly the Dip add-on)";
     if (how === "closed" && match.bot && OO_TIME_EXITS[match.bot] !== undefined && lastOrderExit !== null) {
       const m = etParts(lastOrderExit).minutesOfDay;
       if (Math.abs(m - OO_TIME_EXITS[match.bot]) <= 3) how = "time";
     }
-    views.push({ trade, id: entryId(trade.orderId), filledAt, underlying, legs, match, pl, status, closedAt, how });
+    views.push({ trade, id: entryId(trade.orderId), filledAt, underlying, legs, match, matchSource, pl, status, closedAt, how });
   }
   return views.sort((a, b) => a.filledAt - b.filledAt);
 }
@@ -452,6 +493,7 @@ export function buildAdvisorExport(input: AdvisorInput): AdvisorExport {
       match: v.match.match,
       matchConfidence: v.match.matchConfidence,
       matchReason: v.match.matchReason,
+      matchSource: v.matchSource,
       structure: structureName(v.legs),
       underlying: v.underlying,
       legs: v.legs,
@@ -483,6 +525,17 @@ export function buildAdvisorExport(input: AdvisorInput): AdvisorExport {
   cum += todayTotal;
   high = Math.max(high, cum);
   const drawdownFromHigh = r2(cum - high);
+  const openNow = views
+    .filter((v) => v.status === "open")
+    .map((v) => ({ entryId: v.id, bot: v.match.bot, filledAt: iso(v.filledAt), legs: v.legs, contracts: v.trade.units, pl: v.pl }));
+  const account = input.balances
+    ? {
+        netLiq: input.balances.netLiq,
+        startNetLiq: input.balances.startNetLiq,
+        asOf: iso(now),
+        eod: input.eod.filter((s) => s.netLiq !== null).map((s) => ({ date: s.date, netLiq: s.netLiq! })).sort((a, b) => a.date.localeCompare(b.date)),
+      }
+    : null;
 
   const days10 = lastTradingDays(today, 10);
   const bots: AdvisorExport["bots"] = {};
@@ -505,7 +558,8 @@ export function buildAdvisorExport(input: AdvisorInput): AdvisorExport {
     schwab: { connected: input.connected, fillsFetchedAt: input.fillsFetchedAt === null ? null : iso(input.fillsFetchedAt), errors: input.errors },
     entries,
     outcomes,
-    book: { today: bookToday, todayTotal, stoppedOutBots, daily, drawdownFromHigh },
+    book: { today: bookToday, todayTotal, stoppedOutBots, daily, drawdownFromHigh, open: openNow },
+    account,
     bots,
     market: {
       spx,
