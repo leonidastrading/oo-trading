@@ -11,6 +11,7 @@ import { MonthlyReturnsChart } from "./MonthlyReturnsChart";
 import { CorrelationMatrix } from "./CorrelationMatrix";
 import { OptimizerPanel } from "./OptimizerPanel";
 import { StopStreaks } from "./StopStreaks";
+import { StreakSizing } from "./StreakSizing";
 import { RangeSlider } from "./RangeSlider";
 
 const RANGES = [
@@ -363,6 +364,7 @@ export function AllocationSimulator({ trades, colorOf }: { trades: OOTrade[]; co
       <CorrelationMatrix daily={sim.daily} strategies={rows} label={shortName} />
       <StopStreaks trades={simTrades} label={shortName} />
       <StopStreaks trades={simTrades} label={shortName} kind="loss" />
+      <StreakSizing trades={simTrades} alloc={effective} equity={equity} current={sim} strategies={rows} label={shortName} />
       <StopStreaks trades={simTrades} label={shortName} kind="win" />
 
       <MonthlyReturnsChart months={sim.months} />

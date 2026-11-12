@@ -11,9 +11,20 @@ export interface StrategyAlloc {
   fixed?: number;
   /** Double the size of the strategy's next trade after it gets stopped out. */
   doubleAfterStop?: boolean;
+  /**
+   * Size up after a streak: once the strategy has `after` stop-outs (or losses) in a row, its trades are sized
+   * `mult`× until it has a winner (P/L ≥ 0). Counted on closed trades, in close order.
+   */
+  boost?: StreakBoost;
   /** Only take trades whose VIX at entry is within this range (either end optional). */
   vixMin?: number;
   vixMax?: number;
+}
+
+export interface StreakBoost {
+  kind: "stop" | "loss";
+  after: number;
+  mult: number;
 }
 
 /** Schwab Port 2026 allocations in Option Omega (as of Oct 29, 2026), keyed by the scorecard's short names. */
@@ -249,6 +260,8 @@ export interface SimResult {
   equity: { date: string; equity: number; dd: number }[];
   /** Entries skipped by each strategy's VIX range. */
   vixSkipped: Record<string, number>;
+  /** Trades sized up by a streak boost. */
+  boosted: number;
   /** Each strategy's sized P/L per day ($, by close date, aligned with `days`), e.g. for correlations. */
   daily: { days: string[]; pl: Record<string, number[]> };
 }
@@ -269,6 +282,9 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
   // Strategies whose latest closed trade was a stop-out and haven't had their doubled trade yet.
   const afterStop = new Set<string>();
   const vixSkipped: Record<string, number> = {};
+  // Streak boost: each strategy's current run of stop-outs / losses (closed trades), reset by a winner.
+  const streak = new Map<string, number>();
+  let boosted = 0;
   const settle = (until: string) => {
     pending.sort((a, b) => a.close.localeCompare(b.close));
     while (pending.length && pending[0].close <= until) {
@@ -276,6 +292,12 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
       realized += done.pl;
       if (done.stopped) afterStop.add(done.strategy);
       else afterStop.delete(done.strategy);
+      const b = alloc[done.strategy]?.boost;
+      if (b) {
+        if (done.plPerLot >= 0) streak.set(done.strategy, 0);
+        else if (b.kind === "loss" || done.stopped) streak.set(done.strategy, (streak.get(done.strategy) ?? 0) + 1);
+        // A non-stop loss neither extends nor breaks a stop-out streak.
+      }
     }
   };
   for (const t of trades) {
@@ -299,6 +321,10 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
     if (a.doubleAfterStop && afterStop.has(t.strategy)) {
       n *= 2;
       afterStop.delete(t.strategy);
+    }
+    if (a.boost && a.boost.mult > 1 && (streak.get(t.strategy) ?? 0) >= Math.max(1, a.boost.after)) {
+      n = Math.round(n * a.boost.mult);
+      boosted++;
     }
     if (n <= 0) continue;
     const s: Sized = { ...t, contracts: n, pl: t.plPerLot * n, margin: t.riskPerLot * n };
@@ -478,6 +504,7 @@ export function simulate(trades: SimTrade[], alloc: Record<string, StrategyAlloc
     months,
     equity,
     vixSkipped,
+    boosted,
     daily: (() => {
       const at = new Map(days.map((d, i) => [d, i]));
       const pl: Record<string, number[]> = {};

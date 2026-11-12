@@ -224,3 +224,30 @@ describe("optimizer VIX ranges", () => {
     expect(r.alloc.PS.fixed).toBe(1); // sizes untouched in VIX mode
   });
 });
+
+describe("streak boost", () => {
+  // One trade a day, $1,000 risk per lot; a stop loses $500/lot, a winner makes $100/lot.
+  const day = (i: number) => `2026-03-${String(i + 1).padStart(2, "0")}`;
+  const mk = (i: number, kind: "stop" | "loss" | "win") => ({
+    strategy: "S",
+    open: `${day(i)} 10:00:00`,
+    close: `${day(i)} 15:00:00`,
+    closeDate: day(i),
+    plPerLot: kind === "win" ? 100 : -500,
+    riskPerLot: 1000,
+    premiumPerLot: 100,
+    stopped: kind === "stop",
+    vix: null,
+  });
+  it("sizes up after N stops in a row until a winner", () => {
+    const seq = ["stop", "stop", "stop", "loss", "stop", "win", "win"] as const;
+    const trades = seq.map((k, i) => mk(i, k));
+    const base = simulate(trades, { S: { pct: 1, fixed: 10 } }, 100_000);
+    const up = simulate(trades, { S: { pct: 1, fixed: 10, boost: { kind: "stop", after: 2, mult: 2 } } }, 100_000);
+    // Trades 3 (after 2 stops), 4 (the non-stop loss keeps the streak), 5 and 6 (the first winner) are doubled; 7 is back to normal.
+    expect(up.boosted).toBe(4);
+    expect(up.pl - base.pl).toBe(10 * (-500 - 500 - 500 + 100));
+    const losses = simulate(trades, { S: { pct: 1, fixed: 10, boost: { kind: "loss", after: 4, mult: 3 } } }, 100_000);
+    expect(losses.boosted).toBe(2); // after the 4th loss in a row: trade 5 (stop) and 6 (winner)
+  });
+});
