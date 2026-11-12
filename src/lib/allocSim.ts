@@ -720,6 +720,9 @@ export interface BoostSearchOptions {
   include: string[];
   /** Max drawdown limit as a fraction (0.05 = 5%); null = none. */
   maxDrawdown: number | null;
+  /** Margin limits as fractions of equity: the busiest day, and the average day; null = none. */
+  maxPeakMargin?: number | null;
+  maxAvgMargin?: number | null;
   /** For "dd": keep P/L at least this. */
   minPl?: number | null;
 }
@@ -738,7 +741,7 @@ export async function optimizeBoosts(
   o: BoostSearchOptions,
   onProgress?: (done: number, total: number, best: SimResult) => void,
 ): Promise<{ boosts: Record<string, StreakBoost | null>; result: SimResult; feasible: boolean; runs: number }> {
-  const so: OptimizeOptions = { objective: o.objective, include: o.include, maxAvgMargin: null, maxPeakMargin: null, maxDrawdown: o.maxDrawdown, minPl: o.minPl };
+  const so: OptimizeOptions = { objective: o.objective, include: o.include, maxAvgMargin: o.maxAvgMargin ?? null, maxPeakMargin: o.maxPeakMargin ?? null, maxDrawdown: o.maxDrawdown, minPl: o.minPl };
   const options: (StreakBoost | null)[] = [null];
   for (const kind of o.kinds) for (const after of BOOST_AFTER) for (const mult of BOOST_MULTS) options.push({ kind, after, mult });
   let cur = { ...alloc };

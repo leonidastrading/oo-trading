@@ -275,4 +275,12 @@ describe("streak boost optimizer", () => {
     expect(r.boosts.S).toEqual({ kind: "stop", after: 2, mult: 4 });
     expect(r.result.pl).toBeGreaterThan(simulate(trades, { S: { pct: 1, fixed: 1 } }, 100_000).pl);
   });
+  it("respects the margin cap", async () => {
+    // 1 lot = $1,000 of margin on $100k (1%); a 1.5% cap allows no sizing up at all, 2.5% allows 2x.
+    const o = { objective: "pl" as const, kinds: ["stop" as const], include: ["S"], maxDrawdown: null };
+    expect((await optimizeBoosts(trades, { S: { pct: 1, fixed: 1 } }, 100_000, { ...o, maxPeakMargin: 0.015 })).boosts.S).toBeNull();
+    const r = await optimizeBoosts(trades, { S: { pct: 1, fixed: 1 } }, 100_000, { ...o, maxPeakMargin: 0.025 });
+    expect(r.boosts.S?.mult).toBe(2);
+    expect(r.result.maxMarginUtil).toBeLessThanOrEqual(0.025);
+  });
 });

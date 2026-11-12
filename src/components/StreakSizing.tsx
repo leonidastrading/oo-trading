@@ -69,6 +69,26 @@ export function StreakSizing({
   const [objective, setObjective] = useState<Objective>("mar");
   const [triggers, setTriggers] = useState<Triggers>("both");
   const [ddLimit, setDdLimit] = useState("");
+  const [peakCap, setPeakCap] = useState("35");
+  const [avgCap, setAvgCap] = useState("");
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      try {
+        const v = JSON.parse(localStorage.getItem(STORE + ".opt") ?? "null");
+        if (v) {
+          if (typeof v.peakCap === "string") setPeakCap(v.peakCap);
+          if (typeof v.avgCap === "string") setAvgCap(v.avgCap);
+          if (typeof v.ddLimit === "string") setDdLimit(v.ddLimit);
+        }
+      } catch {}
+    });
+  }, []);
+  const keepOpt = (patch: Record<string, string>) => {
+    try {
+      localStorage.setItem(STORE + ".opt", JSON.stringify({ peakCap, avgCap, ddLimit, ...patch }));
+    } catch {}
+  };
+  const frac = (v: string) => (v.trim() && Number(v) > 0 ? Number(v) / 100 : null);
   const [running, setRunning] = useState<{ done: number; total: number } | null>(null);
   const [optMsg, setOptMsg] = useState<string | null>(null);
   const [undo, setUndo] = useState<Record<string, Setting> | null>(null);
@@ -92,6 +112,8 @@ export function StreakSizing({
         kinds: triggers === "both" ? ["stop", "loss"] : [triggers],
         include: strategies.filter((s) => alloc[s]),
         maxDrawdown: ddLimit.trim() && limit > 0 ? limit / 100 : null,
+        maxPeakMargin: frac(peakCap),
+        maxAvgMargin: frac(avgCap),
         minPl: objective === "dd" ? current.pl : null,
       },
       (done, total) => setRunning({ done, total }),
@@ -105,7 +127,7 @@ export function StreakSizing({
     setOptMsg(
       r.feasible
         ? `Best for ${OBJECTIVES.find((o) => o.key === objective)!.label}: ${on ? `${on} strateg${on === 1 ? "y" : "ies"} sized up` : "no streak rule beats normal sizing"} (${r.runs.toLocaleString()} runs).`
-        : "No combination met the drawdown limit; showing the closest one.",
+        : "No combination met the limits; showing the closest one.",
     );
   };
   const applyAll = (on: boolean) => save(Object.fromEntries(strategies.map((s) => [s, { ...all, on }])));
@@ -146,6 +168,7 @@ export function StreakSizing({
     { label: "Sharpe", cur: n2(current.sharpe), boo: n2(boosted.sharpe), better: (boosted.sharpe ?? 0) > (current.sharpe ?? 0) },
     { label: "Sortino", cur: n2(current.sortino), boo: n2(boosted.sortino), better: (boosted.sortino ?? 0) > (current.sortino ?? 0) },
     { label: "Max margin day", cur: p1(current.maxMarginUtil), boo: p1(boosted.maxMarginUtil), better: boosted.maxMarginUtil < current.maxMarginUtil },
+    { label: "Avg margin", cur: p1(current.avgMarginUtil), boo: p1(boosted.avgMarginUtil), better: boosted.avgMarginUtil < current.avgMarginUtil },
     { label: "Trades sized up", cur: "—", boo: boosted.boosted.toLocaleString(), better: null },
   ];
   const sel = "rounded-md border border-border bg-surface-2 px-1.5 py-1 text-sm";
@@ -209,8 +232,44 @@ export function StreakSizing({
             inputMode="decimal"
             placeholder="none"
             value={ddLimit}
-            onChange={(e) => setDdLimit(e.target.value.replace(/[^\d.]/g, ""))}
+            onChange={(e) => {
+              const v = e.target.value.replace(/[^\d.]/g, "");
+              setDdLimit(v);
+              keepOpt({ ddLimit: v });
+            }}
             aria-label="Max drawdown limit in percent"
+          />
+          %
+        </label>
+        <label className="flex items-center gap-1 text-ink-2" title="Margin in use on the busiest day, as a share of the account">
+          max margin
+          <input
+            className={`${sel} w-16`}
+            inputMode="decimal"
+            placeholder="none"
+            value={peakCap}
+            onChange={(e) => {
+              const v = e.target.value.replace(/[^\d.]/g, "");
+              setPeakCap(v);
+              keepOpt({ peakCap: v });
+            }}
+            aria-label="Max margin on the busiest day in percent"
+          />
+          %
+        </label>
+        <label className="flex items-center gap-1 text-ink-2" title="Average day's peak margin, as a share of the account">
+          avg margin
+          <input
+            className={`${sel} w-16`}
+            inputMode="decimal"
+            placeholder="none"
+            value={avgCap}
+            onChange={(e) => {
+              const v = e.target.value.replace(/[^\d.]/g, "");
+              setAvgCap(v);
+              keepOpt({ avgCap: v });
+            }}
+            aria-label="Max average margin in percent"
           />
           %
         </label>
@@ -344,7 +403,8 @@ export function StreakSizing({
         break or extend the streak. Streaks count closed trades only, so a trade opened while the previous one is still open isn&apos;t sized
         on it. Margin isn&apos;t limited: sized-up trades always fill. Optimize tries, for each strategy in turn, off or every
         trigger × 1–6 in a row × 2–4× (keeping the other strategies&apos; rules), repeating until nothing improves; allocations stay as
-        they are. &quot;Smallest drawdown&quot; keeps net P/L at least today&apos;s.
+        they are. &quot;Smallest drawdown&quot; keeps net P/L at least today&apos;s. Max margin caps the busiest day&apos;s margin (all open
+        trades&apos; worst-case risk vs. that morning&apos;s equity) and avg margin the average day&apos;s; leave a box empty for no limit.
       </p>
     </section>
   );
