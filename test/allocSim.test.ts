@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { impliedAllocations, maxLossPerLot, simulate, toSimTrades, uniqueEntries } from "@/lib/allocSim";
+import { impliedAllocations, maxLossPerLot, optimizeBoosts, simulate, toSimTrades, uniqueEntries } from "@/lib/allocSim";
 import type { OOTrade } from "@/lib/ooCsv";
 
 const t = (o: Partial<OOTrade>): OOTrade => ({
@@ -249,5 +249,30 @@ describe("streak boost", () => {
     expect(up.pl - base.pl).toBe(10 * (-500 - 500 - 500 + 100));
     const losses = simulate(trades, { S: { pct: 1, fixed: 10, boost: { kind: "loss", after: 4, mult: 3 } } }, 100_000);
     expect(losses.boosted).toBe(2); // after the 4th loss in a row: trade 5 (stop) and 6 (winner)
+  });
+});
+
+describe("streak boost optimizer", () => {
+  const day = (i: number) => new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
+  // After two stops the next trade always wins: sizing up after 2 stops can only help P/L.
+  const kinds = ["stop", "stop", "win", "win", "win"] as const;
+  const trades = Array.from({ length: 40 }, (_, i) => {
+    const k = kinds[i % kinds.length];
+    return {
+      strategy: "S",
+      open: `${day(i)} 10:00:00`,
+      close: `${day(i)} 15:00:00`,
+      closeDate: day(i),
+      plPerLot: k === "win" ? 300 : -200,
+      riskPerLot: 1000,
+      premiumPerLot: 300,
+      stopped: k === "stop",
+      vix: null,
+    };
+  });
+  it("finds a rule that sizes up the trade after the streak", async () => {
+    const r = await optimizeBoosts(trades, { S: { pct: 1, fixed: 1 } }, 100_000, { objective: "pl", kinds: ["stop"], include: ["S"], maxDrawdown: null });
+    expect(r.boosts.S).toEqual({ kind: "stop", after: 2, mult: 4 });
+    expect(r.result.pl).toBeGreaterThan(simulate(trades, { S: { pct: 1, fixed: 1 } }, 100_000).pl);
   });
 });

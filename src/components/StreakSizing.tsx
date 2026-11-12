@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { simulate, type SimResult, type SimTrade, type StrategyAlloc, type StreakBoost } from "@/lib/allocSim";
+import { optimizeBoosts, simulate, type Objective, type SimResult, type SimTrade, type StrategyAlloc, type StreakBoost } from "@/lib/allocSim";
 import { money, plClass } from "./format";
 
 const STORE = "allocSim.streakBoost.v1";
@@ -13,6 +13,15 @@ interface Setting extends StreakBoost {
   on: boolean;
 }
 const DEFAULT: Setting = { on: false, kind: "stop", after: 2, mult: 2 };
+const OBJECTIVES: { key: Objective; label: string }[] = [
+  { key: "pl", label: "Net P/L" },
+  { key: "cagr", label: "CAGR" },
+  { key: "mar", label: "MAR" },
+  { key: "sharpe", label: "Sharpe" },
+  { key: "sortino", label: "Sortino" },
+  { key: "dd", label: "Smallest drawdown (keep P/L)" },
+];
+type Triggers = "stop" | "loss" | "both";
 
 const p1 = (f: number | null | undefined) => (f === null || f === undefined || !Number.isFinite(f) ? "—" : `${(f * 100).toFixed(1)}%`);
 const n2 = (v: number | null | undefined) => (v === null || v === undefined || !Number.isFinite(v) ? "—" : v.toFixed(2));
@@ -56,6 +65,49 @@ export function StreakSizing({
   };
   const get = (s: string): Setting => ({ ...DEFAULT, ...settings[s] });
   const set = (s: string, patch: Partial<Setting>) => save({ ...settings, [s]: { ...get(s), ...patch } });
+  // Optimizer: best rule per strategy for the objective (allocations unchanged).
+  const [objective, setObjective] = useState<Objective>("mar");
+  const [triggers, setTriggers] = useState<Triggers>("both");
+  const [ddLimit, setDdLimit] = useState("");
+  const [running, setRunning] = useState<{ done: number; total: number } | null>(null);
+  const [optMsg, setOptMsg] = useState<string | null>(null);
+  const [undo, setUndo] = useState<Record<string, Setting> | null>(null);
+  const runOptimizer = async () => {
+    const limit = Number(ddLimit);
+    const before = settings;
+    setOptMsg(null);
+    setRunning({ done: 0, total: 1 });
+    // Start from the current rules, so a second run refines the first.
+    const startAlloc: Record<string, StrategyAlloc> = {};
+    for (const [k, a] of Object.entries(alloc)) {
+      const g = { ...DEFAULT, ...settings[k] };
+      startAlloc[k] = g.on ? { ...a, boost: { kind: g.kind, after: g.after, mult: g.mult } } : { ...a, boost: undefined };
+    }
+    const r = await optimizeBoosts(
+      trades,
+      startAlloc,
+      equity,
+      {
+        objective,
+        kinds: triggers === "both" ? ["stop", "loss"] : [triggers],
+        include: strategies.filter((s) => alloc[s]),
+        maxDrawdown: ddLimit.trim() && limit > 0 ? limit / 100 : null,
+        minPl: objective === "dd" ? current.pl : null,
+      },
+      (done, total) => setRunning({ done, total }),
+    );
+    const next: Record<string, Setting> = { ...settings };
+    for (const [k, b] of Object.entries(r.boosts)) next[k] = b ? { ...b, on: true } : { ...get(k), on: false };
+    save(next);
+    setUndo(before);
+    setRunning(null);
+    const on = Object.values(r.boosts).filter(Boolean).length;
+    setOptMsg(
+      r.feasible
+        ? `Best for ${OBJECTIVES.find((o) => o.key === objective)!.label}: ${on ? `${on} strateg${on === 1 ? "y" : "ies"} sized up` : "no streak rule beats normal sizing"} (${r.runs.toLocaleString()} runs).`
+        : "No combination met the drawdown limit; showing the closest one.",
+    );
+  };
   const applyAll = (on: boolean) => save(Object.fromEntries(strategies.map((s) => [s, { ...all, on }])));
 
   const boostedAlloc = useMemo(() => {
@@ -133,6 +185,55 @@ export function StreakSizing({
         <button className="rounded-lg border border-border px-3 py-1 text-ink-2 hover:bg-surface-2" onClick={() => applyAll(false)}>
           Turn all off
         </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-xl bg-surface-2 p-2 text-sm">
+        <span className="font-semibold text-ink-2">Optimize for</span>
+        <select className={sel} value={objective} onChange={(e) => setObjective(e.target.value as Objective)} aria-label="Objective">
+          {OBJECTIVES.map((o) => (
+            <option key={o.key} value={o.key}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <span className="text-ink-2">using</span>
+        <select className={sel} value={triggers} onChange={(e) => setTriggers(e.target.value as Triggers)} aria-label="Triggers to try">
+          <option value="both">stops or losses</option>
+          <option value="stop">stop-outs only</option>
+          <option value="loss">losses only</option>
+        </select>
+        <label className="flex items-center gap-1 text-ink-2">
+          max DD
+          <input
+            className={`${sel} w-16`}
+            inputMode="decimal"
+            placeholder="none"
+            value={ddLimit}
+            onChange={(e) => setDdLimit(e.target.value.replace(/[^\d.]/g, ""))}
+            aria-label="Max drawdown limit in percent"
+          />
+          %
+        </label>
+        <button
+          className="rounded-lg bg-accent px-3 py-1 font-semibold text-page disabled:opacity-50"
+          onClick={() => void runOptimizer()}
+          disabled={!!running}
+        >
+          {running ? `Optimizing… ${Math.round((running.done / Math.max(running.total, 1)) * 100)}%` : "Optimize"}
+        </button>
+        {undo && !running && (
+          <button
+            className="rounded-lg border border-border px-3 py-1 text-ink-2 hover:bg-surface"
+            onClick={() => {
+              save(undo);
+              setUndo(null);
+              setOptMsg(null);
+            }}
+          >
+            Undo
+          </button>
+        )}
+        {optMsg && <span className="text-xs text-ink-2">{optMsg}</span>}
       </div>
 
       <div className="overflow-x-auto">
@@ -241,7 +342,9 @@ export function StreakSizing({
         Per strategy: once it has N stop-outs (or N losses) in a row, each of its next trades is sized 2×/3×/4× its normal size, until one of
         them is a winner (P/L ≥ 0); then it goes back to normal size. With &quot;stops&quot;, a loss that wasn&apos;t a stop-out doesn&apos;t
         break or extend the streak. Streaks count closed trades only, so a trade opened while the previous one is still open isn&apos;t sized
-        on it. Margin isn&apos;t limited: sized-up trades always fill.
+        on it. Margin isn&apos;t limited: sized-up trades always fill. Optimize tries, for each strategy in turn, off or every
+        trigger × 1–6 in a row × 2–4× (keeping the other strategies&apos; rules), repeating until nothing improves; allocations stay as
+        they are. &quot;Smallest drawdown&quot; keeps net P/L at least today&apos;s.
       </p>
     </section>
   );

@@ -711,3 +711,70 @@ export async function optimize(
   }
   return { alloc, result: best, feasible: isFeasible(bestScore), runs };
 }
+
+export interface BoostSearchOptions {
+  objective: Objective;
+  /** Triggers the search may use. */
+  kinds: StreakBoost["kind"][];
+  /** Strategies whose rule the search may set; the rest keep what they have. */
+  include: string[];
+  /** Max drawdown limit as a fraction (0.05 = 5%); null = none. */
+  maxDrawdown: number | null;
+  /** For "dd": keep P/L at least this. */
+  minPl?: number | null;
+}
+
+export const BOOST_AFTER = [1, 2, 3, 4, 5, 6] as const;
+export const BOOST_MULTS = [2, 3, 4] as const;
+
+/**
+ * Best streak rule per strategy (off, or stops/losses × after 1–6 × 2–4×) for the objective, by coordinate
+ * search over the strategies on top of `alloc` (allocations unchanged). Yields to the UI between strategies.
+ */
+export async function optimizeBoosts(
+  trades: SimTrade[],
+  alloc: Record<string, StrategyAlloc>,
+  equity: number,
+  o: BoostSearchOptions,
+  onProgress?: (done: number, total: number, best: SimResult) => void,
+): Promise<{ boosts: Record<string, StreakBoost | null>; result: SimResult; feasible: boolean; runs: number }> {
+  const so: OptimizeOptions = { objective: o.objective, include: o.include, maxAvgMargin: null, maxPeakMargin: null, maxDrawdown: o.maxDrawdown, minPl: o.minPl };
+  const options: (StreakBoost | null)[] = [null];
+  for (const kind of o.kinds) for (const after of BOOST_AFTER) for (const mult of BOOST_MULTS) options.push({ kind, after, mult });
+  let cur = { ...alloc };
+  let best = simulate(trades, cur, equity);
+  let bestScore = score(best, so);
+  let runs = 1;
+  const PASSES = 3;
+  const total = PASSES * o.include.length;
+  let done = 0;
+  const same = (a: StreakBoost | null | undefined, b: StreakBoost | null) =>
+    (!a && !b) || (!!a && !!b && a.kind === b.kind && a.after === b.after && a.mult === b.mult);
+  for (let pass = 0; pass < PASSES; pass++) {
+    let improved = false;
+    for (const name of o.include) {
+      const base = cur[name];
+      if (base) {
+        for (const opt of options) {
+          if (same(base.boost, opt)) continue;
+          const trial = { ...cur, [name]: { ...base, boost: opt ?? undefined } };
+          const r = simulate(trades, trial, equity);
+          runs++;
+          const sc = score(r, so);
+          if (sc > bestScore + 1e-9) {
+            cur = trial;
+            best = r;
+            bestScore = sc;
+            improved = true;
+          }
+        }
+      }
+      done++;
+      onProgress?.(done, total, best);
+      await new Promise((res) => setTimeout(res, 0));
+    }
+    if (!improved) break;
+  }
+  const boosts = Object.fromEntries(o.include.map((n) => [n, cur[n]?.boost ?? null]));
+  return { boosts, result: best, feasible: isFeasible(bestScore), runs };
+}
