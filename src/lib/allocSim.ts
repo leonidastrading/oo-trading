@@ -596,7 +596,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  * improves the objective within the limits, and repeat until a full pass finds nothing better.
  * Capped add-ons (100% × a few contracts) are just switched on or off. Yields to the UI between steps.
  */
-export async function optimize(
+async function searchFrom(
   trades: SimTrade[],
   start: Record<string, StrategyAlloc>,
   equity: number,
@@ -606,7 +606,7 @@ export async function optimize(
   const maxPct = o.maxPct ?? 20;
   let alloc = { ...start };
   let best = simulate(trades, alloc, equity);
-  o = { ...o, minTrades: Math.ceil(best.trades * MIN_TRADE_SHARE) };
+  o = { ...o, minTrades: o.minTrades ?? Math.ceil(best.trades * MIN_TRADE_SHARE) };
   let bestScore = score(best, o);
   let runs = 1;
   // Start infeasible (e.g. margin above the limit)? Scale everything down until it fits.
@@ -818,4 +818,34 @@ export async function optimizeBoosts(
   }
   const boosts = Object.fromEntries(o.include.map((n) => [n, cur[n]?.boost ?? null]));
   return { boosts, result: best, feasible: isFeasible(bestScore), runs };
+}
+
+/**
+ * The search is local, so different objectives can stop in different places (e.g. "smallest drawdown"
+ * ending at a higher MAR than the MAR run). Run it twice: from the starting allocations, and from where a
+ * second objective's search ends (MAR, or smallest drawdown when MAR is the goal); keep the better result.
+ * Each run only climbs, so the answer is at least as good, by this objective, as the other one's.
+ */
+export async function optimize(
+  trades: SimTrade[],
+  start: Record<string, StrategyAlloc>,
+  equity: number,
+  o: OptimizeOptions,
+  onProgress?: (runs: number, best: SimResult) => void,
+): Promise<OptimizeResult> {
+  const startSim = simulate(trades, start, equity);
+  const base: OptimizeOptions = { ...o, minTrades: o.minTrades ?? Math.ceil(startSim.trades * MIN_TRADE_SHARE) };
+  let offset = 0;
+  const report = (runs: number, best: SimResult) => onProgress?.(offset + runs, best);
+  const first = await searchFrom(trades, start, equity, base, report);
+  if (o.optimizeVix) return first;
+  offset += first.runs;
+  const alt: OptimizeOptions =
+    o.objective === "mar" ? { ...base, objective: "dd", minPl: o.minPl ?? startSim.pl } : { ...base, objective: "mar" };
+  const seed = await searchFrom(trades, start, equity, alt, report);
+  offset += seed.runs;
+  const second = await searchFrom(trades, seed.alloc, equity, base, report);
+  offset += second.runs;
+  const win = score(second.result, base) > score(first.result, base) ? second : first;
+  return { ...win, runs: offset };
 }
