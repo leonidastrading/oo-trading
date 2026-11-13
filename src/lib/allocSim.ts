@@ -631,6 +631,10 @@ export async function optimize(
       bestScore = score(r, o);
     }
   }
+  // Rounds: single-strategy passes until they stall, then shift allocation between pairs of strategies (a
+  // move one-at-a-time steps can't make once a margin limit binds: raising any one strategy breaks the cap,
+  // so only "less here, more there" can still improve), then single passes again.
+  for (let round = 0; round < 6; round++) {
   for (let pass = 0; pass < 8; pass++) {
     let improved = false;
     for (const name of o.include) {
@@ -708,6 +712,40 @@ export async function optimize(
       await new Promise((res) => setTimeout(res, 0));
     }
     if (!improved) break;
+  }
+  if (o.optimizeVix) break;
+  // Pair transfers (allocation-% mode only; capped add-ons and fixed lots stay out of it).
+  const movable = o.include.filter((n) => {
+    const a = alloc[n];
+    return a && a.fixed === undefined && !(a.maxContracts && a.pct >= 100);
+  });
+  let moved = false;
+  for (const from of movable) {
+    for (const to of movable) {
+      if (from === to) continue;
+      const a = alloc[from];
+      const b = alloc[to];
+      if (!(a.pct > 0) || b.pct >= maxPct) continue;
+      for (const share of [1, 0.5, 0.25]) {
+        const d = round2(Math.min(a.pct * share, maxPct - b.pct));
+        if (!(d > 0)) continue;
+        const trial = { ...alloc, [from]: { ...a, pct: round2(a.pct - d) }, [to]: { ...b, pct: round2(b.pct + d) } };
+        const r = simulate(trades, trial, equity);
+        runs++;
+        const sc = score(r, o);
+        if (sc > bestScore + 1e-9) {
+          alloc = trial;
+          best = r;
+          bestScore = sc;
+          moved = true;
+          break;
+        }
+      }
+    }
+    onProgress?.(runs, best);
+    await new Promise((res) => setTimeout(res, 0));
+  }
+  if (!moved) break;
   }
   return { alloc, result: best, feasible: isFeasible(bestScore), runs };
 }

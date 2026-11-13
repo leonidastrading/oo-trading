@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { impliedAllocations, maxLossPerLot, optimizeBoosts, simulate, toSimTrades, uniqueEntries } from "@/lib/allocSim";
+import { impliedAllocations, maxLossPerLot, optimize, optimizeBoosts, simulate, toSimTrades, uniqueEntries } from "@/lib/allocSim";
 import type { OOTrade } from "@/lib/ooCsv";
 
 const t = (o: Partial<OOTrade>): OOTrade => ({
@@ -282,5 +282,36 @@ describe("streak boost optimizer", () => {
     const r = await optimizeBoosts(trades, { S: { pct: 1, fixed: 1 } }, 100_000, { ...o, maxPeakMargin: 0.025 });
     expect(r.boosts.S?.mult).toBe(2);
     expect(r.result.maxMarginUtil).toBeLessThanOrEqual(0.025);
+  });
+});
+
+describe("optimizer pair transfers", () => {
+  const day = (i: number) => new Date(Date.UTC(2026, 0, 5 + i)).toISOString().slice(0, 10);
+  const mk = (strategy: string, i: number, pl: number) => ({
+    strategy,
+    open: `${day(i)} 10:00:00`,
+    close: `${day(i)} 15:00:00`,
+    closeDate: day(i),
+    plPerLot: pl,
+    riskPerLot: 1000,
+    premiumPerLot: 100,
+    stopped: false,
+    vix: null,
+  });
+  // A earns little per $ of margin, B a lot; both on every day, so the peak-margin cap binds on their sum.
+  const trades = Array.from({ length: 20 }, (_, i) => [mk("A", i, 10), mk("B", i, 100)]).flat();
+  it("moves allocation from the weak strategy to the strong one when the margin cap binds", async () => {
+    const start = { A: { pct: 10 }, B: { pct: 1 } };
+    const before = simulate(trades, start, 100_000);
+    const r = await optimize(trades, start, 100_000, {
+      objective: "pl",
+      include: ["A", "B"],
+      maxAvgMargin: null,
+      maxPeakMargin: before.maxMarginUtil + 0.001,
+      maxDrawdown: null,
+    });
+    expect(r.feasible).toBe(true);
+    expect(r.alloc.B.pct).toBeGreaterThan(5);
+    expect(r.result.pl).toBeGreaterThan(before.pl * 3);
   });
 });
