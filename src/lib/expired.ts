@@ -130,8 +130,8 @@ function round2(n: number): number {
 
 /**
  * Options for valuing the session's expirations at `now`. Index options settle on the cash index's close,
- * 15 minutes before the options session ends (4:00 PM; 1:00 PM on early-close days): from then on today's
- * expirations are valued at that close, once the index quote carries the closing print (time at or after the
+ * 15 minutes before the options session ends (4:00 PM; 1:00 PM on early-close days): from 4:05 (1:05) on
+ * today's expirations are valued at that close, once the index quote carries the closing print (time at or after the
  * bell, give or take a minute). `quoteFor` returns the underlying's quote ({ last, time }).
  */
 export function expiredOptsAt(
@@ -153,7 +153,8 @@ export function expiredOptsAt(
   return {
     sessionDate,
     today,
-    afterClose: session.tradingDay && etParts(now).minutesOfDay >= bellMin,
+    // 5 minutes after the bell, so the index's closing print has settled in the quote.
+    afterClose: session.tradingDay && etParts(now).minutesOfDay >= bellMin + 5,
     settle: Object.fromEntries([...CASH_SETTLED].map((u) => [u, settleFor(u)])),
     fills,
   };

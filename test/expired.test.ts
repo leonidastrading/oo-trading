@@ -113,23 +113,24 @@ describe("stale position snapshot after Schwab posts the settlement", () => {
   });
 });
 
-describe("expirations move to Closed P/L at the 4:00 PM index close", () => {
+describe("expirations move to Closed P/L at 4:05 PM, at the index close", () => {
   // 2026-10-21 is EDT (UTC−4).
   const at = (hh: number, mm: number, ss = 0) => Date.UTC(2026, 9, 21, hh + 4, mm, ss);
   const quoteAt = (time: number) => () => ({ last: 7757.17, time });
   const pendingAt = (quoteTime: number, now: number) => pendingExpired(book, expiredOptsAt([], quoteAt(quoteTime), now));
   it("values them at the index close once its quote carries the closing print", () => {
-    const o = expiredOptsAt([], quoteAt(at(16, 0, 1)), at(16, 1));
+    const o = expiredOptsAt([], quoteAt(at(16, 0, 1)), at(16, 5));
     expect(o.settle.SPX).toBe(7757.17);
     const pending = pendingExpired(book, o);
     expect(pending).toHaveLength(7);
     expect(Math.abs(expiredOrders(pending, o)[0].realized - 13054)).toBeLessThan(20);
   });
   it("waits while the quote is still a pre-bell print", () => {
-    expect(pendingAt(at(15, 58), at(16, 1))).toHaveLength(0);
+    expect(pendingAt(at(15, 58), at(16, 6))).toHaveLength(0);
   });
-  it("leaves them open before 4:00", () => {
+  it("leaves them open until 4:05", () => {
     expect(pendingAt(at(15, 59, 30), at(15, 59, 40))).toHaveLength(0);
+    expect(pendingAt(at(16, 0, 1), at(16, 4, 50))).toHaveLength(0);
   });
   it("still values them after the options session ends and overnight", () => {
     expect(pendingAt(at(16, 0, 1), at(16, 20))).toHaveLength(7);
