@@ -99,8 +99,10 @@ export interface LiveData {
 export interface DaySample {
   /** Sample time (ms), its minute floored. */
   t: number;
-  /** Day equity P/L: net liq − prior close net liq (falls back to open + closed). */
+  /** Day P/L of the trades: open positions' change today (Schwab's P/L Day) + today's closed P/L, net of fees. */
   pl: number;
+  /** 2 = positions-based (above). Older samples (no v) held net liq − prior close, which deposits and transfers distort. */
+  v?: number;
   open: number;
   closed: number;
   /** Premium of the open option entries at this minute (credit received or debit paid, each entry's size). */
@@ -129,11 +131,16 @@ export function premiumBasis(groups: SpreadGroup[]): number {
     .reduce((s, g) => s + Math.abs(g.positions.reduce((t, p) => t + p.qty * p.avgPrice * 100, 0)), 0);
 }
 
-async function readDayCurve(date: string, from: number, to: number): Promise<DayCurve> {
+/**
+ * The session's samples. `legacyShift` (net liq change − trades' day P/L, now) is taken off older net-liq
+ * samples so a day recorded across the switch stays on one scale (a deposit or transfer is constant intraday).
+ */
+async function readDayCurve(date: string, from: number, to: number, legacyShift: number | null): Promise<DayCurve> {
   const h = await kv().hgetall<DaySample | number | null>(KEYS.dayCurve(date));
   const samples = Object.entries(h)
     .filter(([k, v]) => k !== "base" && v && typeof v === "object")
     .map(([, v]) => v as DaySample)
+    .map((x) => (x.v === 2 || legacyShift === null ? x : { ...x, pl: Math.round((x.pl - legacyShift) * 100) / 100, v: 2 }))
     .sort((a, b) => a.t - b.t);
   const withPos = samples.filter((x) => (x.basis ?? 0) > 0);
   const base = withPos.length ? withPos.reduce((s, x) => s + x.basis!, 0) / withPos.length : null;
@@ -323,19 +330,24 @@ export async function getLiveData(force = false): Promise<LiveData> {
   const dayFrom = etMidnightUtc(sessionDate).getTime() + session.openMin * 60_000;
   const dayTo = etMidnightUtc(sessionDate).getTime() + session.closeMin * 60_000;
   const openGroups = groupSpreads(splitByEntry(expired.open, openLots(fills.data ?? []), today), today);
-  if (pl && b && session.phase !== "closed" && Number.isFinite(fetchedAt) && now - fetchedAt < 90_000) {
-    const equity = b.netLiq !== null && b.startNetLiq !== null ? b.netLiq - b.startNetLiq : null;
+  // Day P/L of the trades: each open position's change since the prior close (Schwab's P/L Day; equal to its
+  // open P/L when bought today) plus today's closed P/L. Not net liq − prior close: deposits, transfers and
+  // overnight settlements move that without any trading.
+  const dayTrades = pl ? Math.round((expired.open.reduce((s, p) => s + p.plDay, 0) + pl.closed) * 100) / 100 : null;
+  const equity = b && b.netLiq !== null && b.startNetLiq !== null ? b.netLiq - b.startNetLiq : null;
+  if (pl && b && dayTrades !== null && session.phase !== "closed" && Number.isFinite(fetchedAt) && now - fetchedAt < 90_000) {
     const t = Math.floor(now / 60_000) * 60_000;
     try {
       await recordDaySample(
         sessionDate,
-        { t, pl: Math.round((equity ?? pl.open + pl.closed) * 100) / 100, open: pl.open, closed: pl.closed, basis: Math.round(premiumBasis(openGroups)) },
+        { t, pl: dayTrades, v: 2, open: pl.open, closed: pl.closed, basis: Math.round(premiumBasis(openGroups)) },
       );
     } catch (e) {
       meta.errors.push(`day P/L sample: ${(e as Error).message}`);
     }
   }
-  const dayCurve: DayCurve = await readDayCurve(sessionDate, dayFrom, dayTo).catch(() => ({ base: null, baseKind: null, from: dayFrom, to: dayTo, samples: [] }));
+  const legacyShift = equity !== null && dayTrades !== null ? equity - dayTrades : null;
+  const dayCurve: DayCurve = await readDayCurve(sessionDate, dayFrom, dayTo, legacyShift).catch(() => ({ base: null, baseKind: null, from: dayFrom, to: dayTo, samples: [] }));
   if (!dayCurve.base) {
     // No sample with positions yet: the current open premium, else the prior close.
     const now = premiumBasis(openGroups);

@@ -130,7 +130,7 @@ export function DayPnlChart({ curve }: { curve: DayCurve | undefined }) {
         </ResponsiveContainer>
       </div>
       <p className="text-xs text-muted">
-        Day equity P/L (net liq vs. the prior close), sampled every minute. Left axis:{" "}
+        Day P/L of your trades (open positions&apos; change since the prior close + today&apos;s closed P/L, net of fees), sampled every minute. Left axis:{" "}
         {curve.baseKind === "netliq"
           ? "% of the prior close (no open positions yet)"
           : `% of the day's average open premium${base ? ` (${money(base)})` : ""}, the same base as the Open P/L %`}
