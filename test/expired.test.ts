@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expiredOrders, pendingExpired, type ExpiredOpts } from "@/lib/expired";
+import { expiredOptsAt, expiredOrders, pendingExpired, type ExpiredOpts } from "@/lib/expired";
 import { expiryPnl } from "@/lib/options";
 import type { Fill } from "@/lib/realized";
 import { toLeg, type Position } from "@/lib/spreads";
@@ -110,5 +110,29 @@ describe("stale position snapshot after Schwab posts the settlement", () => {
     const trade = { symbol: "SPXW  261030P07600000", settlement: false, expiration: "2026-10-30" } as Fill;
     expect(settledSymbols([settled, trade], "2026-10-30")).toEqual([leg]);
     expect(settledSymbols([settled], "2026-10-29")).toEqual([]);
+  });
+});
+
+describe("expirations move to Closed P/L at the 4:00 PM index close", () => {
+  // 2026-10-21 is EDT (UTC−4).
+  const at = (hh: number, mm: number, ss = 0) => Date.UTC(2026, 9, 21, hh + 4, mm, ss);
+  const quoteAt = (time: number) => () => ({ last: 7757.17, time });
+  const pendingAt = (quoteTime: number, now: number) => pendingExpired(book, expiredOptsAt([], quoteAt(quoteTime), now));
+  it("values them at the index close once its quote carries the closing print", () => {
+    const o = expiredOptsAt([], quoteAt(at(16, 0, 1)), at(16, 1));
+    expect(o.settle.SPX).toBe(7757.17);
+    const pending = pendingExpired(book, o);
+    expect(pending).toHaveLength(7);
+    expect(Math.abs(expiredOrders(pending, o)[0].realized - 13054)).toBeLessThan(20);
+  });
+  it("waits while the quote is still a pre-bell print", () => {
+    expect(pendingAt(at(15, 58), at(16, 1))).toHaveLength(0);
+  });
+  it("leaves them open before 4:00", () => {
+    expect(pendingAt(at(15, 59, 30), at(15, 59, 40))).toHaveLength(0);
+  });
+  it("still values them after the options session ends and overnight", () => {
+    expect(pendingAt(at(16, 0, 1), at(16, 20))).toHaveLength(7);
+    expect(pendingExpired(book, expiredOptsAt([], quoteAt(at(16, 0, 1)), Date.UTC(2026, 9, 22, 6)))).toHaveLength(7);
   });
 });

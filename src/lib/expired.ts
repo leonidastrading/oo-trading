@@ -4,6 +4,7 @@
 import { intrinsic, MULTIPLIER, parseOptionSymbol, rootToUnderlying } from "./options";
 import { openLots, type ClosedOrder, type Fill } from "./realized";
 import type { Position } from "./spreads";
+import { etMidnightUtc, etParts, lastSessionDate, marketSession, todayET } from "./time";
 
 export const CASH_SETTLED = new Set(["SPX", "NDX", "RUT", "XSP", "VIX", "DJX"]);
 
@@ -125,4 +126,35 @@ export function expiredOrders(pending: Position[], o: ExpiredOpts, group?: strin
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+/**
+ * Options for valuing the session's expirations at `now`. Index options settle on the cash index's close,
+ * 15 minutes before the options session ends (4:00 PM; 1:00 PM on early-close days): from then on today's
+ * expirations are valued at that close, once the index quote carries the closing print (time at or after the
+ * bell, give or take a minute). `quoteFor` returns the underlying's quote ({ last, time }).
+ */
+export function expiredOptsAt(
+  fills: Fill[],
+  quoteFor: (underlying: string) => { last: number | null; time: number | null } | undefined,
+  now: number,
+): ExpiredOpts {
+  const session = marketSession(now);
+  const sessionDate = lastSessionDate(now);
+  const today = todayET(now);
+  const bellMin = session.closeMin - 15;
+  const bellMs = etMidnightUtc(sessionDate).getTime() + bellMin * 60_000;
+  const settleFor = (u: string) => {
+    const q = quoteFor(u);
+    if (!q || typeof q.last !== "number") return undefined;
+    if (sessionDate === today && !(typeof q.time === "number" && q.time >= bellMs - 60_000)) return undefined;
+    return q.last;
+  };
+  return {
+    sessionDate,
+    today,
+    afterClose: session.tradingDay && etParts(now).minutesOfDay >= bellMin,
+    settle: Object.fromEntries([...CASH_SETTLED].map((u) => [u, settleFor(u)])),
+    fills,
+  };
 }

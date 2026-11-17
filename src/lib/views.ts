@@ -2,7 +2,7 @@
 import "server-only";
 import { takeManualRefresh } from "./cache";
 import { KEYS, kv } from "./kv";
-import { CASH_SETTLED, expiredOrders, ghostExpired, pendingExpired, settledSymbols } from "./expired";
+import { CASH_SETTLED, expiredOptsAt, expiredOrders, ghostExpired, pendingExpired, settledSymbols } from "./expired";
 import { analyzeClose, expiryPnl, type CloseAnalysis, type OptionLeg } from "./options";
 import { countOpenEntries, feesOn, groupClosesByOrder, openLots, realizedOn, type ClosedOrder, type Fill } from "./realized";
 import { cachedAccount, cachedFills, cachedQuotes, feePerContract, quoteSymbol, type Balances, type Quote } from "./schwab/data";
@@ -175,14 +175,7 @@ export function splitExpired(
   quotes: Record<string, Quote> | null | undefined,
   now: number,
 ) {
-  const session = marketSession(now);
-  const opts = {
-    sessionDate: lastSessionDate(now),
-    today: todayET(now),
-    afterClose: session.tradingDay && etParts(now).minutesOfDay >= session.closeMin,
-    settle: Object.fromEntries([...CASH_SETTLED].map((u) => [u, quotes?.[quoteSymbol(u)]?.last])),
-    fills,
-  };
+  const opts = expiredOptsAt(fills, (u) => quotes?.[quoteSymbol(u)] ?? undefined, now);
   // Include legs Schwab already dropped from the account but hasn't posted yet.
   const pending = pendingExpired([...positions, ...ghostExpired(positions, fills, opts.sessionDate)], opts);
   // Legs Schwab already settled are closed even if a cached position snapshot still lists them.
