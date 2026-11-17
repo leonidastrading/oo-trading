@@ -18,6 +18,18 @@ export interface CacheResult<T> {
 const KEEP_SECONDS = 14 * 24 * 3600;
 
 /**
+ * Per-instance memory in front of KV: a warm function instance answers repeat reads from memory instead of
+ * reading and parsing the KV copy each time (most of the CPU on a busy page). A memory copy is trusted for at
+ * most MEM_TRUST_MS since it was last read from or written to KV, so other instances' refreshes still show
+ * up within that time, and never beyond the caller's maxAge.
+ */
+const MEM_TRUST_MS = 15_000;
+const memory = new Map<string, { entry: Entry<unknown>; at: number }>();
+const remember = <T>(key: string, entry: Entry<T> | null) => {
+  if (entry) memory.set(key, { entry, at: Date.now() });
+};
+
+/**
  * Return cached data if younger than maxAgeMs, otherwise refresh with a cross-instance
  * lock. On failure, the last good data is returned along with the error.
  */
@@ -30,7 +42,14 @@ export async function cached<T>(
   const keep = opts.keepSeconds ?? KEEP_SECONDS;
   const store = kv();
   const key = KEYS.cache(name);
+  const mem = memory.get(key);
+  if (mem && !opts.force && Date.now() - mem.at < MEM_TRUST_MS && Date.now() - mem.entry.fetchedAt < maxAgeMs) {
+    const e = mem.entry as Entry<T>;
+    const err = e.lastErrorAt && e.lastErrorAt > e.fetchedAt ? e.lastError ?? null : null;
+    return { data: e.data, fetchedAt: e.fetchedAt, error: err };
+  }
   const entry = await store.get<Entry<T>>(key);
+  remember(key, entry);
   const age = entry ? Date.now() - entry.fetchedAt : Infinity;
   const recentError = entry?.lastErrorAt && entry.lastErrorAt > entry.fetchedAt ? entry.lastError ?? null : null;
   if (entry && !opts.force && age < maxAgeMs) {
@@ -44,7 +63,10 @@ export async function cached<T>(
     for (let i = 0; i < 8; i++) {
       await new Promise((r) => setTimeout(r, 500));
       const e = await store.get<Entry<T>>(key);
-      if (e && (!entry || e.fetchedAt > entry.fetchedAt)) return { data: e.data, fetchedAt: e.fetchedAt, error: null };
+      if (e && (!entry || e.fetchedAt > entry.fetchedAt)) {
+        remember(key, e);
+        return { data: e.data, fetchedAt: e.fetchedAt, error: null };
+      }
     }
     if (entry) return { data: entry.data, fetchedAt: entry.fetchedAt, error: recentError };
     return { data: null, fetchedAt: null, error: "Timed out waiting for data" };
@@ -54,6 +76,7 @@ export async function cached<T>(
     const data = await fetcher();
     const next: Entry<T> = { data, fetchedAt: Date.now(), lastError: null, lastErrorAt: null };
     await store.set(key, next, { ex: keep });
+    remember(key, next);
     return { data, fetchedAt: next.fetchedAt, error: null };
   } catch (e) {
     const msg = (e as Error).message || String(e);

@@ -62,6 +62,8 @@ export interface SpxDayData {
   exits: ExitMarker[];
 }
 
+let profileMemo: { fetchedAt: number | null; profiles: ReturnType<typeof deserializeProfiles> } | null = null;
+
 const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
 const withClosingBar = (bars: Bar[], close: Bar | null) => (close ? [...bars, close] : bars);
 
@@ -128,7 +130,9 @@ export async function GET() {
     const bt = oo.map(toBacktest).filter((b): b is BacktestTrade => b !== null);
     return { profiles: serializeProfiles(buildProfiles(bt)), schedule: [...scheduledExits(bt)] };
   });
-  const profiles = deserializeProfiles(model.data?.profiles ?? []);
+  // Rebuilding the profiles is the costly part; reuse them while the model is unchanged.
+  if (!profileMemo || profileMemo.fetchedAt !== model.fetchedAt) profileMemo = { fetchedAt: model.fetchedAt, profiles: deserializeProfiles(model.data?.profiles ?? []) };
+  const profiles = profileMemo.profiles;
   const schedule = new Map([...(model.data?.schedule ?? []), ...Object.entries(OO_TIME_EXITS)]);
   const liveTrades = new Map(buildLiveTrades(fills.data ?? [], date).map((l) => [l.orderId, l]));
   for (const e of entries) {

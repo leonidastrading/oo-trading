@@ -2,13 +2,22 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { etParts } from "@/lib/time";
 
 export interface PollMeta {
   pollMs: number | null;
 }
 
-/** Outside market hours: re-check this often (served from the server cache, no Schwab calls). */
-const IDLE_POLL_MS = 60_000;
+/**
+ * Outside market hours: re-check every 5 minutes (served from the server cache, no Schwab calls), but no
+ * later than just after the next 9:30 ET open, so an open tab picks up the session right away.
+ */
+const IDLE_POLL_MS = 5 * 60_000;
+function idleDelay(now = Date.now()): number {
+  const p = etParts(now);
+  const toOpen = (9 * 60 + 30 - p.minutesOfDay) * 60_000 - p.second * 1000 + 2_000;
+  return toOpen > 0 && toOpen < IDLE_POLL_MS ? Math.max(5_000, toOpen) : IDLE_POLL_MS;
+}
 const REQUEST_TIMEOUT_MS = 20_000;
 
 /**
@@ -58,7 +67,7 @@ export function usePoll<T extends { meta: PollMeta }>(url: string) {
       } finally {
         if (!cancelled) {
           if (force) setLoading(false);
-          if (document.visibilityState === "visible") timer = setTimeout(() => load(), pollMs ?? IDLE_POLL_MS);
+          if (document.visibilityState === "visible") timer = setTimeout(() => load(), pollMs ?? idleDelay());
         }
       }
     };

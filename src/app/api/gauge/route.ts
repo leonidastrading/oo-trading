@@ -51,7 +51,8 @@ export async function GET() {
   const last = series[series.length - 1];
   const phase = marketSession().phase;
   const body: GaugeData = {
-    meta: { pollMs: phase === "closed" ? null : 60_000, errors },
+    // The gauge changes twice a day (10:00 snapshot, 4:00 close): a slow poll is plenty.
+    meta: { pollMs: phase === "closed" ? null : 10 * 60_000, errors },
     today: rows.find((r) => r.date === todayET()) ?? null,
     recent: [...rows].reverse().slice(0, 30),
     mean20: rollingMean(rows, 20, 15),
