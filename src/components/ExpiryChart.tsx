@@ -116,7 +116,13 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
             />
             <ReferenceLine y={0} stroke="var(--axis)" />
             {best.pnl > 0 && best.range && inView(best.range.low) && (
-              <ReferenceArea x1={best.range.low} x2={best.range.high} fill="var(--gain)" fillOpacity={0.12} />
+              <ReferenceArea
+                // A best zone that runs off the analysed range keeps going to the edge of the chart.
+                x1={best.edge === "below" ? Math.min(first, best.range.low) : best.range.low}
+                x2={best.edge === "above" ? Math.max(last, best.range.high) : best.range.high}
+                fill="var(--gain)"
+                fillOpacity={0.12}
+              />
             )}
             <Area
               type="linear"
