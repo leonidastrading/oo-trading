@@ -95,6 +95,8 @@ export interface PriceRange {
 }
 
 export interface CloseAnalysis {
+  /** The P/L curve over spot ±5% for the chart's widest window (the readouts use the ±pct curve). */
+  wide?: CurvePoint[];
   spot: number;
   lo: number;
   hi: number;
@@ -183,7 +185,10 @@ export function analyzeClose(
   const si = Math.min(curve.length - 1, Math.max(0, Math.round((spot - lo) / step)));
   const spotRange = flatRange(curve, si, curve[si].pnl);
 
+  const wLo = Math.ceil(spot * 0.95);
+  const wHi = Math.floor(spot * 1.05);
   return {
+    wide: wLo < lo || wHi > hi ? payoffCurve(legs, Math.min(wLo, lo), Math.max(wHi, hi), step, extraCost) : curve,
     spot,
     lo,
     hi,

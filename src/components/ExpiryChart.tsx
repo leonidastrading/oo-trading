@@ -19,7 +19,8 @@ const WINDOWS = [
   { label: "±50", pts: 50 },
   { label: "±100", pts: 100 },
   { label: "±3%", pts: Infinity },
-];
+  { label: "±5%", pts: Infinity, wide: true },
+] as { label: string; pts: number; wide?: boolean }[];
 
 const compact = (v: number) =>
   Math.abs(v) >= 1000 ? `${v < 0 ? "−" : ""}$${(Math.abs(v) / 1000).toFixed(Math.abs(v) >= 10000 ? 0 : 1)}k` : money(v);
@@ -46,6 +47,7 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
 
   const data = useMemo(() => {
     const w = WINDOWS[win].pts;
+    if (WINDOWS[win].wide) return analysis.wide ?? analysis.curve;
     return analysis.curve.filter((p) => !Number.isFinite(w) || Math.abs(p.price - spot) <= w);
   }, [analysis, win, spot]);
 
@@ -54,7 +56,7 @@ export function ExpiryChart({ analysis, underlying }: { analysis: CloseAnalysis;
   const zero = max === min ? 0.5 : max / (max - min);
   const first = data[0]?.price ?? 0;
   const last = data[data.length - 1]?.price ?? 0;
-  const tickStep = last - first <= 120 ? 10 : last - first <= 250 ? 25 : 50;
+  const tickStep = last - first <= 120 ? 10 : last - first <= 250 ? 25 : last - first <= 500 ? 50 : 100;
   const ticks: number[] = [];
   for (let t = Math.ceil(first / tickStep) * tickStep; t <= last; t += tickStep) ticks.push(t);
   const inView = (x: number) => data.length > 0 && x >= data[0].price && x <= data[data.length - 1].price;
