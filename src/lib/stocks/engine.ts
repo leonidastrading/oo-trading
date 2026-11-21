@@ -549,6 +549,12 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
           changes.push(`${t.ticker}: ${sf ? "stop" : "target"} filled`);
           continue;
         }
+        // A replaced stop (tightened) lives on under a new id: if we somehow lost that id, alert rather than flatten.
+        if (stopO?.status === "REPLACED") {
+          await alert(`${t.ticker}: the stop order was replaced but its new id isn't known — check the stop in Schwab.`, t.id);
+          await saveTrade(t);
+          continue;
+        }
         // A position must never be without a working stop: alert and flatten.
         if (!stopO || DEAD.has(stopO.status ?? "")) {
           await alert(`${t.ticker}: no working stop (stop order ${stopO?.status ?? "missing"}). Flattening the position.`, t.id);
