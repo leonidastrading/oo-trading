@@ -4,7 +4,7 @@ import { kv } from "@/lib/kv";
 import { liveTradingEnabled } from "@/lib/schwab/trading";
 import { accountValue, killSwitchOn, loadAlerts, loadLog, loadSettings, loadTrades, reconcile, stockQuotes, tradingAccount, type LogEntry } from "@/lib/stocks/engine";
 import { cached } from "@/lib/cache";
-import { effectiveSettings, regularSession, shadowExposure, sizeUpStage, streakLockUntil, summarize, weekShadowPl, type StoredSettings, type Summary, type Trade } from "@/lib/stocks/rules";
+import { effectiveSettings, extendedSession, regularSession, shadowExposure, sizeUpStage, streakLockUntil, summarize, weekShadowPl, type StoredSettings, type Summary, type Trade } from "@/lib/stocks/rules";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +33,7 @@ export async function GET() {
   if (missing) return missing;
   const errors: string[] = [];
   // Light sync while the market is open (at most once a minute across all viewers); the cron does the rest.
-  if (regularSession() && (await kv().set("stocks:recon-throttle", 1, { px: 60_000, nx: true }))) {
+  if (extendedSession() && (await kv().set("stocks:recon-throttle", 1, { px: 60_000, nx: true }))) {
     await reconcile().catch((e: Error) => errors.push(`Sync: ${e.message}`));
   }
   const [stored, trades, kill, log, alerts] = await Promise.all([loadSettings(), loadTrades(), killSwitchOn(), loadLog(), loadAlerts()]);
@@ -54,7 +54,7 @@ export async function GET() {
   const ex = shadowExposure(trades, mode);
   const overrides = log.filter((l) => l.kind === "change" && /override/i.test(l.text)).length; // none exist: the rules can't be overridden
   const body: StocksData = {
-    meta: { pollMs: regularSession() ? 60_000 : null, errors },
+    meta: { pollMs: regularSession() ? 60_000 : extendedSession() ? 5 * 60_000 : null, errors },
     account,
     mode,
     liveSwitch: liveTradingEnabled(),

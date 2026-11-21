@@ -60,6 +60,8 @@ export interface Trade extends IdeaInput {
   plPct?: number | null;
   r?: number | null;
   shadowPl?: number | null;
+  /** Entry order session: NORMAL (regular hours) or SEAMLESS (extended-hours limit). */
+  session?: "NORMAL" | "SEAMLESS";
   /** SPY (and benchmark ETF) prices at the entry and exit fills, for market-relative scoring. */
   spyEntry?: number | null;
   spyExit?: number | null;
@@ -202,13 +204,21 @@ export function exitByDate(entryDate: string, days: number): string {
   return d;
 }
 
-/** Entries are allowed on trading days 9:45–15:45 ET. */
-export function entryWindowOpen(now = Date.now()): { ok: boolean; why?: string } {
+/**
+ * When an entry can go in, and how: any time. During the regular session (9:30–16:00 ET on a trading day)
+ * market or limit; outside it (pre-market, after hours, overnight, weekends, holidays) limit only, sent as an
+ * extended-hours ("SEAMLESS") order that works from 7:00 to 20:00 ET on the next session if it isn't one now.
+ */
+export function entrySession(entryType: IdeaInput["entryType"], now = Date.now()): { ok: boolean; session: "NORMAL" | "SEAMLESS"; why: string } {
+  if (regularSession(now)) return { ok: true, session: "NORMAL", why: "Regular session" };
+  if (entryType === "market") return { ok: false, session: "SEAMLESS", why: "Outside the regular session (9:30–16:00 ET) entries must be limit orders" };
+  return { ok: true, session: "SEAMLESS", why: "Extended hours: limit order, working 7:00–20:00 ET" };
+}
+
+/** Schwab's extended-hours window on a trading day, 7:00–20:00 ET (includes the regular session). */
+export function extendedSession(now = Date.now()): boolean {
   const p = etParts(now);
-  if (!isTradingDay(p.date)) return { ok: false, why: "Market closed today (weekend or holiday)" };
-  if (p.minutesOfDay < 9 * 60 + 45) return { ok: false, why: "No new entries before 9:45 ET" };
-  if (p.minutesOfDay >= 15 * 60 + 45) return { ok: false, why: "No new entries after 15:45 ET" };
-  return { ok: true };
+  return isTradingDay(p.date) && p.minutesOfDay >= 7 * 60 && p.minutesOfDay < 20 * 60;
 }
 
 /** Regular session (exits at market go in then). */
@@ -335,8 +345,8 @@ export function preTradeChecks(c: CheckContext): Check[] {
   const add = (name: string, ok: boolean, detail: string) => out.push({ name, ok, detail });
 
   add("Kill switch", !c.killSwitch, c.killSwitch ? "Kill switch is on: new entries are blocked until you switch it off" : "Off");
-  const win = entryWindowOpen(now);
-  add("Time window", win.ok, win.ok ? "Inside 9:45–15:45 ET on a trading day" : win.why!);
+  const win = entrySession(idea.entryType, now);
+  add("Session", win.ok, win.why);
 
   const last = quote?.last ?? null;
   add("Quote", last !== null && last > 0, last ? `${idea.ticker} last ${last}` : `No current quote for ${idea.ticker}`);
@@ -614,7 +624,7 @@ export function sizeUpStage(trades: Trade[], mode: Mode, overrides: number): { s
 const px = (v: number) => v.toFixed(v < 1 ? 4 : 2);
 
 /** One bracket: the entry triggers an OCO of the stop and the target (or just the stop when there's no target). */
-export function bracketOrder(idea: IdeaInput, shares: number): Record<string, unknown> {
+export function bracketOrder(idea: IdeaInput, shares: number, session: "NORMAL" | "SEAMLESS" = "NORMAL"): Record<string, unknown> {
   const open = idea.direction === "long" ? "BUY" : "SELL_SHORT";
   const close = idea.direction === "long" ? "SELL" : "BUY_TO_COVER";
   const leg = (instruction: string) => [{ instruction, quantity: shares, instrument: { symbol: idea.ticker, assetType: "EQUITY" } }];
@@ -632,7 +642,9 @@ export function bracketOrder(idea: IdeaInput, shares: number): Record<string, un
     : [stopOrder];
   return {
     orderStrategyType: "TRIGGER",
-    session: "NORMAL",
+    // The entry may work in extended hours; the stop and target are regular-session orders (Schwab stops
+    // don't trigger outside it).
+    session,
     duration: "DAY",
     orderType: idea.entryType === "market" ? "MARKET" : "LIMIT",
     ...(idea.entryType === "limit" ? { price: px(idea.limitPrice!) } : {}),

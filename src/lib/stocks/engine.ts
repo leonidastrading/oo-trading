@@ -7,9 +7,11 @@ import { schwabGet, SchwabApiError, type AccountNumber } from "../schwab/client"
 import { cachedMinuteBars } from "../schwab/data";
 import { mockEnabled } from "../schwab/mock";
 import { liveTradingEnabled, schwabOrder } from "../schwab/trading";
-import { etParts } from "../time";
+import { addDays, etParts, isTradingDay } from "../time";
 import {
   bracketOrder,
+  entrySession,
+  extendedSession,
   changeSettings,
   checkStopChange,
   closeOut,
@@ -170,6 +172,19 @@ export async function stockQuotes(symbols: string[]): Promise<Record<string, Sto
   return out;
 }
 
+/** A paper DAY entry expires at its session's end (16:00, or 20:00 for extended hours) on the first trading day it could work. */
+function dayOrderExpired(t: Trade, now: number): boolean {
+  let d = etParts(t.submittedAt).date;
+  const endMin = t.session === "SEAMLESS" ? 20 * 60 : 16 * 60;
+  // Placed after that day's end (or on a non-trading day): it works on the next trading day.
+  if (!isTradingDay(d) || etParts(t.submittedAt).minutesOfDay >= endMin) {
+    do d = addDays(d, 1);
+    while (!isTradingDay(d));
+  }
+  const p = etParts(now);
+  return p.date > d || (p.date === d && p.minutesOfDay >= endMin);
+}
+
 // ---- Market-relative marks ----
 
 /**
@@ -235,7 +250,7 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
     const lastPx = quote?.last ?? null;
     const entryRef = idea.entryType === "limit" && idea.limitPrice ? idea.limitPrice : (lastPx ?? 0);
     const sizing = { liveShares: settings.shares, shadow: shadowSize(acctValue, settings, entryRef, idea.stop), entryRef, accountValue: acctValue };
-    if (opts.preview) return { ok: failed.length === 0, preview: true, sizing, errors: failed.map((c) => `${c.name}: ${c.detail}`), checks, mode, order: bracketOrder(idea, settings.shares) };
+    if (opts.preview) return { ok: failed.length === 0, preview: true, sizing, errors: failed.map((c) => `${c.name}: ${c.detail}`), checks, mode, order: bracketOrder(idea, settings.shares, entrySession(idea.entryType, now).session) };
     if (failed.length) {
       await log({ kind: "block", mode, ticker: idea.ticker, text: failed.map((c) => `${c.name}: ${c.detail}`).join("; "), detail: { idea } });
       return { ok: false, errors: failed.map((c) => `${c.name}: ${c.detail}`), checks, mode, sizing };
@@ -245,7 +260,8 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
     const ref = idea.entryType === "limit" ? idea.limitPrice! : last;
     const risk = Math.abs(ref - idea.stop);
     const size = shadowSize(acctValue, settings, ref, idea.stop);
-    const order = bracketOrder(idea, settings.shares);
+    const session = entrySession(idea.entryType, now).session;
+    const order = bracketOrder(idea, settings.shares, session);
     const trade: Trade = {
       ...idea,
       id: rid(),
@@ -264,6 +280,7 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
       shadowCapped: size.capped,
       exitBy: exitByDate(etParts(now).date, idea.days),
       orderJson: order,
+      session,
       stopHistory: [{ at: now, stop: idea.stop }],
       targetHistory: [{ at: now, target: idea.target ?? null }],
       notes: [],
@@ -281,7 +298,7 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
       trade.orderId = `dry-${trade.id}`;
       // Paper fill: a market entry fills at the last price now; a limit waits for the price to reach it.
       if (idea.entryType === "market") Object.assign(trade, { status: "open", entryPrice: last, entryTime: now, slippage: 0 });
-      else if (idea.direction === "long" ? last <= idea.limitPrice! : last >= idea.limitPrice!) {
+      else if ((session === "NORMAL" || extendedSession(now)) && (idea.direction === "long" ? last <= idea.limitPrice! : last >= idea.limitPrice!)) {
         Object.assign(trade, { status: "open", entryPrice: idea.limitPrice, entryTime: now, slippage: Math.round((idea.limitPrice! - last) * 100) / 100 });
       }
       if (trade.status === "open") await markEntry(trade, Date.now());
@@ -523,7 +540,6 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
     const quotes = await stockQuotes([...trades.map((t) => t.ticker), "SPY", ...trades.flatMap((t) => (t.benchmark ? [t.benchmark] : []))]).catch(
       () => ({}) as Record<string, StockQuote>,
     );
-    const today = etParts(now).date;
     const settingsCap = (await settingsNow()).maxPositionPct;
 
     for (const t of trades) {
@@ -533,12 +549,13 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
         if (t.mode === "dry") {
           if (t.status === "pending") {
             const hit = last !== null && (t.direction === "long" ? last <= t.limitPrice! : last >= t.limitPrice!);
-            if (hit && regularSession(now)) {
+            const canTrade = t.session === "SEAMLESS" ? extendedSession(now) : regularSession(now);
+            if (hit && canTrade) {
               Object.assign(t, { status: "open", entryPrice: t.limitPrice, entryTime: now, slippage: 0 });
               await markEntry(t, Date.now(), quotes);
               await saveTrade(t);
               changes.push(`${t.ticker}: paper entry filled at ${t.limitPrice}`);
-            } else if (etParts(t.submittedAt).date < today || (etParts(now).minutesOfDay >= 16 * 60 && etParts(t.submittedAt).date === today)) {
+            } else if (dayOrderExpired(t, now)) {
               Object.assign(t, { status: "cancelled", exitReason: null });
               await saveTrade(t);
               await log({ kind: "cancel", mode: "dry", ticker: t.ticker, tradeId: t.id, text: "DRY RUN — limit entry not filled by the close (day order expired)" });

@@ -141,7 +141,10 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
         >
           {dry ? "Confirm dry run" : "Confirm & send order"}
         </button>
-        <span className="text-xs text-muted">Size is fixed in Settings. Every check runs on the server.</span>
+        <span className="text-xs text-muted">
+          Size is fixed in Settings. Every check runs on the server. Outside 9:30–16:00 ET use a limit (extended hours); the stop only
+          works in the regular session.
+        </span>
       </div>
       {res && (
         <div className={`rounded-xl border p-3 text-sm ${res.ok ? "border-gain/40" : "border-loss/40"}`}>
@@ -535,7 +538,7 @@ export default function StocksPage() {
       <p className="text-xs text-muted">
         Guardrails ({data.mode}): {data.settings.shares} live share(s) per idea · shadow size {data.settings.riskPct}% risk, max {data.settings.maxPositionPct}%
         position · gross ≤ {data.settings.maxGrossPct}%, net ±{data.settings.maxNetPct}% · max {data.settings.maxOpen} open · {data.settings.maxPerWeek} new ideas per
-        week · weekly shadow-loss lockout {data.settings.weeklyLossPct}% · entries 9:45–15:45 ET. Change them in Settings (loosening waits
+        week · weekly shadow-loss lockout {data.settings.weeklyLossPct}% · entries any time (limit only outside 9:30–16:00 ET). Change them in Settings (loosening waits
         24 hours).
       </p>
     </div>

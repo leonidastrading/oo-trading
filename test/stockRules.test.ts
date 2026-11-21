@@ -91,11 +91,15 @@ describe("pre-trade checks", () => {
     expect(failed(preTradeChecks(ctx({ idea: short, quote: { ...quote, hardToBorrow: true } })))).toContain("Shortable");
     expect(failed(preTradeChecks(ctx({ idea: short, quote: { ...quote, shortable: null } })))).toContain("Shortable");
   });
-  it("enforces the time window, kill switch and holidays", () => {
-    expect(failed(preTradeChecks(ctx({ now: at("2026-11-18", 9, 40) })))).toContain("Time window");
-    expect(failed(preTradeChecks(ctx({ now: at("2026-11-18", 15, 46) })))).toContain("Time window");
-    expect(failed(preTradeChecks(ctx({ now: at("2026-11-26", 11) })))).toContain("Time window"); // Thanksgiving
+  it("takes entries any time: market in the regular session, limit only outside it", () => {
+    const lim = { ...idea, entryType: "limit" as const, limitPrice: 199 };
+    expect(failed(preTradeChecks(ctx({ now: at("2026-11-18", 9, 31) })))).toEqual([]); // market, regular session
+    expect(failed(preTradeChecks(ctx({ now: at("2026-11-18", 17) })))).toContain("Session"); // market after hours
+    expect(failed(preTradeChecks(ctx({ idea: lim, now: at("2026-11-18", 17) })))).toEqual([]); // limit after hours
+    expect(failed(preTradeChecks(ctx({ idea: lim, now: at("2026-11-26", 11) })))).toEqual([]); // limit on Thanksgiving
+    expect(failed(preTradeChecks(ctx({ now: at("2026-11-26", 11) })))).toContain("Session");
     expect(failed(preTradeChecks(ctx({ killSwitch: true })))).toContain("Kill switch");
+    expect((bracketOrder(lim, 1, "SEAMLESS") as { session: string }).session).toBe("SEAMLESS");
   });
   it("enforces max open, weekly count and one position per ticker (dry and live counted separately)", () => {
     const six = Array.from({ length: 20 }, (_, i) => trade({ ticker: `T${i}`, submittedAt: at("2026-11-10", 11) }));
