@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { requireKv } from "@/lib/apiGuard";
 import { kv } from "@/lib/kv";
 import { liveTradingEnabled } from "@/lib/schwab/trading";
-import { killSwitchOn, loadAlerts, loadLog, loadSettings, loadTrades, reconcile, stockQuotes, tradingAccount, type LogEntry } from "@/lib/stocks/engine";
-import { effectiveSettings, regularSession, sizeUpEligible, streakLockUntil, summarize, weekShadowPl, type StoredSettings, type Summary, type Trade } from "@/lib/stocks/rules";
+import { accountValue, killSwitchOn, loadAlerts, loadLog, loadSettings, loadTrades, reconcile, stockQuotes, tradingAccount, type LogEntry } from "@/lib/stocks/engine";
+import { cached } from "@/lib/cache";
+import { effectiveSettings, regularSession, shadowExposure, sizeUpStage, streakLockUntil, summarize, weekShadowPl, type StoredSettings, type Summary, type Trade } from "@/lib/stocks/rules";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,9 @@ export interface StocksData {
   alerts: { id: string; at: number; text: string }[];
   summary: Summary;
   blocks: LogEntry[];
-  sizeUp: boolean;
+  sizeUp: string | null;
+  accountValue: number | null;
+  exposure: { long: number; short: number; gross: number; net: number; grossPct: number | null; netPct: number | null };
   lockouts: { weekShadowPl: number; streakUntil: string | null };
 }
 
@@ -36,15 +39,18 @@ export async function GET() {
   const [stored, trades, kill, log, alerts] = await Promise.all([loadSettings(), loadTrades(), killSwitchOn(), loadLog(), loadAlerts()]);
   const settings = effectiveSettings(stored);
   const mode = settings.dryRun ? "dry" : "live";
-  const account = await tradingAccount()
-    .then((a) => ({ last4: a.last4, nickname: a.nickname, type: a.type }))
-    .catch((e: Error) => {
-      errors.push(`Account: ${e.message}`);
-      return null;
-    });
+  const acct = await tradingAccount().catch((e: Error) => {
+    errors.push(`Account: ${e.message}`);
+    return null;
+  });
+  const account = acct ? { last4: acct.last4, nickname: acct.nickname, type: acct.type } : null;
+  // Account value for % figures: refreshed at most every 15 minutes here (orders read it fresh).
+  const acctValue = acct ? ((await cached("stocks:account-value", 15 * 60_000, () => accountValue(acct)).catch(() => null))?.data ?? null) : null;
   const open = trades.filter((t) => ["pending", "open", "closing"].includes(t.status));
   const q = await stockQuotes(open.map((t) => t.ticker)).catch(() => ({}));
   const summary = summarize(trades, mode);
+  summary.shadowPlPct = acctValue ? Math.round((summary.shadowPl / acctValue) * 10000) / 100 : null;
+  const ex = shadowExposure(trades, mode);
   const overrides = log.filter((l) => l.kind === "change" && /override/i.test(l.text)).length; // none exist: the rules can't be overridden
   const body: StocksData = {
     meta: { pollMs: regularSession() ? 60_000 : null, errors },
@@ -60,7 +66,9 @@ export async function GET() {
     alerts,
     summary,
     blocks: log.filter((l) => l.kind === "block"),
-    sizeUp: sizeUpEligible(summary, overrides),
+    sizeUp: sizeUpStage(trades, mode, overrides).label,
+    accountValue: acctValue,
+    exposure: { ...ex, grossPct: acctValue ? (ex.gross / acctValue) * 100 : null, netPct: acctValue ? (ex.net / acctValue) * 100 : null },
     lockouts: { weekShadowPl: weekShadowPl(trades, mode, Date.now()), streakUntil: streakLockUntil(trades, mode) },
   };
   return NextResponse.json(body, { headers: { "Cache-Control": "no-store" } });

@@ -5,11 +5,14 @@ import type { StockSettings as S, StoredSettings } from "@/lib/stocks/rules";
 import { formatDateTimeET } from "@/lib/time";
 
 const FIELDS: { key: Exclude<keyof S, "dryRun">; label: string; hint: string }[] = [
-  { key: "shares", label: "Shares per idea", hint: "fixed size of every order" },
+  { key: "shares", label: "Live shares per idea", hint: "fixed size of every live order" },
+  { key: "riskPct", label: "Shadow risk per idea, % of account", hint: "full-size risk to the stop" },
+  { key: "maxPositionPct", label: "Max position, % of account", hint: "caps the shadow size" },
   { key: "maxOpen", label: "Max open ideas", hint: "" },
   { key: "maxPerWeek", label: "Max new ideas per week", hint: "Mon–Fri" },
   { key: "weeklyLossPct", label: "Weekly loss lockout, % of account", hint: "shadow P/L; blocks until Monday" },
-  { key: "shadowRiskPct", label: "Shadow size: % of account at risk", hint: "for shadow shares and P/L" },
+  { key: "maxGrossPct", label: "Max gross exposure, % of account", hint: "shadow long + short" },
+  { key: "maxNetPct", label: "Max net exposure, ± % of account", hint: "shadow long − short" },
 ];
 
 /** Stock Trades guardrails. Loosening waits 24 hours (enforced on the server); tightening applies at once. */

@@ -16,7 +16,8 @@ export interface IdeaInput {
   stop: number;
   target?: number | null;
   thesis: string;
-  invalidation: string;
+  /** No longer asked for (the stop is the invalidation); kept for older ideas. */
+  invalidation?: string;
   days: number;
   source: Source;
 }
@@ -34,8 +35,13 @@ export interface Trade extends IdeaInput {
   /** Risk per share to the initial stop, from the submit price (replaced by the fill price once filled). */
   riskPerShare: number;
   accountValue: number | null;
+  /** Risk % of the account the shadow size was built on (settings.riskPct at submit). */
   shadowRiskPct: number;
   shadowShares: number;
+  /** Shadow position $ (shares × entry), its $ risk to the stop, and whether the max-position cap cut the size. */
+  shadowPosition?: number;
+  shadowRisk?: number;
+  shadowCapped?: boolean;
   exitBy: string; // YYYY-MM-DD (ET): closed at market on this day
   orderId?: string | null;
   stopOrderId?: string | null;
@@ -59,19 +65,36 @@ export interface Trade extends IdeaInput {
 
 export interface StockSettings {
   dryRun: boolean;
+  /** Live shares per order (fixed; the shadow size is computed). */
   shares: number;
   maxOpen: number;
   maxPerWeek: number;
   /** Weekly realized shadow loss, % of the account, that locks new entries until Monday. */
   weeklyLossPct: number;
-  /** Shadow size: % of the account risked to the stop. */
-  shadowRiskPct: number;
+  /** Shadow (full) size: % of the account risked to the stop… */
+  riskPct: number;
+  /** …capped at this % of the account per position. */
+  maxPositionPct: number;
+  /** Shadow exposure limits, % of the account: gross (long + short) and net (|long − short|). */
+  maxGrossPct: number;
+  maxNetPct: number;
 }
 
-export const DEFAULT_SETTINGS: StockSettings = { dryRun: true, shares: 1, maxOpen: 20, maxPerWeek: 20, weeklyLossPct: 2, shadowRiskPct: 0.5 };
+// Open ideas / ideas per week stay at 20 (asked for on Nov 21); the rest are the spec's defaults.
+export const DEFAULT_SETTINGS: StockSettings = {
+  dryRun: true,
+  shares: 1,
+  maxOpen: 20,
+  maxPerWeek: 20,
+  weeklyLossPct: 3,
+  riskPct: 1,
+  maxPositionPct: 15,
+  maxGrossPct: 75,
+  maxNetPct: 50,
+};
 
 /** Limits where a higher number is looser: raising them waits 24 hours; lowering them applies at once. */
-export const LOOSEN_UP: (keyof StockSettings)[] = ["shares", "maxOpen", "maxPerWeek", "weeklyLossPct"];
+export const LOOSEN_UP: (keyof StockSettings)[] = ["shares", "maxOpen", "maxPerWeek", "weeklyLossPct", "riskPct", "maxPositionPct", "maxGrossPct", "maxNetPct"];
 export const LOOSEN_DELAY_MS = 24 * 3600_000;
 
 export interface StoredSettings {
@@ -80,8 +103,9 @@ export interface StoredSettings {
 }
 
 export function effectiveSettings(s: StoredSettings | null, now = Date.now()): StockSettings {
-  const values = { ...DEFAULT_SETTINGS, ...(s?.values ?? {}) };
-  for (const p of s?.pending ?? []) if (p.effectiveAt <= now) (values as Record<string, unknown>)[p.key] = p.value;
+  const known = Object.fromEntries(Object.entries(s?.values ?? {}).filter(([k]) => k in DEFAULT_SETTINGS));
+  const values = { ...DEFAULT_SETTINGS, ...known } as StockSettings;
+  for (const p of s?.pending ?? []) if (p.effectiveAt <= now && p.key in DEFAULT_SETTINGS) (values as unknown as Record<string, unknown>)[p.key] = p.value;
   return values;
 }
 
@@ -96,7 +120,10 @@ const LIMITS: Record<keyof StockSettings, [number, number] | null> = {
   maxOpen: [0, 100],
   maxPerWeek: [0, 100],
   weeklyLossPct: [0.1, 50],
-  shadowRiskPct: [0.05, 5],
+  riskPct: [0.05, 5],
+  maxPositionPct: [1, 100],
+  maxGrossPct: [1, 400],
+  maxNetPct: [1, 400],
 };
 
 /** Apply a settings change: tightening (and dry-run either way) at once, loosening 24 hours later. */
@@ -208,7 +235,6 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
   if (thesis.length < 10) errors.push("Thesis is required (1–3 sentences)");
   if (thesis.length > 600) errors.push("Thesis is too long (keep it to 1–3 sentences)");
   const invalidation = String(raw.invalidation ?? "").trim();
-  if (invalidation.length < 5) errors.push("Invalidation is required (what proves it wrong)");
   if (invalidation.length > 400) errors.push("Invalidation is too long");
   const days = num(raw.days);
   if (!(days >= 1 && days <= 365 && Number.isInteger(days))) errors.push("Time frame is required (whole days, 1–365)");
@@ -311,8 +337,8 @@ export function preTradeChecks(c: CheckContext): Check[] {
         : `A ${idea.direction} stop must be ${idea.direction === "long" ? "below" : "above"} the current price (${last}) and the entry`,
     );
     const riskPct = (Math.abs(ref - idea.stop) / ref) * 100;
-    const riskOk = riskPct >= 1 && riskPct <= 25;
-    add("Risk to stop", riskOk, `${riskPct.toFixed(2)}% of the entry price${riskOk ? "" : " (must be 1%–25%)"}`);
+    const riskOk = riskPct >= 2 && riskPct <= 25;
+    add("Risk to stop", riskOk, `${riskPct.toFixed(2)}% of the entry price${riskOk ? "" : " (must be 2%–25%)"}`);
     if (idea.entryType === "limit" && idea.limitPrice) {
       const lOk = idea.direction === "long" ? idea.limitPrice > idea.stop : idea.limitPrice < idea.stop;
       add("Limit vs stop", lOk, lOk ? "Limit is on the right side of the stop" : "The limit price is past the stop");
@@ -346,6 +372,18 @@ export function preTradeChecks(c: CheckContext): Check[] {
   const sameTicker = open.find((t) => t.ticker === idea.ticker);
   add("One position per ticker", !sameTicker, sameTicker ? `Already ${sameTicker.status} in ${idea.ticker}: no adding to a position` : "None open");
 
+  if (last !== null && last > 0 && c.accountValue) {
+    const ref = idea.entryType === "limit" && idea.limitPrice ? idea.limitPrice : last;
+    const size = shadowSize(c.accountValue, settings, ref, idea.stop);
+    const ex = shadowExposure(c.trades, mode);
+    const add$ = size.position;
+    const gross = ex.gross + add$;
+    const net = ex.net + (idea.direction === "long" ? add$ : -add$);
+    const pctOf = (v: number) => (v / c.accountValue!) * 100;
+    add("Shadow size", size.shares > 0, size.shares > 0 ? `${size.shares} sh · ${size.positionPct}% position · ${size.riskPct}% risk${size.capped ? " (capped by max position)" : ""}` : "Size works out to 0 shares");
+    add("Gross exposure", pctOf(gross) <= settings.maxGrossPct, `${pctOf(gross).toFixed(1)}% with this idea (max ${settings.maxGrossPct}%)`);
+    add("Net exposure", Math.abs(pctOf(net)) <= settings.maxNetPct, `${pctOf(net) >= 0 ? "+" : ""}${pctOf(net).toFixed(1)}% with this idea (max ±${settings.maxNetPct}%)`);
+  } else if (!c.accountValue) add("Exposure", false, "Account value unknown: can't size or check exposure");
   const wkLoss = weekShadowPl(c.trades, mode, now);
   const lossLimit = c.accountValue ? (-settings.weeklyLossPct / 100) * c.accountValue : null;
   const lossOk = lossLimit === null || wkLoss > lossLimit;
@@ -393,13 +431,56 @@ export function closeOut(t: Trade, exitPrice: number, exitTime: number, reason: 
   };
 }
 
-export function shadowShares(accountValue: number | null, riskPct: number, riskPerShare: number): number {
-  if (!accountValue || !(riskPerShare > 0)) return 0;
-  return Math.floor(((riskPct / 100) * accountValue) / riskPerShare);
+export interface ShadowSize {
+  shares: number;
+  /** Position $ (shares × entry) and % of the account. */
+  position: number;
+  positionPct: number;
+  /** $ risk to the stop and % of the account (below riskPct when the max-position cap binds). */
+  risk: number;
+  riskPct: number;
+  capped: boolean;
+}
+
+/**
+ * Full ("shadow") size: floor(risk% × account ÷ |entry − stop|), capped so shares × entry ≤ max position % of
+ * the account. E.g. $1M, entry 50, stop 45 → $10,000 ÷ $5 = 2,000 shares ($100K, 10%).
+ */
+export function shadowSize(accountValue: number | null, s: Pick<StockSettings, "riskPct" | "maxPositionPct">, entry: number, stop: number): ShadowSize {
+  const perShare = Math.abs(entry - stop);
+  if (!accountValue || !(perShare > 0) || !(entry > 0)) return { shares: 0, position: 0, positionPct: 0, risk: 0, riskPct: 0, capped: false };
+  const byRisk = Math.floor(((s.riskPct / 100) * accountValue) / perShare);
+  const byCap = Math.floor(((s.maxPositionPct / 100) * accountValue) / entry);
+  const shares = Math.max(0, Math.min(byRisk, byCap));
+  const position = round2(shares * entry);
+  const risk = round2(shares * perShare);
+  return {
+    shares,
+    position,
+    positionPct: Math.round((position / accountValue) * 10000) / 100,
+    risk,
+    riskPct: Math.round((risk / accountValue) * 10000) / 100,
+    capped: byCap < byRisk,
+  };
+}
+
+/** Shadow exposure of open ideas: gross (long + short $) and net (long − short $), at entry (or submit) price. */
+export function shadowExposure(trades: Trade[], mode: Mode): { long: number; short: number; gross: number; net: number } {
+  let long = 0;
+  let short = 0;
+  for (const t of trades) {
+    if (t.mode !== mode || !isOpen(t)) continue;
+    const v = t.shadowShares * (t.entryPrice ?? t.limitPrice ?? t.priceAtSubmit);
+    if (t.direction === "long") long += v;
+    else short += v;
+  }
+  return { long: round2(long), short: round2(short), gross: round2(long + short), net: round2(long - short) };
 }
 
 export interface Summary {
   trades: number;
+  /** Shadow P/L as % of the current account value (null if unknown). */
+  shadowPlPct?: number | null;
   wins: number;
   winPct: number | null;
   avgR: number | null;
@@ -438,9 +519,26 @@ export function summarize(trades: Trade[], mode: Mode): Summary {
   };
 }
 
-/** Display-only size-up rule: 40 closed trades, average R above 0, no guardrail overrides. */
+/** Display-only size-up rule: 40 closed trades with average R above 0 and no overrides. */
 export function sizeUpEligible(s: Summary, overrides: number): boolean {
   return s.trades >= 40 && (s.avgR ?? 0) > 0 && overrides === 0;
+}
+
+/**
+ * Size-up stage (display only): each block of 40 closed trades (in close order) with average R above 0, and no
+ * overrides, earns the next step — 1/4, then 1/2, then full shadow size. A losing block stops the count there.
+ */
+export function sizeUpStage(trades: Trade[], mode: Mode, overrides: number): { stage: 0 | 1 | 2 | 3; label: string | null } {
+  if (overrides > 0) return { stage: 0, label: null };
+  const closed = closedOfMode(trades, mode);
+  let stage = 0;
+  for (let i = 0; i + 40 <= closed.length && stage < 3; i += 40) {
+    const rs = closed.slice(i, i + 40).map((t) => t.r ?? 0);
+    if (rs.reduce((a, b) => a + b, 0) / rs.length > 0) stage++;
+    else break;
+  }
+  const labels = [null, "Eligible to trade 1/4 of shadow size live.", "Eligible to trade 1/2 of shadow size live.", "Eligible to trade full shadow size live."];
+  return { stage: stage as 0 | 1 | 2 | 3, label: labels[stage] };
 }
 
 // ---- Schwab order JSON ----

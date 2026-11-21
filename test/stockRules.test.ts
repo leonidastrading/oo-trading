@@ -9,7 +9,8 @@ import {
   exitByDate,
   parseIdea,
   preTradeChecks,
-  shadowShares,
+  shadowSize,
+  sizeUpStage,
   sizeUpEligible,
   streakLockUntil,
   summarize,
@@ -70,7 +71,7 @@ describe("stock idea form", () => {
     expect(parseIdea({ ...idea }).errors).toEqual([]);
     const r = parseIdea({ ticker: "", direction: "up", thesis: "", source: "x", shares: 100 });
     expect(r.idea).toBeNull();
-    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Invalidation[^]*Time frame[^]*Source[^]*Size/);
+    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Time frame[^]*Source[^]*Size/);
     expect(parseIdea({ ...idea, entryType: "limit" }).errors).toContain("Limit price is required for a limit entry");
     expect(parseIdea({ ...idea, target: "" }).idea?.target).toBeNull();
   });
@@ -105,8 +106,8 @@ describe("pre-trade checks", () => {
   });
   it("locks out after a 2% shadow loss this week, and for 2 trading days after 3 losses in a row", () => {
     const loss = (d: string, shadowPl: number) => trade({ ticker: `L${d}${shadowPl}`, status: "closed", pl: -5, shadowPl, exitTime: at(d, 12), submittedAt: at("2026-11-09", 11) });
-    expect(failed(preTradeChecks(ctx({ trades: [loss("2026-11-16", -2_100)] })))).toContain("Weekly loss lockout");
-    expect(failed(preTradeChecks(ctx({ trades: [loss("2026-11-13", -2_100)] })))).not.toContain("Weekly loss lockout"); // last week
+    expect(failed(preTradeChecks(ctx({ trades: [loss("2026-11-16", -3_100)] })))).toContain("Weekly loss lockout");
+    expect(failed(preTradeChecks(ctx({ trades: [loss("2026-11-13", -3_100)] })))).not.toContain("Weekly loss lockout"); // last week
     const streak = [loss("2026-11-16", -10), loss("2026-11-16", -11), loss("2026-11-17", -12)];
     expect(streakLockUntil(streak, "dry")).toBe("2026-11-20");
     expect(failed(preTradeChecks(ctx({ trades: streak })))).toContain("Losing-streak lockout");
@@ -125,7 +126,10 @@ describe("stops, results and settings", () => {
   it("computes P/L, R and shadow P/L", () => {
     const c = closeOut(trade({}), 215, NOW, "target");
     expect(c).toMatchObject({ pl: 15, plPct: 7.5, r: 1.5, shadowPl: 750, exitReason: "target" });
-    expect(shadowShares(100_000, 0.5, 10)).toBe(50);
+    // Spec example: $1M, entry 50, stop 45 → $10,000 ÷ $5 = 2,000 shares ($100K, 10%).
+    expect(shadowSize(1_000_000, { riskPct: 1, maxPositionPct: 15 }, 50, 45)).toMatchObject({ shares: 2000, position: 100_000, positionPct: 10, risk: 10_000, riskPct: 1, capped: false });
+    // A tight stop hits the 15% cap: risk comes out below 1%.
+    expect(shadowSize(1_000_000, { riskPct: 1, maxPositionPct: 15 }, 50, 48)).toMatchObject({ shares: 3000, positionPct: 15, riskPct: 0.6, capped: true });
     const s = summarize([c, closeOut(trade({ source: "news" }), 190, NOW, "stop")], "dry");
     expect(s).toMatchObject({ trades: 2, wins: 1, totalR: 0.5 });
     expect(s.bySource.map((b) => b.key).sort()).toEqual(["news", "trend scout"]);
@@ -149,6 +153,20 @@ describe("stops, results and settings", () => {
     expect(s.orderLegCollection[0].instruction).toBe("SELL_SHORT");
     expect(s.childOrderStrategies[0]).toMatchObject({ orderType: "STOP" });
     expect(s.childOrderStrategies[0].orderLegCollection[0].instruction).toBe("BUY_TO_COVER");
+  });
+  it("limits shadow gross and net exposure", () => {
+    // 100k account; each open trade 50 sh × 200 = $10k long.
+    const longs = Array.from({ length: 5 }, (_, i) => trade({ ticker: `X${i}`, submittedAt: at("2026-11-10", 11) })); // 50% long
+    expect(failed(preTradeChecks(ctx({ trades: longs })))).toEqual(expect.arrayContaining(["Net exposure"])); // +65% > 50%
+    const shorts = Array.from({ length: 4 }, (_, i) => trade({ ticker: `S${i}`, direction: "short", submittedAt: at("2026-11-10", 11) }));
+    expect(failed(preTradeChecks(ctx({ trades: [...longs, ...shorts] })))).toContain("Gross exposure"); // 90% + 15%
+  });
+  it("size-up stages: 40 trades per step with average R above 0", () => {
+    const won = (i: number) => trade({ ticker: `Z${i}`, status: "closed", pl: 1, r: 0.5, exitTime: NOW + i });
+    expect(sizeUpStage(Array.from({ length: 39 }, (_, i) => won(i)), "dry", 0).stage).toBe(0);
+    expect(sizeUpStage(Array.from({ length: 40 }, (_, i) => won(i)), "dry", 0).label).toMatch(/1\/4/);
+    expect(sizeUpStage(Array.from({ length: 85 }, (_, i) => won(i)), "dry", 0).label).toMatch(/1\/2/);
+    expect(sizeUpStage(Array.from({ length: 40 }, (_, i) => won(i)), "dry", 1).stage).toBe(0);
   });
   it("dates", () => {
     expect(weekStart("2026-11-22")).toBe("2026-11-16");

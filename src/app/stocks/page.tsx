@@ -28,29 +28,48 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 }
 
 function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
-  const blank = { ticker: "", direction: "long", entryType: "market", limitPrice: "", stop: "", target: "", thesis: "", invalidation: "", days: "", source: "" };
+  const blank = { ticker: "", direction: "long", entryType: "market", limitPrice: "", stop: "", target: "", thesis: "", days: "", source: "" };
   const [f, setF] = useState(blank);
   const [busy, setBusy] = useState(false);
-  const [res, setRes] = useState<{ ok: boolean; errors?: string[]; checks?: Check[]; order?: unknown; error?: string } | null>(null);
+  type Res = {
+    ok: boolean;
+    preview?: boolean;
+    errors?: string[];
+    checks?: Check[];
+    order?: unknown;
+    error?: string;
+    sizing?: { liveShares: number; entryRef: number; accountValue: number | null; shadow: { shares: number; position: number; positionPct: number; risk: number; riskPct: number; capped: boolean } };
+  };
+  const [res, setRes] = useState<Res | null>(null);
+  const [previewed, setPreviewed] = useState<string | null>(null);
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const complete =
-    f.ticker && f.stop && f.thesis.trim() && f.invalidation.trim() && f.days && f.source && (f.entryType === "market" || f.limitPrice);
-  async function submit() {
+    f.ticker && f.stop && f.thesis.trim() && f.days && f.source && (f.entryType === "market" || f.limitPrice);
+  const payload = () => ({
+    ...f,
+    limitPrice: f.entryType === "limit" ? Number(f.limitPrice) : null,
+    stop: Number(f.stop),
+    target: f.target ? Number(f.target) : null,
+    days: Number(f.days),
+  });
+  const key = JSON.stringify(f);
+  // Step 1: check and size (nothing logged or sent). Step 2: confirm — the server re-runs every check.
+  async function check() {
     setBusy(true);
     setRes(null);
-    const { json } = await post("/api/stocks/ideas", {
-      ...f,
-      limitPrice: f.entryType === "limit" ? Number(f.limitPrice) : null,
-      stop: Number(f.stop),
-      target: f.target ? Number(f.target) : null,
-      days: Number(f.days),
-    });
-    setRes(json as never);
+    const { json } = await post("/api/stocks/ideas", { ...payload(), preview: true });
+    setRes(json as Res);
+    setPreviewed(json.ok ? key : null);
     setBusy(false);
-    if (json.ok) {
-      setF(blank);
-      onDone();
-    } else onDone();
+  }
+  async function submit() {
+    setBusy(true);
+    const { json } = await post("/api/stocks/ideas", payload());
+    setRes(json as Res);
+    setPreviewed(null);
+    setBusy(false);
+    if (json.ok) setF(blank);
+    onDone();
   }
   return (
     <section className="card space-y-3 p-4">
@@ -106,19 +125,45 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
         Thesis (1–3 sentences)
         <textarea className={inputCls} rows={2} value={f.thesis} onChange={set("thesis")} />
       </label>
-      <label className="block text-xs text-muted">
-        What proves it wrong
-        <textarea className={inputCls} rows={2} value={f.invalidation} onChange={set("invalidation")} />
-      </label>
       <div className="flex flex-wrap items-center gap-3">
-        <button className="rounded-lg bg-accent px-4 py-2 font-semibold text-page disabled:opacity-40" disabled={!complete || busy} onClick={() => void submit()}>
-          {busy ? "Checking…" : dry ? "Check & dry run" : "Check & send order"}
+        <button className="rounded-lg border border-accent px-4 py-2 font-semibold text-accent disabled:opacity-40" disabled={!complete || busy} onClick={() => void check()}>
+          {busy ? "Checking…" : "Check & size"}
+        </button>
+        <button
+          className="rounded-lg bg-accent px-4 py-2 font-semibold text-page disabled:opacity-40"
+          disabled={busy || previewed !== key}
+          onClick={() => void submit()}
+          title={previewed !== key ? "Check & size first" : undefined}
+        >
+          {dry ? "Confirm dry run" : "Confirm & send order"}
         </button>
         <span className="text-xs text-muted">Size is fixed in Settings. Every check runs on the server.</span>
       </div>
       {res && (
         <div className={`rounded-xl border p-3 text-sm ${res.ok ? "border-gain/40" : "border-loss/40"}`}>
-          <div className={`font-semibold ${res.ok ? "text-gain" : "text-loss"}`}>{res.ok ? (dry ? "Dry run logged (nothing sent)" : "Order sent") : "Blocked"}</div>
+          <div className={`font-semibold ${res.ok ? "text-gain" : "text-loss"}`}>
+            {res.preview ? (res.ok ? "All checks pass — review the size, then confirm" : "Blocked") : res.ok ? (dry ? "Dry run logged (nothing sent)" : "Order sent") : "Blocked"}
+          </div>
+          {res.sizing && (
+            <div className="my-2 grid grid-cols-2 gap-x-4 gap-y-0.5 rounded-lg bg-surface-2 p-2 text-xs sm:grid-cols-3">
+              <span>
+                Live shares: <b>{res.sizing.liveShares}</b>
+              </span>
+              <span>
+                Shadow shares: <b>{res.sizing.shadow.shares.toLocaleString("en-US")}</b>
+              </span>
+              <span>
+                Entry ref: <b>{res.sizing.entryRef}</b>
+              </span>
+              <span>
+                Shadow position: <b>{money(res.sizing.shadow.position)}</b> ({res.sizing.shadow.positionPct}% of account)
+              </span>
+              <span>
+                Shadow risk: <b>{money(res.sizing.shadow.risk)}</b> ({res.sizing.shadow.riskPct}% of account)
+              </span>
+              {res.sizing.shadow.capped && <span className="text-warn">Max position cap binds: risk is below the target %</span>}
+            </div>
+          )}
           {res.error && <div className="text-loss">{res.error}</div>}
           {!res.checks?.length && res.errors?.map((e) => <div key={e} className="text-loss">{e}</div>)}
           {res.checks && (
@@ -264,7 +309,7 @@ export default function StocksPage() {
           </button>
         </div>
       ))}
-      {data.sizeUp && <div className="card border-gain/60 p-3 text-sm font-semibold text-gain">Eligible to move to 1/4 of full size.</div>}
+      {data.sizeUp && <div className="card border-gain/60 p-3 text-sm font-semibold text-gain">{data.sizeUp} (Change the live size in Settings; it takes effect 24 hours later.)</div>}
 
       <section className="card space-y-3 p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -279,8 +324,23 @@ export default function StocksPage() {
           <Stat label="Win %" value={pct(s.winPct)} />
           <Stat label="Avg R" value={r2(s.avgR)} tone={plClass(s.avgR ?? 0)} />
           <Stat label="Total R" value={r2(s.totalR)} tone={plClass(s.totalR)} />
-          <Stat label="Shadow P/L" value={money(s.shadowPl, { sign: true })} tone={plClass(s.shadowPl)} />
+          <Stat
+            label="Shadow P/L"
+            value={`${money(s.shadowPl, { sign: true })}${s.shadowPlPct !== null && s.shadowPlPct !== undefined ? ` (${s.shadowPlPct >= 0 ? "+" : ""}${s.shadowPlPct}%)` : ""}`}
+            tone={plClass(s.shadowPl)}
+          />
           <Stat label="P/L (actual)" value={money(s.pl, { sign: true, cents: true })} tone={plClass(s.pl)} />
+        </div>
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+          <span>
+            Shadow gross exposure: <b>{money(data.exposure.gross)}</b>
+            {data.exposure.grossPct !== null && ` (${data.exposure.grossPct.toFixed(1)}% / max ${data.settings.maxGrossPct}%)`}
+          </span>
+          <span>
+            Net: <b>{money(data.exposure.net, { sign: true })}</b>
+            {data.exposure.netPct !== null && ` (${data.exposure.netPct >= 0 ? "+" : ""}${data.exposure.netPct.toFixed(1)}% / ±${data.settings.maxNetPct}%)`}
+          </span>
+          {data.accountValue && <span className="text-muted">account {money(data.accountValue)}</span>}
         </div>
         <StockPnlChart trades={data.trades.filter((t) => t.mode === data.mode)} />
         <div className="grid gap-3 md:grid-cols-2">
@@ -371,7 +431,7 @@ export default function StocksPage() {
             {closed.map((t) => (
               <tr
                 key={t.id}
-                title={`${t.thesis}\nWrong if: ${t.invalidation}`}
+                title={t.thesis}
                 onClick={() => setShownChart(shownChart === t.id ? null : t.id)}
                 className={`cursor-pointer ${shownChart === t.id ? "bg-surface-2" : ""}`}
               >
@@ -424,8 +484,9 @@ export default function StocksPage() {
         </ul>
       </section>
       <p className="text-xs text-muted">
-        Guardrails ({data.mode}): {data.settings.shares} share(s) per idea · max {data.settings.maxOpen} open · {data.settings.maxPerWeek} new ideas per week · weekly
-        shadow-loss lockout {data.settings.weeklyLossPct}% · shadow size {data.settings.shadowRiskPct}% risk · entries 9:45–15:45 ET. Change them in Settings (loosening waits
+        Guardrails ({data.mode}): {data.settings.shares} live share(s) per idea · shadow size {data.settings.riskPct}% risk, max {data.settings.maxPositionPct}%
+        position · gross ≤ {data.settings.maxGrossPct}%, net ±{data.settings.maxNetPct}% · max {data.settings.maxOpen} open · {data.settings.maxPerWeek} new ideas per
+        week · weekly shadow-loss lockout {data.settings.weeklyLossPct}% · entries 9:45–15:45 ET. Change them in Settings (loosening waits
         24 hours).
       </p>
     </div>

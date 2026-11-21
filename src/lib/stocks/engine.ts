@@ -18,7 +18,7 @@ import {
   parseIdea,
   preTradeChecks,
   regularSession,
-  shadowShares,
+  shadowSize,
   stopReplacement,
   targetReplacement,
   timeExitDue,
@@ -173,6 +173,9 @@ export async function stockQuotes(symbols: string[]): Promise<Record<string, Sto
 
 export interface SubmitResult {
   ok: boolean;
+  /** A preview: checks and sizing only, nothing logged or sent. */
+  preview?: boolean;
+  sizing?: { liveShares: number; shadow: ReturnType<typeof shadowSize>; entryRef: number; accountValue: number | null };
   errors: string[];
   checks: Check[];
   trade?: Trade;
@@ -180,7 +183,7 @@ export interface SubmitResult {
   mode: "dry" | "live";
 }
 
-export async function submitIdea(raw: Record<string, unknown>): Promise<SubmitResult> {
+export async function submitIdea(raw: Record<string, unknown>, opts: { preview?: boolean } = {}): Promise<SubmitResult> {
   return withLock(async () => {
     const settings = await settingsNow();
     const mode = settings.dryRun ? "dry" : "live";
@@ -199,14 +202,19 @@ export async function submitIdea(raw: Record<string, unknown>): Promise<SubmitRe
       checks.push({ name: "Server live switch", ok: on, detail: on ? "On" : "STOCK_LIVE_TRADING is off on the server: live orders can't be sent" });
     }
     const failed = checks.filter((c) => !c.ok);
+    const lastPx = quote?.last ?? null;
+    const entryRef = idea.entryType === "limit" && idea.limitPrice ? idea.limitPrice : (lastPx ?? 0);
+    const sizing = { liveShares: settings.shares, shadow: shadowSize(acctValue, settings, entryRef, idea.stop), entryRef, accountValue: acctValue };
+    if (opts.preview) return { ok: failed.length === 0, preview: true, sizing, errors: failed.map((c) => `${c.name}: ${c.detail}`), checks, mode, order: bracketOrder(idea, settings.shares) };
     if (failed.length) {
       await log({ kind: "block", mode, ticker: idea.ticker, text: failed.map((c) => `${c.name}: ${c.detail}`).join("; "), detail: { idea } });
-      return { ok: false, errors: failed.map((c) => `${c.name}: ${c.detail}`), checks, mode };
+      return { ok: false, errors: failed.map((c) => `${c.name}: ${c.detail}`), checks, mode, sizing };
     }
 
     const last = quote!.last!;
     const ref = idea.entryType === "limit" ? idea.limitPrice! : last;
     const risk = Math.abs(ref - idea.stop);
+    const size = shadowSize(acctValue, settings, ref, idea.stop);
     const order = bracketOrder(idea, settings.shares);
     const trade: Trade = {
       ...idea,
@@ -219,8 +227,11 @@ export async function submitIdea(raw: Record<string, unknown>): Promise<SubmitRe
       initialStop: idea.stop,
       riskPerShare: Math.round(risk * 100) / 100,
       accountValue: acctValue,
-      shadowRiskPct: settings.shadowRiskPct,
-      shadowShares: shadowShares(acctValue, settings.shadowRiskPct, risk),
+      shadowRiskPct: settings.riskPct,
+      shadowShares: size.shares,
+      shadowPosition: size.position,
+      shadowRisk: size.risk,
+      shadowCapped: size.capped,
       exitBy: exitByDate(etParts(now).date, idea.days),
       orderJson: order,
       stopHistory: [{ at: now, stop: idea.stop }],
@@ -234,7 +245,7 @@ export async function submitIdea(raw: Record<string, unknown>): Promise<SubmitRe
         trade.orderId = r.orderId;
       } catch (e) {
         await log({ kind: "error", mode, ticker: idea.ticker, text: `Order rejected/failed: ${(e as Error).message}`, detail: { order } });
-        return { ok: false, errors: [`Schwab didn't take the order: ${(e as Error).message}`], checks, mode, order };
+        return { ok: false, errors: [`Schwab didn't take the order: ${(e as Error).message}`], checks, mode, order, sizing };
       }
     } else {
       trade.orderId = `dry-${trade.id}`;
@@ -253,7 +264,7 @@ export async function submitIdea(raw: Record<string, unknown>): Promise<SubmitRe
       text: `${mode === "dry" ? "DRY RUN — would send" : "Sent"} ${idea.direction === "long" ? "BUY" : "SELL SHORT"} ${settings.shares} ${idea.ticker} ${idea.entryType === "market" ? "at market" : `limit ${idea.limitPrice}`}, stop ${idea.stop}${idea.target ? `, target ${idea.target}` : ""} (bracket)${trade.orderId && mode === "live" ? ` · order ${trade.orderId}` : ""} · account ••${acct.last4}`,
       detail: { order },
     });
-    return { ok: true, errors: [], checks, trade, order, mode };
+    return { ok: true, errors: [], checks, trade, order, mode, sizing };
   });
 }
 
@@ -334,8 +345,41 @@ export async function changeTarget(id: string, target: number): Promise<{ ok: bo
     const tgt = Math.round(target * 100) / 100;
     const ref = t.entryPrice ?? t.priceAtSubmit;
     if (!(tgt > 0) || (t.direction === "long" ? tgt <= ref : tgt >= ref)) return { ok: false, error: `A ${t.direction} target must be ${t.direction === "long" ? "above" : "below"} the entry (${ref})` };
-    if (t.mode === "live") {
-      if (!t.target || !t.targetOrderId) return { ok: false, error: "This trade has no target order to change (added targets aren't supported: it would mean pulling the stop)" };
+    if (t.mode === "live" && (!t.target || !t.targetOrderId)) {
+      // Adding a target: put on a new stop+target OCO, then pull the old lone stop.
+      if (t.status !== "open" || !t.stopOrderId) return { ok: false, error: "Add a target once the entry has filled and its stop is synced" };
+      const acct = await tradingAccount();
+      const oco = { orderStrategyType: "OCO", childOrderStrategies: [targetReplacement(t, tgt), stopReplacement(t, t.stop)] };
+      const place = async () => {
+        const r = await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, oco);
+        const kids = r.orderId ? flatChildren(await getOrder(acct, r.orderId)) : [];
+        return { stop: kids.find((k) => k.orderType === "STOP")?.orderId, target: kids.find((k) => k.orderType === "LIMIT")?.orderId };
+      };
+      let ids: { stop?: number; target?: number } | null = null;
+      try {
+        ids = await place(); // new pair first, so a stop is always working
+        await cancelOrder(acct, t.stopOrderId);
+      } catch {
+        // Schwab may refuse a second closing order for the same shares: swap them as fast as possible instead.
+        await cancelOrder(acct, t.stopOrderId);
+        try {
+          ids = await place();
+        } catch (e) {
+          try {
+            const r = await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, stopReplacement(t, t.stop));
+            t.stopOrderId = r.orderId;
+            await saveTrade(t);
+            return { ok: false, error: `Schwab refused the target; the stop was put back: ${(e as Error).message}` };
+          } catch (e2) {
+            await alert(`${t.ticker}: adding the target failed and the stop couldn't be restored (${(e2 as Error).message}). Flattening.`, t.id);
+            await closeTradeUnlocked(t, "kill", undefined);
+            return { ok: false, error: "Couldn't restore the stop: the position was flattened" };
+          }
+        }
+      }
+      t.stopOrderId = ids?.stop ? String(ids.stop) : t.stopOrderId;
+      t.targetOrderId = ids?.target ? String(ids.target) : null;
+    } else if (t.mode === "live") {
       try {
         const acct = await tradingAccount();
         const r = await schwabOrder("PUT", `/trader/v1/accounts/${acct.hash}/orders/${t.targetOrderId}`, targetReplacement(t, tgt));
@@ -447,6 +491,7 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
     const now = clock();
     const quotes = await stockQuotes(trades.map((t) => t.ticker)).catch(() => ({}) as Record<string, StockQuote>);
     const today = etParts(now).date;
+    const settingsCap = (await settingsNow()).maxPositionPct;
 
     for (const t of trades) {
       const q = quotes[t.ticker];
@@ -519,7 +564,11 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
               entryTime: f.time,
               slippage: Math.round((f.price - t.priceAtSubmit) * dir * 100) / 100,
               riskPerShare: Math.round(risk * 100) / 100,
-              shadowShares: shadowShares(t.accountValue, t.shadowRiskPct, risk),
+              ...(() => {
+                // Re-size the shadow at the actual fill (same risk %, same cap).
+                const z = shadowSize(t.accountValue, { riskPct: t.shadowRiskPct, maxPositionPct: settingsCap }, f.price, t.initialStop);
+                return { shadowShares: z.shares, shadowPosition: z.position, shadowRisk: z.risk, shadowCapped: z.capped };
+              })(),
             });
             await saveTrade(t);
             await log({ kind: "order", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Entry filled at ${f.price} (slippage ${t.slippage})` });
