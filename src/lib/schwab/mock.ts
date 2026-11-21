@@ -25,6 +25,8 @@ export function mockResponse(path: string): unknown {
       NVDA: stock(150, true, false, "NVIDIA Corp"),
       GME: stock(25, true, true, "GameStop Corp"),
       TSLA: stock(300, true, false, "Tesla Inc"),
+      SPY: stock(600 + Math.sin(Date.now() / 30_000) * 3, true, false, "SPDR S&P 500 ETF"),
+      SMH: stock(250 + Math.sin(Date.now() / 20_000) * 2, true, false, "VanEck Semiconductor ETF"),
     };
   }
   if (path === "/trader/v1/userPreference") return { accounts: [{ accountNumber: "12349061", nickName: "Individual", type: "MARGIN" }] };

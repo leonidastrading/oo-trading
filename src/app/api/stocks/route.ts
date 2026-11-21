@@ -47,7 +47,8 @@ export async function GET() {
   // Account value for % figures: refreshed at most every 15 minutes here (orders read it fresh).
   const acctValue = acct ? ((await cached("stocks:account-value", 15 * 60_000, () => accountValue(acct)).catch(() => null))?.data ?? null) : null;
   const open = trades.filter((t) => ["pending", "open", "closing"].includes(t.status));
-  const q = await stockQuotes(open.map((t) => t.ticker)).catch(() => ({}));
+  // SPY and each open trade's benchmark ETF too, for the market-relative (excess) figures.
+  const q = await stockQuotes(open.length ? [...open.map((t) => t.ticker), "SPY", ...open.flatMap((t) => (t.benchmark ? [t.benchmark] : []))] : []).catch(() => ({}));
   const summary = summarize(trades, mode);
   summary.shadowPlPct = acctValue ? Math.round((summary.shadowPl / acctValue) * 10000) / 100 : null;
   const ex = shadowExposure(trades, mode);

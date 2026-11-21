@@ -20,6 +20,8 @@ export interface IdeaInput {
   invalidation?: string;
   days: number;
   source: Source;
+  /** Optional sector ETF to score against, in addition to SPY (e.g. XBI, SMH, XLE). */
+  benchmark?: string | null;
 }
 
 export interface Trade extends IdeaInput {
@@ -58,6 +60,16 @@ export interface Trade extends IdeaInput {
   plPct?: number | null;
   r?: number | null;
   shadowPl?: number | null;
+  /** SPY (and benchmark ETF) prices at the entry and exit fills, for market-relative scoring. */
+  spyEntry?: number | null;
+  spyExit?: number | null;
+  benchEntry?: number | null;
+  benchExit?: number | null;
+  /** Excess return in % (vs SPY / vs the benchmark) and in R (÷ initial stop distance %). */
+  excess?: number | null;
+  excessR?: number | null;
+  benchExcess?: number | null;
+  benchExcessR?: number | null;
   stopHistory: { at: number; stop: number }[];
   targetHistory: { at: number; target: number | null }[];
   notes: string[];
@@ -239,6 +251,8 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
   const days = num(raw.days);
   if (!(days >= 1 && days <= 365 && Number.isInteger(days))) errors.push("Time frame is required (whole days, 1–365)");
   const source = SOURCES.includes(raw.source as Source) ? (raw.source as Source) : null;
+  const benchRaw = String(raw.benchmark ?? "").trim().toUpperCase();
+  if (benchRaw && !/^[A-Z][A-Z0-9.\-/]{0,9}$/.test(benchRaw)) errors.push("Benchmark ETF must be a ticker (e.g. XBI) or left empty");
   if (!source) errors.push("Source is required");
   if ("shares" in raw || "quantity" in raw || "size" in raw) errors.push("Size can't be set here (fixed in Settings)");
   if (errors.length) return { idea: null, errors };
@@ -254,6 +268,7 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
       invalidation,
       days,
       source: source!,
+      benchmark: benchRaw || null,
     },
     errors: [],
   };
@@ -413,7 +428,40 @@ export function checkStopChange(t: Pick<Trade, "direction" | "stopHistory" | "in
 
 // ---- Results ----
 
-export function closeOut(t: Trade, exitPrice: number, exitTime: number, reason: ExitReason): Trade {
+/**
+ * Market-relative return over entry → `price`: long = stock % − benchmark %; short = benchmark % − stock %
+ * (the short is compared with shorting the benchmark). In R: ÷ the initial stop distance in %.
+ */
+export function excessReturn(
+  t: Pick<Trade, "direction" | "entryPrice" | "priceAtSubmit" | "initialStop">,
+  price: number,
+  benchEntry: number | null | undefined,
+  benchNow: number | null | undefined,
+): { pct: number; r: number | null } | null {
+  const entry = t.entryPrice ?? t.priceAtSubmit;
+  if (!(entry > 0) || !(price > 0) || !benchEntry || !benchNow) return null;
+  const stock = ((price - entry) / entry) * 100;
+  const bench = ((benchNow - benchEntry) / benchEntry) * 100;
+  const pct = t.direction === "long" ? stock - bench : bench - stock;
+  const stopPct = (Math.abs(entry - t.initialStop) / entry) * 100;
+  return { pct: Math.round(pct * 100) / 100, r: stopPct > 0 ? Math.round((pct / stopPct) * 100) / 100 : null };
+}
+
+export function closeOut(t: Trade, exitPrice: number, exitTime: number, reason: ExitReason, marks: { spy?: number | null; bench?: number | null } = {}): Trade {
+  const spyX = excessReturn(t, exitPrice, t.spyEntry, marks.spy);
+  const benchX = t.benchmark ? excessReturn(t, exitPrice, t.benchEntry, marks.bench) : null;
+  return {
+    ...closeOutRaw(t, exitPrice, exitTime, reason),
+    spyExit: marks.spy ?? null,
+    benchExit: t.benchmark ? (marks.bench ?? null) : null,
+    excess: spyX?.pct ?? null,
+    excessR: spyX?.r ?? null,
+    benchExcess: benchX?.pct ?? null,
+    benchExcessR: benchX?.r ?? null,
+  };
+}
+
+function closeOutRaw(t: Trade, exitPrice: number, exitTime: number, reason: ExitReason): Trade {
   const entry = t.entryPrice ?? t.priceAtSubmit;
   const dir = t.direction === "long" ? 1 : -1;
   const perShare = (exitPrice - entry) * dir;
@@ -477,6 +525,17 @@ export function shadowExposure(trades: Trade[], mode: Mode): { long: number; sho
   return { long: round2(long), short: round2(short), gross: round2(long + short), net: round2(long - short) };
 }
 
+export interface GroupRow {
+  key: string;
+  trades: number;
+  winPct: number | null;
+  avgR: number | null;
+  totalR: number;
+  shadowPl: number;
+  avgExcess: number | null;
+  avgExcessR: number | null;
+}
+
 export interface Summary {
   trades: number;
   /** Shadow P/L as % of the current account value (null if unknown). */
@@ -487,12 +546,19 @@ export interface Summary {
   totalR: number;
   shadowPl: number;
   pl: number;
-  bySource: { key: string; trades: number; winPct: number | null; avgR: number | null; totalR: number; shadowPl: number }[];
-  byDirection: { key: string; trades: number; winPct: number | null; avgR: number | null; totalR: number; shadowPl: number }[];
+  /** Average excess return vs SPY (%) and in R, over trades that have it. */
+  avgExcess: number | null;
+  avgExcessR: number | null;
+  bySource: GroupRow[];
+  byDirection: GroupRow[];
 }
 
 export function summarize(trades: Trade[], mode: Mode): Summary {
   const closed = closedOfMode(trades, mode);
+  const avg = (xs: (number | null | undefined)[]) => {
+    const v = xs.filter((x): x is number => typeof x === "number");
+    return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 100) / 100 : null;
+  };
   const agg = (ts: Trade[]) => {
     const rs = ts.map((t) => t.r).filter((r): r is number => typeof r === "number");
     const wins = ts.filter((t) => (t.pl ?? 0) > 0).length;
@@ -503,6 +569,8 @@ export function summarize(trades: Trade[], mode: Mode): Summary {
       avgR: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null,
       totalR: Math.round(rs.reduce((a, b) => a + b, 0) * 100) / 100,
       shadowPl: round2(ts.reduce((s, t) => s + (t.shadowPl ?? 0), 0)),
+      avgExcess: avg(ts.map((t) => t.excess)),
+      avgExcessR: avg(ts.map((t) => t.excessR)),
     };
   };
   const group = (key: (t: Trade) => string) => {

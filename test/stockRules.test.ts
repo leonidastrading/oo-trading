@@ -6,6 +6,7 @@ import {
   closeOut,
   DEFAULT_SETTINGS,
   effectiveSettings,
+  excessReturn,
   exitByDate,
   parseIdea,
   preTradeChecks,
@@ -167,6 +168,24 @@ describe("stops, results and settings", () => {
     expect(sizeUpStage(Array.from({ length: 40 }, (_, i) => won(i)), "dry", 0).label).toMatch(/1\/4/);
     expect(sizeUpStage(Array.from({ length: 85 }, (_, i) => won(i)), "dry", 0).label).toMatch(/1\/2/);
     expect(sizeUpStage(Array.from({ length: 40 }, (_, i) => won(i)), "dry", 1).stage).toBe(0);
+  });
+  it("scores against SPY and the benchmark ETF", () => {
+    // Long AAPL 200 → 215 (+7.5%), SPY 500 → 510 (+2%): +5.5% excess; stop distance 5% → 1.1R.
+    const t = trade({ spyEntry: 500, benchmark: "XLK", benchEntry: 100 });
+    expect(excessReturn(t, 215, 500, 510)).toEqual({ pct: 5.5, r: 1.1 });
+    const c = closeOut(t, 215, NOW, "target", { spy: 510, bench: 104 });
+    expect(c).toMatchObject({ spyExit: 510, excess: 5.5, excessR: 1.1, benchExit: 104, benchExcess: 3.5, benchExcessR: 0.7 });
+    // Short: stock 200 → 190 (−5%), SPY +2% → excess = 2 − (−5) = +7%.
+    const sh = trade({ direction: "short", initialStop: 210, spyEntry: 500 });
+    expect(excessReturn(sh, 190, 500, 510)).toEqual({ pct: 7, r: 1.4 });
+    // Without an entry mark there's no score.
+    expect(closeOut(trade({}), 215, NOW, "target", { spy: 510 }).excess).toBeNull();
+    const sum = summarize([c, closeOut(trade({ spyEntry: 500, source: "news" }), 190, NOW, "stop", { spy: 490 })], "dry");
+    // Second: −5% vs SPY −2% → −3% (−0.6R). Average (5.5 − 3) / 2 = 1.25%, (1.1 − 0.6) / 2 = 0.25R.
+    expect(sum).toMatchObject({ avgExcess: 1.25, avgExcessR: 0.25 });
+    expect(sum.bySource.find((b) => b.key === "news")).toMatchObject({ avgExcess: -3, avgExcessR: -0.6 });
+    expect(parseIdea({ ...idea, benchmark: "smh" }).idea?.benchmark).toBe("SMH");
+    expect(parseIdea({ ...idea, benchmark: "" }).idea?.benchmark).toBeNull();
   });
   it("dates", () => {
     expect(weekStart("2026-11-22")).toBe("2026-11-16");

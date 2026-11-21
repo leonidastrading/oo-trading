@@ -4,6 +4,7 @@
 import "server-only";
 import { KEYS, kv } from "../kv";
 import { schwabGet, SchwabApiError, type AccountNumber } from "../schwab/client";
+import { cachedMinuteBars } from "../schwab/data";
 import { mockEnabled } from "../schwab/mock";
 import { liveTradingEnabled, schwabOrder } from "../schwab/trading";
 import { etParts } from "../time";
@@ -169,6 +170,35 @@ export async function stockQuotes(symbols: string[]): Promise<Record<string, Sto
   return out;
 }
 
+// ---- Market-relative marks ----
+
+/**
+ * Prices of SPY and the trade's benchmark ETF at `ms`: the current quote when `ms` is now(ish), else the
+ * 1-minute bar holding that time (Schwab price history), else the current quote as the closest available.
+ */
+async function marksAt(t: Pick<Trade, "benchmark">, ms: number, quotes?: Record<string, StockQuote>): Promise<{ spy: number | null; bench: number | null }> {
+  const syms = ["SPY", ...(t.benchmark ? [t.benchmark] : [])];
+  const q = quotes && syms.every((s) => quotes[s]) ? quotes : await stockQuotes(syms).catch(() => ({}) as Record<string, StockQuote>);
+  const at = async (sym: string): Promise<number | null> => {
+    const now = q[sym]?.last ?? null;
+    if (Math.abs(Date.now() - ms) < 120_000) return now;
+    try {
+      const bars = (await cachedMinuteBars(sym, etParts(ms).date, 5 * 60_000)).data ?? [];
+      const hit = [...bars].reverse().find((b) => b.time * 1000 <= ms);
+      return hit?.close ?? now;
+    } catch {
+      return now;
+    }
+  };
+  return { spy: await at("SPY"), bench: t.benchmark ? await at(t.benchmark) : null };
+}
+
+const markEntry = async (t: Trade, ms: number, quotes?: Record<string, StockQuote>) => {
+  const m = await marksAt(t, ms, quotes);
+  t.spyEntry = m.spy;
+  t.benchEntry = t.benchmark ? m.bench : null;
+};
+
 // ---- Submit ----
 
 export interface SubmitResult {
@@ -254,6 +284,7 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
       else if (idea.direction === "long" ? last <= idea.limitPrice! : last >= idea.limitPrice!) {
         Object.assign(trade, { status: "open", entryPrice: idea.limitPrice, entryTime: now, slippage: Math.round((idea.limitPrice! - last) * 100) / 100 });
       }
+      if (trade.status === "open") await markEntry(trade, Date.now());
     }
     await saveTrade(trade);
     await log({
@@ -409,7 +440,7 @@ async function closeTradeUnlocked(t: Trade, reason: ExitReason, quote: StockQuot
       return t;
     }
     const px = quote?.last ?? t.entryPrice ?? t.priceAtSubmit;
-    const done = closeOut(t, px, now, reason);
+    const done = closeOut(t, px, now, reason, await marksAt(t, now));
     await saveTrade(done);
     await log({ kind: "exit", mode: "dry", ticker: t.ticker, tradeId: t.id, text: `DRY RUN — would close at market (${reason}) ~${px}: ${done.pl! >= 0 ? "+" : ""}${done.pl} (${done.r}R)` });
     return done;
@@ -489,7 +520,9 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
     const changes: string[] = [];
     if (!trades.length) return { checked: 0, changes };
     const now = clock();
-    const quotes = await stockQuotes(trades.map((t) => t.ticker)).catch(() => ({}) as Record<string, StockQuote>);
+    const quotes = await stockQuotes([...trades.map((t) => t.ticker), "SPY", ...trades.flatMap((t) => (t.benchmark ? [t.benchmark] : []))]).catch(
+      () => ({}) as Record<string, StockQuote>,
+    );
     const today = etParts(now).date;
     const settingsCap = (await settingsNow()).maxPositionPct;
 
@@ -502,6 +535,7 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
             const hit = last !== null && (t.direction === "long" ? last <= t.limitPrice! : last >= t.limitPrice!);
             if (hit && regularSession(now)) {
               Object.assign(t, { status: "open", entryPrice: t.limitPrice, entryTime: now, slippage: 0 });
+              await markEntry(t, Date.now(), quotes);
               await saveTrade(t);
               changes.push(`${t.ticker}: paper entry filled at ${t.limitPrice}`);
             } else if (etParts(t.submittedAt).date < today || (etParts(now).minutesOfDay >= 16 * 60 && etParts(t.submittedAt).date === today)) {
@@ -516,7 +550,7 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
             const stopHit = t.direction === "long" ? last <= t.stop : last >= t.stop;
             const tgtHit = !!t.target && (t.direction === "long" ? last >= t.target : last <= t.target);
             if (stopHit || tgtHit) {
-              const done = closeOut(t, stopHit ? t.stop : t.target!, now, stopHit ? "stop" : "target");
+              const done = closeOut(t, stopHit ? t.stop : t.target!, now, stopHit ? "stop" : "target", await marksAt(t, Date.now(), quotes));
               await saveTrade(done);
               await log({ kind: "exit", mode: "dry", ticker: t.ticker, tradeId: t.id, text: `DRY RUN — ${stopHit ? "stop" : "target"} hit at ${done.exitPrice}: ${done.pl! >= 0 ? "+" : ""}${done.pl} (${done.r}R)` });
               changes.push(`${t.ticker}: paper ${stopHit ? "stop" : "target"}`);
@@ -536,7 +570,7 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
           const o = t.exitOrderId ? await getOrder(acct, t.exitOrderId) : null;
           const f = fillOf(o);
           if (o?.status === "FILLED" && f) {
-            const done = closeOut(t, f.price, f.time, t.exitReason ?? "manual");
+            const done = closeOut(t, f.price, f.time, t.exitReason ?? "manual", await marksAt(t, f.time, quotes));
             await saveTrade(done);
             await log({ kind: "exit", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Closed (${done.exitReason}) at ${done.exitPrice}: ${done.pl! >= 0 ? "+" : ""}${done.pl} (${done.r}R)` });
             changes.push(`${t.ticker}: closed`);
@@ -570,6 +604,7 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
                 return { shadowShares: z.shares, shadowPosition: z.position, shadowRisk: z.risk, shadowCapped: z.capped };
               })(),
             });
+            await markEntry(t, f.time, quotes);
             await saveTrade(t);
             await log({ kind: "order", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Entry filled at ${f.price} (slippage ${t.slippage})` });
             changes.push(`${t.ticker}: entry filled`);
@@ -592,7 +627,7 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
         const tf = tgtO?.status === "FILLED" ? fillOf(tgtO) : null;
         if (sf || tf) {
           const f = (sf ?? tf)!;
-          const done = closeOut(t, f.price, f.time, sf ? "stop" : "target");
+          const done = closeOut(t, f.price, f.time, sf ? "stop" : "target", await marksAt(t, f.time, quotes));
           await saveTrade(done);
           await log({ kind: "exit", mode: "live", ticker: t.ticker, tradeId: t.id, text: `${sf ? "Stop" : "Target"} filled at ${f.price}: ${done.pl! >= 0 ? "+" : ""}${done.pl} (${done.r}R)` });
           changes.push(`${t.ticker}: ${sf ? "stop" : "target"} filled`);

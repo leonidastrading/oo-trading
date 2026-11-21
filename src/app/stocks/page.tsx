@@ -7,7 +7,7 @@ import { StockPnlChart } from "@/components/StockPnlChart";
 import { StockTradeChart } from "@/components/StockTradeChart";
 import { usePoll } from "@/components/usePoll";
 import type { Check, Trade } from "@/lib/stocks/rules";
-import { SOURCES } from "@/lib/stocks/rules";
+import { excessReturn, SOURCES } from "@/lib/stocks/rules";
 import { formatDateTimeET } from "@/lib/time";
 
 const post = async (url: string, body: unknown) => {
@@ -28,7 +28,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 }
 
 function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
-  const blank = { ticker: "", direction: "long", entryType: "market", limitPrice: "", stop: "", target: "", thesis: "", days: "", source: "" };
+  const blank = { ticker: "", direction: "long", entryType: "market", limitPrice: "", stop: "", target: "", thesis: "", days: "", source: "", benchmark: "" };
   const [f, setF] = useState(blank);
   const [busy, setBusy] = useState(false);
   type Res = {
@@ -122,6 +122,10 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
         </label>
       </div>
       <label className="block text-xs text-muted">
+        Benchmark ETF (optional, e.g. XBI, SMH, XLE — scored against it as well as SPY)
+        <input className={inputCls} value={f.benchmark} onChange={(e) => setF({ ...f, benchmark: e.target.value.toUpperCase() })} placeholder="SPY is always used" />
+      </label>
+      <label className="block text-xs text-muted">
         Thesis (1–3 sentences)
         <textarea className={inputCls} rows={2} value={f.thesis} onChange={set("thesis")} />
       </label>
@@ -187,7 +191,9 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
   );
 }
 
-function OpenTrade({ t, last, onDone }: { t: Trade; last: number | null; onDone: () => void }) {
+const xFmt = (x: { pct: number; r: number | null } | null) => (x ? `${x.pct >= 0 ? "+" : ""}${x.pct.toFixed(2)}% (${x.r === null ? "—" : `${x.r >= 0 ? "+" : ""}${x.r.toFixed(2)}R`})` : "—");
+
+function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | null; spy: number | null; bench: number | null; onDone: () => void }) {
   const [stop, setStop] = useState("");
   const [target, setTarget] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -195,6 +201,9 @@ function OpenTrade({ t, last, onDone }: { t: Trade; last: number | null; onDone:
   const entry = t.entryPrice ?? null;
   const pl = entry !== null && last !== null ? (last - entry) * dir * t.shares : null;
   const r = entry !== null && last !== null && t.riskPerShare ? ((last - entry) * dir) / t.riskPerShare : null;
+  const shadowPl = entry !== null && last !== null ? (last - entry) * dir * t.shadowShares : null;
+  const vsSpy = entry !== null && last !== null ? excessReturn(t, last, t.spyEntry, spy) : null;
+  const vsBench = entry !== null && last !== null && t.benchmark ? excessReturn(t, last, t.benchEntry, bench) : null;
   const act = async (action: string, value?: number) => {
     setMsg(null);
     const { json } = await post("/api/stocks/trade", { id: t.id, action, value });
@@ -219,6 +228,27 @@ function OpenTrade({ t, last, onDone }: { t: Trade; last: number | null; onDone:
         entry {entry ?? (t.entryType === "limit" ? `limit ${t.limitPrice} (working)` : "pending")} · last {r2(last)} · stop {t.stop} · target {t.target ?? "—"} · risk/sh {t.riskPerShare} · shadow{" "}
         {t.shadowShares} sh
       </div>
+      {entry !== null && (
+        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 rounded-lg bg-surface p-2 text-xs sm:grid-cols-3">
+          <span>
+            Unrealized: <b className={plClass(pl ?? 0)}>{pl === null ? "—" : money(pl, { sign: true, cents: true })}</b> {r !== null && `(${r >= 0 ? "+" : ""}${r.toFixed(2)}R)`}
+          </span>
+          <span>
+            Realized: <b>{money(0, { cents: true })}</b> <span className="text-muted">(until it closes)</span>
+          </span>
+          <span>
+            Shadow unrealized: <b className={plClass(shadowPl ?? 0)}>{shadowPl === null ? "—" : money(shadowPl, { sign: true })}</b>
+          </span>
+          <span>
+            vs SPY: <b className={plClass(vsSpy?.pct ?? 0)}>{xFmt(vsSpy)}</b>
+          </span>
+          {t.benchmark && (
+            <span>
+              vs {t.benchmark}: <b className={plClass(vsBench?.pct ?? 0)}>{xFmt(vsBench)}</b>
+            </span>
+          )}
+        </div>
+      )}
       <div className="mt-1 text-xs text-muted">{t.thesis}</div>
       <StockTradeChart trade={t} />
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -330,6 +360,8 @@ export default function StocksPage() {
             tone={plClass(s.shadowPl)}
           />
           <Stat label="P/L (actual)" value={money(s.pl, { sign: true, cents: true })} tone={plClass(s.pl)} />
+          <Stat label="Avg excess vs SPY" value={s.avgExcess === null ? "—" : `${s.avgExcess >= 0 ? "+" : ""}${s.avgExcess.toFixed(2)}%`} tone={plClass(s.avgExcess ?? 0)} />
+          <Stat label="Avg excess R" value={s.avgExcessR === null ? "—" : `${s.avgExcessR >= 0 ? "+" : ""}${s.avgExcessR.toFixed(2)}R`} tone={plClass(s.avgExcessR ?? 0)} />
         </div>
         <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
           <span>
@@ -359,6 +391,8 @@ export default function StocksPage() {
                     <th>Avg R</th>
                     <th>Total R</th>
                     <th>Shadow P/L</th>
+                    <th>Avg excess</th>
+                    <th>Excess R</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -370,11 +404,13 @@ export default function StocksPage() {
                       <td className="num">{r2(b.avgR)}</td>
                       <td className="num">{r2(b.totalR)}</td>
                       <td className={`num ${plClass(b.shadowPl)}`}>{money(b.shadowPl, { sign: true })}</td>
+                      <td className={`num ${plClass(b.avgExcess ?? 0)}`}>{b.avgExcess === null ? "—" : `${b.avgExcess.toFixed(2)}%`}</td>
+                      <td className={`num ${plClass(b.avgExcessR ?? 0)}`}>{r2(b.avgExcessR)}</td>
                     </tr>
                   ))}
                   {!(rows as typeof s.bySource).length && (
                     <tr>
-                      <td colSpan={6} className="text-muted">
+                      <td colSpan={8} className="text-muted">
                         No closed trades yet
                       </td>
                     </tr>
@@ -402,7 +438,14 @@ export default function StocksPage() {
       <section className="card space-y-2 p-4">
         <h2 className="font-bold text-accent">Open ({open.length} of {data.settings.maxOpen})</h2>
         {open.map((t) => (
-          <OpenTrade key={t.id} t={t} last={data.quotes[t.ticker] ?? null} onDone={refresh} />
+          <OpenTrade
+            key={t.id}
+            t={t}
+            last={data.quotes[t.ticker] ?? null}
+            spy={data.quotes.SPY ?? null}
+            bench={t.benchmark ? (data.quotes[t.benchmark] ?? null) : null}
+            onDone={refresh}
+          />
         ))}
         {!open.length && <p className="text-sm text-muted">No open ideas.</p>}
       </section>
@@ -424,6 +467,8 @@ export default function StocksPage() {
               <th>%</th>
               <th>R</th>
               <th>Shadow</th>
+              <th>vs SPY</th>
+              <th>vs ETF</th>
               <th>Mode</th>
             </tr>
           </thead>
@@ -447,12 +492,16 @@ export default function StocksPage() {
                 <td className="num">{t.plPct ?? "—"}</td>
                 <td className="num">{t.r ?? "—"}</td>
                 <td className={`num ${plClass(t.shadowPl ?? 0)}`}>{t.shadowPl === null || t.shadowPl === undefined ? "—" : money(t.shadowPl, { sign: true })}</td>
+                <td className={`num ${plClass(t.excess ?? 0)}`}>{typeof t.excess === "number" ? xFmt({ pct: t.excess, r: t.excessR ?? null }) : "—"}</td>
+                <td className={`num ${plClass(t.benchExcess ?? 0)}`}>
+                  {t.benchmark ? `${t.benchmark} ${typeof t.benchExcess === "number" ? xFmt({ pct: t.benchExcess, r: t.benchExcessR ?? null }) : "—"}` : "—"}
+                </td>
                 <td>{t.mode}</td>
               </tr>
             ))}
             {!closed.length && (
               <tr>
-                <td colSpan={13} className="text-muted">
+                <td colSpan={15} className="text-muted">
                   Nothing closed yet
                 </td>
               </tr>
