@@ -1,0 +1,157 @@
+import { describe, expect, it } from "vitest";
+import {
+  bracketOrder,
+  changeSettings,
+  checkStopChange,
+  closeOut,
+  DEFAULT_SETTINGS,
+  effectiveSettings,
+  exitByDate,
+  parseIdea,
+  preTradeChecks,
+  shadowShares,
+  sizeUpEligible,
+  streakLockUntil,
+  summarize,
+  weekStart,
+  type IdeaInput,
+  type Trade,
+} from "@/lib/stocks/rules";
+
+// 2026-11-18 is a Wednesday (EST, UTC−5).
+const at = (date: string, hh: number, mm = 0) => Date.parse(`${date}T${String(hh + 5).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00Z`);
+const NOW = at("2026-11-18", 11);
+const idea: IdeaInput = {
+  ticker: "AAPL",
+  direction: "long",
+  entryType: "market",
+  stop: 190,
+  target: 220,
+  thesis: "Breakout above the base on volume.",
+  invalidation: "Close back inside the base.",
+  days: 10,
+  source: "trend scout",
+};
+const quote = { symbol: "AAPL", last: 200, bid: 199.9, ask: 200.1, shortable: true, hardToBorrow: false };
+const trade = (o: Partial<Trade>): Trade => ({
+  ...idea,
+  id: Math.random().toString(36),
+  mode: "dry",
+  status: "open",
+  shares: 1,
+  submittedAt: NOW,
+  priceAtSubmit: 200,
+  initialStop: 190,
+  riskPerShare: 10,
+  accountValue: 100_000,
+  shadowRiskPct: 0.5,
+  shadowShares: 50,
+  exitBy: "2026-11-30",
+  entryPrice: 200,
+  stopHistory: [{ at: NOW, stop: 190 }],
+  targetHistory: [],
+  notes: [],
+  ...o,
+});
+const ctx = (o: Partial<Parameters<typeof preTradeChecks>[0]> = {}) => ({
+  idea,
+  quote,
+  trades: [] as Trade[],
+  settings: DEFAULT_SETTINGS,
+  killSwitch: false,
+  accountValue: 100_000,
+  now: NOW,
+  ...o,
+});
+const failed = (c: ReturnType<typeof preTradeChecks>) => c.filter((x) => !x.ok).map((x) => x.name);
+
+describe("stock idea form", () => {
+  it("requires every field and refuses a size", () => {
+    expect(parseIdea({ ...idea }).errors).toEqual([]);
+    const r = parseIdea({ ticker: "", direction: "up", thesis: "", source: "x", shares: 100 });
+    expect(r.idea).toBeNull();
+    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Invalidation[^]*Time frame[^]*Source[^]*Size/);
+    expect(parseIdea({ ...idea, entryType: "limit" }).errors).toContain("Limit price is required for a limit entry");
+    expect(parseIdea({ ...idea, target: "" }).idea?.target).toBeNull();
+  });
+});
+
+describe("pre-trade checks", () => {
+  it("passes a good long idea", () => {
+    expect(failed(preTradeChecks(ctx()))).toEqual([]);
+  });
+  it("checks the stop side and the 1–25% risk", () => {
+    expect(failed(preTradeChecks(ctx({ idea: { ...idea, stop: 205 } })))).toContain("Stop side");
+    expect(failed(preTradeChecks(ctx({ idea: { ...idea, stop: 199 } })))).toContain("Risk to stop"); // 0.5%
+    expect(failed(preTradeChecks(ctx({ idea: { ...idea, stop: 140 } })))).toContain("Risk to stop"); // 30%
+    const short = { ...idea, direction: "short" as const, stop: 210, target: 180 };
+    expect(failed(preTradeChecks(ctx({ idea: short })))).toEqual([]);
+    expect(failed(preTradeChecks(ctx({ idea: short, quote: { ...quote, hardToBorrow: true } })))).toContain("Shortable");
+    expect(failed(preTradeChecks(ctx({ idea: short, quote: { ...quote, shortable: null } })))).toContain("Shortable");
+  });
+  it("enforces the time window, kill switch and holidays", () => {
+    expect(failed(preTradeChecks(ctx({ now: at("2026-11-18", 9, 40) })))).toContain("Time window");
+    expect(failed(preTradeChecks(ctx({ now: at("2026-11-18", 15, 46) })))).toContain("Time window");
+    expect(failed(preTradeChecks(ctx({ now: at("2026-11-26", 11) })))).toContain("Time window"); // Thanksgiving
+    expect(failed(preTradeChecks(ctx({ killSwitch: true })))).toContain("Kill switch");
+  });
+  it("enforces max open, weekly count and one position per ticker (dry and live counted separately)", () => {
+    const six = Array.from({ length: 6 }, (_, i) => trade({ ticker: `T${i}`, submittedAt: at("2026-11-10", 11) }));
+    expect(failed(preTradeChecks(ctx({ trades: six })))).toContain("Max open ideas");
+    const three = Array.from({ length: 3 }, (_, i) => trade({ ticker: `W${i}`, status: "closed", pl: 1 }));
+    expect(failed(preTradeChecks(ctx({ trades: three })))).toContain("Ideas this week");
+    expect(failed(preTradeChecks(ctx({ trades: three.map((t) => ({ ...t, mode: "live" as const })) })))).toEqual([]);
+    expect(failed(preTradeChecks(ctx({ trades: [trade({ submittedAt: at("2026-11-10", 11) })] })))).toContain("One position per ticker");
+  });
+  it("locks out after a 2% shadow loss this week, and for 2 trading days after 3 losses in a row", () => {
+    const loss = (d: string, shadowPl: number) => trade({ ticker: `L${d}${shadowPl}`, status: "closed", pl: -5, shadowPl, exitTime: at(d, 12), submittedAt: at("2026-11-09", 11) });
+    expect(failed(preTradeChecks(ctx({ trades: [loss("2026-11-16", -2_100)] })))).toContain("Weekly loss lockout");
+    expect(failed(preTradeChecks(ctx({ trades: [loss("2026-11-13", -2_100)] })))).not.toContain("Weekly loss lockout"); // last week
+    const streak = [loss("2026-11-16", -10), loss("2026-11-16", -11), loss("2026-11-17", -12)];
+    expect(streakLockUntil(streak, "dry")).toBe("2026-11-20");
+    expect(failed(preTradeChecks(ctx({ trades: streak })))).toContain("Losing-streak lockout");
+    expect(failed(preTradeChecks(ctx({ trades: streak, now: at("2026-11-20", 11) })))).not.toContain("Losing-streak lockout");
+  });
+});
+
+describe("stops, results and settings", () => {
+  it("only tightens stops", () => {
+    const t = trade({});
+    expect(checkStopChange(t, 185, 200)).toMatch(/tightened/);
+    expect(checkStopChange(t, 195, 200)).toBeNull();
+    expect(checkStopChange(t, 201, 200)).toMatch(/below/);
+    expect(checkStopChange({ ...t, direction: "short", initialStop: 210, stopHistory: [{ at: 0, stop: 210 }] }, 215, 200)).toMatch(/tightened/);
+  });
+  it("computes P/L, R and shadow P/L", () => {
+    const c = closeOut(trade({}), 215, NOW, "target");
+    expect(c).toMatchObject({ pl: 15, plPct: 7.5, r: 1.5, shadowPl: 750, exitReason: "target" });
+    expect(shadowShares(100_000, 0.5, 10)).toBe(50);
+    const s = summarize([c, closeOut(trade({ source: "news" }), 190, NOW, "stop")], "dry");
+    expect(s).toMatchObject({ trades: 2, wins: 1, totalR: 0.5 });
+    expect(s.bySource.map((b) => b.key).sort()).toEqual(["news", "trend scout"]);
+    expect(sizeUpEligible({ ...s, trades: 40, avgR: 0.2 }, 0)).toBe(true);
+    expect(sizeUpEligible({ ...s, trades: 39, avgR: 0.2 }, 0)).toBe(false);
+  });
+  it("delays loosening 24 hours and applies tightening at once", () => {
+    const r = changeSettings(null, { maxOpen: 8, maxPerWeek: 2, shares: 5 }, NOW);
+    expect(r.delayed).toEqual(["maxOpen 6 → 8", "shares 1 → 5"]);
+    expect(effectiveSettings(r.next, NOW)).toMatchObject({ maxOpen: 6, maxPerWeek: 2, shares: 1 });
+    expect(effectiveSettings(r.next, NOW + 24 * 3600_000)).toMatchObject({ maxOpen: 8, shares: 5 });
+    expect(changeSettings(null, { maxOpen: 500 }).errors.length).toBe(1);
+  });
+  it("builds a bracket: entry triggers OCO stop + target", () => {
+    const o = bracketOrder(idea, 1) as { orderStrategyType: string; orderLegCollection: { instruction: string }[]; childOrderStrategies: { orderStrategyType: string; childOrderStrategies: { orderType: string }[] }[] };
+    expect(o.orderStrategyType).toBe("TRIGGER");
+    expect(o.orderLegCollection[0].instruction).toBe("BUY");
+    expect(o.childOrderStrategies[0].orderStrategyType).toBe("OCO");
+    expect(o.childOrderStrategies[0].childOrderStrategies.map((c) => c.orderType).sort()).toEqual(["LIMIT", "STOP"]);
+    const s = bracketOrder({ ...idea, direction: "short", stop: 210, target: null }, 1) as { orderLegCollection: { instruction: string }[]; childOrderStrategies: { orderType: string; orderLegCollection: { instruction: string }[] }[] };
+    expect(s.orderLegCollection[0].instruction).toBe("SELL_SHORT");
+    expect(s.childOrderStrategies[0]).toMatchObject({ orderType: "STOP" });
+    expect(s.childOrderStrategies[0].orderLegCollection[0].instruction).toBe("BUY_TO_COVER");
+  });
+  it("dates", () => {
+    expect(weekStart("2026-11-22")).toBe("2026-11-16");
+    expect(exitByDate("2026-11-18", 10)).toBe("2026-11-30"); // the 28th is a Saturday
+  });
+});

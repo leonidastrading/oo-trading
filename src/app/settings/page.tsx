@@ -6,6 +6,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { ChangePassword } from "@/components/ChangePassword";
 import { Banner } from "@/components/StatusBar";
 import { OptionsOnlySetting } from "@/components/OptionsOnlySetting";
+import { StockSettings } from "@/components/StockSettings";
 import { StrategyNames } from "@/components/StrategyNames";
 import { UploadTrades } from "@/components/UploadTrades";
 import type { TokenStatus } from "@/lib/schwab/tokens";
@@ -129,7 +130,15 @@ function SettingsInner() {
             Save EOD snapshot now
           </button>
         </div>
-        <p className="text-xs text-muted">Read-only: this dashboard only reads accounts, positions, balances, quotes and transactions. It cannot place orders.</p>
+        <p className="text-xs text-muted">
+          The dashboard pages only read accounts, positions, balances, quotes and transactions. The only code that can place an order is the
+          Stock Trades tab (equity orders, server-side guardrails, dry run by default).
+        </p>
+      </section>
+
+      <section className="card space-y-3 p-4">
+        <h2 className="text-lg font-bold text-accent">Stock Trades guardrails</h2>
+        <StockSettings />
       </section>
 
       <section className="card space-y-3 p-4">

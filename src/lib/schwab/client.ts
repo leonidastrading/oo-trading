@@ -44,7 +44,7 @@ async function bumpBackoff(retryAfterSec?: number) {
 }
 
 /** Global (all instances, all tabs) limiter: fixed one-minute windows in KV. */
-async function takeRateToken() {
+export async function takeRateToken() {
   const minute = Math.floor(Date.now() / 60_000);
   const n = await kv().incr(KEYS.rateWindow(minute), 70);
   if (n > RATE_LIMIT_PER_MIN) {

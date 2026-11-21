@@ -194,4 +194,12 @@ export const KEYS = {
   exportSnapshots: "export:quote-snapshots",
   /** Advisor export: when each entry (by export id) was first seen, per entry date. */
   exportSeen: (date: string) => `export:seen:${date}`,
+  /** Stock Trades tab: trades (id → Trade), settings, kill switch, order/block log, alerts, trading account. */
+  stockTrades: "stocks:trades",
+  stockSettings: "stocks:settings",
+  stockKill: "stocks:kill",
+  stockLog: "stocks:log",
+  stockAlerts: "stocks:alerts",
+  stockAccount: "stocks:account",
+  stockLock: "stocks:lock",
 } as const;

@@ -1,5 +1,6 @@
-// READ-ONLY guard: the only Schwab API paths this app is allowed to call.
-// There is intentionally no order-placement code anywhere in this project.
+// READ-ONLY guard: the only Schwab API paths the dashboard's data client may call.
+// Order placement lives only in ./trading.ts (Stock Trades tab), behind its own path allowlist, the
+// server-side guardrails and the STOCK_LIVE_TRADING switch; nothing else in the app can send an order.
 
 export const SCHWAB_API = "https://api.schwabapi.com";
 
@@ -10,6 +11,7 @@ const ALLOWED_GET_PATHS: RegExp[] = [
   /^\/marketdata\/v1\/quotes$/,
   /^\/marketdata\/v1\/pricehistory$/, // intraday bars for the SPX chart
   /^\/marketdata\/v1\/chains$/, // option chain quotes for the 0DTE premium gauge
+  /^\/trader\/v1\/userPreference$/, // account nicknames (shown on the Stock Trades tab)
 ];
 
 export function isAllowedSchwabPath(method: string, path: string): boolean {
