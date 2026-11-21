@@ -68,7 +68,7 @@ export interface StockSettings {
   shadowRiskPct: number;
 }
 
-export const DEFAULT_SETTINGS: StockSettings = { dryRun: true, shares: 1, maxOpen: 6, maxPerWeek: 3, weeklyLossPct: 2, shadowRiskPct: 0.5 };
+export const DEFAULT_SETTINGS: StockSettings = { dryRun: true, shares: 1, maxOpen: 20, maxPerWeek: 20, weeklyLossPct: 2, shadowRiskPct: 0.5 };
 
 /** Limits where a higher number is looser: raising them waits 24 hours; lowering them applies at once. */
 export const LOOSEN_UP: (keyof StockSettings)[] = ["shares", "maxOpen", "maxPerWeek", "weeklyLossPct"];
@@ -93,8 +93,8 @@ export function settle(s: StoredSettings | null, now = Date.now()): StoredSettin
 const LIMITS: Record<keyof StockSettings, [number, number] | null> = {
   dryRun: null,
   shares: [1, 1000],
-  maxOpen: [0, 50],
-  maxPerWeek: [0, 50],
+  maxOpen: [0, 100],
+  maxPerWeek: [0, 100],
   weeklyLossPct: [0.1, 50],
   shadowRiskPct: [0.05, 5],
 };

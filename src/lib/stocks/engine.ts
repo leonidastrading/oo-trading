@@ -4,6 +4,7 @@
 import "server-only";
 import { KEYS, kv } from "../kv";
 import { schwabGet, SchwabApiError, type AccountNumber } from "../schwab/client";
+import { mockEnabled } from "../schwab/mock";
 import { liveTradingEnabled, schwabOrder } from "../schwab/trading";
 import { etParts } from "../time";
 import {
@@ -48,6 +49,9 @@ export interface TradingAccount {
 }
 
 const store = () => kv();
+/** Now, or (local mock preview only, never on Vercel) STOCKS_FAKE_NOW plus the time since start. */
+const startedAt = Date.now();
+const clock = () => (mockEnabled() && process.env.STOCKS_FAKE_NOW ? Date.parse(process.env.STOCKS_FAKE_NOW) + (Date.now() - startedAt) : Date.now());
 const rid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 // ---- Storage ----
@@ -185,7 +189,7 @@ export async function submitIdea(raw: Record<string, unknown>): Promise<SubmitRe
       await log({ kind: "block", mode, ticker: String(raw.ticker ?? "").toUpperCase() || undefined, text: `Form incomplete: ${errors.join("; ")}` });
       return { ok: false, errors, checks: [], mode };
     }
-    const now = Date.now();
+    const now = clock();
     const [acct, quotes, trades, kill] = await Promise.all([tradingAccount(), stockQuotes([idea.ticker]).catch(() => ({}) as Record<string, StockQuote>), loadTrades(), killSwitchOn()]);
     const acctValue = await accountValue(acct).catch(() => null);
     const quote = quotes[idea.ticker] ?? null;
@@ -440,7 +444,7 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
     const trades = (await loadTrades()).filter((t) => ["pending", "open", "closing"].includes(t.status));
     const changes: string[] = [];
     if (!trades.length) return { checked: 0, changes };
-    const now = Date.now();
+    const now = clock();
     const quotes = await stockQuotes(trades.map((t) => t.ticker)).catch(() => ({}) as Record<string, StockQuote>);
     const today = etParts(now).date;
 

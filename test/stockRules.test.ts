@@ -96,9 +96,9 @@ describe("pre-trade checks", () => {
     expect(failed(preTradeChecks(ctx({ killSwitch: true })))).toContain("Kill switch");
   });
   it("enforces max open, weekly count and one position per ticker (dry and live counted separately)", () => {
-    const six = Array.from({ length: 6 }, (_, i) => trade({ ticker: `T${i}`, submittedAt: at("2026-11-10", 11) }));
+    const six = Array.from({ length: 20 }, (_, i) => trade({ ticker: `T${i}`, submittedAt: at("2026-11-10", 11) }));
     expect(failed(preTradeChecks(ctx({ trades: six })))).toContain("Max open ideas");
-    const three = Array.from({ length: 3 }, (_, i) => trade({ ticker: `W${i}`, status: "closed", pl: 1 }));
+    const three = Array.from({ length: 20 }, (_, i) => trade({ ticker: `W${i}`, status: "closed", pl: 1 }));
     expect(failed(preTradeChecks(ctx({ trades: three })))).toContain("Ideas this week");
     expect(failed(preTradeChecks(ctx({ trades: three.map((t) => ({ ...t, mode: "live" as const })) })))).toEqual([]);
     expect(failed(preTradeChecks(ctx({ trades: [trade({ submittedAt: at("2026-11-10", 11) })] })))).toContain("One position per ticker");
@@ -133,10 +133,10 @@ describe("stops, results and settings", () => {
     expect(sizeUpEligible({ ...s, trades: 39, avgR: 0.2 }, 0)).toBe(false);
   });
   it("delays loosening 24 hours and applies tightening at once", () => {
-    const r = changeSettings(null, { maxOpen: 8, maxPerWeek: 2, shares: 5 }, NOW);
-    expect(r.delayed).toEqual(["maxOpen 6 → 8", "shares 1 → 5"]);
-    expect(effectiveSettings(r.next, NOW)).toMatchObject({ maxOpen: 6, maxPerWeek: 2, shares: 1 });
-    expect(effectiveSettings(r.next, NOW + 24 * 3600_000)).toMatchObject({ maxOpen: 8, shares: 5 });
+    const r = changeSettings(null, { maxOpen: 25, maxPerWeek: 2, shares: 5 }, NOW);
+    expect(r.delayed).toEqual(["maxOpen 20 → 25", "shares 1 → 5"]);
+    expect(effectiveSettings(r.next, NOW)).toMatchObject({ maxOpen: 20, maxPerWeek: 2, shares: 1 });
+    expect(effectiveSettings(r.next, NOW + 24 * 3600_000)).toMatchObject({ maxOpen: 25, shares: 5 });
     expect(changeSettings(null, { maxOpen: 500 }).errors.length).toBe(1);
   });
   it("builds a bracket: entry triggers OCO stop + target", () => {

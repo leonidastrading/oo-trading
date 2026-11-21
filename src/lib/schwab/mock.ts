@@ -14,7 +14,29 @@ export function mockResponse(path: string): unknown {
   if (path.endsWith("/accountNumbers")) return [{ accountNumber: "12349061", hashValue: "MOCKHASH" }];
 
   if (path.startsWith("/marketdata/v1/quotes")) {
-    return { $SPX: { quote: { lastPrice: spot, netChange: spot - 7731.2, netPercentChange: ((spot - 7731.2) / 7731.2) * 100, closePrice: 7731.2 } } };
+    const stock = (lastPrice: number, isShortable: boolean, isHardToBorrow: boolean, description: string) => ({
+      quote: { lastPrice, bidPrice: lastPrice - 0.02, askPrice: lastPrice + 0.02 },
+      reference: { description, isShortable, isHardToBorrow },
+    });
+    return {
+      $SPX: { quote: { lastPrice: spot, netChange: spot - 7731.2, netPercentChange: ((spot - 7731.2) / 7731.2) * 100, closePrice: 7731.2 } },
+      // Stock Trades fixtures.
+      AAPL: stock(200, true, false, "Apple Inc"),
+      NVDA: stock(150, true, false, "NVIDIA Corp"),
+      GME: stock(25, true, true, "GameStop Corp"),
+      TSLA: stock(300, true, false, "Tesla Inc"),
+    };
+  }
+  if (path === "/trader/v1/userPreference") return { accounts: [{ accountNumber: "12349061", nickName: "Individual", type: "MARGIN" }] };
+  if (path === "/marketdata/v1/pricehistory") {
+    const day = 86_400_000;
+    const t0 = Date.parse(today + "T05:00:00Z") - 120 * day;
+    return {
+      candles: Array.from({ length: 120 }, (_, i) => {
+        const c = 180 + 20 * Math.sin(i / 9) + i * 0.15;
+        return { datetime: t0 + i * day, open: c - 1, high: c + 2, low: c - 2.5, close: c + 0.5 };
+      }),
+    };
   }
 
   if (path.endsWith("/transactions")) {

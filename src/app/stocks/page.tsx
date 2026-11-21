@@ -3,6 +3,8 @@
 import { useState } from "react";
 import type { StocksData } from "@/app/api/stocks/route";
 import { money, plClass } from "@/components/format";
+import { StockPnlChart } from "@/components/StockPnlChart";
+import { StockTradeChart } from "@/components/StockTradeChart";
 import { usePoll } from "@/components/usePoll";
 import type { Check, Trade } from "@/lib/stocks/rules";
 import { SOURCES } from "@/lib/stocks/rules";
@@ -173,6 +175,7 @@ function OpenTrade({ t, last, onDone }: { t: Trade; last: number | null; onDone:
         {t.shadowShares} sh
       </div>
       <div className="mt-1 text-xs text-muted">{t.thesis}</div>
+      <StockTradeChart trade={t} />
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <input className={`${inputCls} w-24`} inputMode="decimal" placeholder="new stop" value={stop} onChange={(e) => setStop(e.target.value)} />
         <button className="rounded-lg border border-border px-2 py-1 text-xs" onClick={() => void act("stop", Number(stop))} disabled={!stop}>
@@ -200,11 +203,13 @@ export default function StocksPage() {
   const { data, error, refresh } = usePoll<StocksData>("/api/stocks");
   const [busy, setBusy] = useState(false);
   const [flatMsg, setFlatMsg] = useState<string | null>(null);
+  const [shownChart, setShownChart] = useState<string | null>(null);
   if (!data) return <div className="text-sm text-muted">{error ?? "Loading…"}</div>;
   const dry = data.mode === "dry";
   const open = data.trades.filter((t) => ["pending", "open", "closing"].includes(t.status) && t.mode === data.mode);
   const closed = data.trades.filter((t) => t.status === "closed" || t.status === "cancelled");
   const s = data.summary;
+  const chartTrade = closed.find((t) => t.id === shownChart) ?? null;
   const kill = async (on: boolean) => {
     setBusy(true);
     await post("/api/stocks/kill", { on });
@@ -277,6 +282,7 @@ export default function StocksPage() {
           <Stat label="Shadow P/L" value={money(s.shadowPl, { sign: true })} tone={plClass(s.shadowPl)} />
           <Stat label="P/L (actual)" value={money(s.pl, { sign: true, cents: true })} tone={plClass(s.pl)} />
         </div>
+        <StockPnlChart trades={data.trades.filter((t) => t.mode === data.mode)} />
         <div className="grid gap-3 md:grid-cols-2">
           {[
             ["By source", s.bySource],
@@ -363,7 +369,12 @@ export default function StocksPage() {
           </thead>
           <tbody>
             {closed.map((t) => (
-              <tr key={t.id} title={`${t.thesis}\nWrong if: ${t.invalidation}`}>
+              <tr
+                key={t.id}
+                title={`${t.thesis}\nWrong if: ${t.invalidation}`}
+                onClick={() => setShownChart(shownChart === t.id ? null : t.id)}
+                className={`cursor-pointer ${shownChart === t.id ? "bg-surface-2" : ""}`}
+              >
                 <td>{t.exitTime ? formatDateTimeET(t.exitTime) : "—"}</td>
                 <td className="font-semibold">{t.ticker}</td>
                 <td>{t.direction}</td>
@@ -388,6 +399,15 @@ export default function StocksPage() {
             )}
           </tbody>
         </table>
+        {chartTrade && (
+          <div>
+            <div className="text-sm font-semibold">
+              {chartTrade.ticker} {chartTrade.direction} · {chartTrade.exitReason} · {chartTrade.r ?? "—"}R
+            </div>
+            <StockTradeChart trade={chartTrade} />
+          </div>
+        )}
+        {closed.length > 0 && <p className="text-xs text-muted">Tap a row for its chart.</p>}
       </section>
 
       <section className="card space-y-2 p-4">
