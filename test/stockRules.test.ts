@@ -6,6 +6,9 @@ import {
   closeOut,
   DEFAULT_SETTINGS,
   effectiveSettings,
+  checkAdd,
+  overduePostMortems,
+  starterShares,
   excessReturn,
   exitByDate,
   parseIdea,
@@ -33,6 +36,12 @@ const idea: IdeaInput = {
   invalidation: "Close back inside the base.",
   days: 10,
   source: "trend scout",
+  stage: 1,
+  marketBelieves: "Growth is slowing into next year.",
+  iBelieve: "Growth re-accelerates on the new product cycle.",
+  becauseData: "Channel checks and the last two guidance raises.",
+  catalyst: "Q1 earnings call",
+  catalystDate: "late January",
 };
 const quote = { symbol: "AAPL", last: 200, bid: 199.9, ask: 200.1, shortable: true, hardToBorrow: false };
 const trade = (o: Partial<Trade>): Trade => ({
@@ -72,9 +81,15 @@ describe("stock idea form", () => {
     expect(parseIdea({ ...idea }).errors).toEqual([]);
     const r = parseIdea({ ticker: "", direction: "up", thesis: "", source: "x", shares: 100 });
     expect(r.idea).toBeNull();
-    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Time frame[^]*Source[^]*Size/);
+    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Time frame[^]*Source[^]*Size[^]*What proves it wrong[^]*Stage[^]*Market believes[^]*I believe[^]*Because of this data[^]*Catalyst is required[^]*Catalyst date/);
     expect(parseIdea({ ...idea, entryType: "limit" }).errors).toContain("Limit price is required for a limit entry");
     expect(parseIdea({ ...idea, target: "" }).idea?.target).toBeNull();
+    // Stage 3 long needs the late-stage tick; a short at stage 3 doesn't.
+    expect(parseIdea({ ...idea, stage: 3 }).errors.join(" ")).toMatch(/Late stage/);
+    expect(parseIdea({ ...idea, stage: 3, lateStageAck: true }).errors).toEqual([]);
+    expect(parseIdea({ ...idea, stage: 3, direction: "short" }).errors).toEqual([]);
+    expect(parseIdea({ ...idea, planAdd: true }).errors.join(" ")).toMatch(/Add trigger/);
+    expect(parseIdea({ ...idea, planAdd: true, addTrigger: "Guidance raise at next earnings", crowding: "high" }).idea).toMatchObject({ planAdd: true, crowding: { level: "high", source: "manual" } });
   });
 });
 
@@ -190,6 +205,39 @@ describe("stops, results and settings", () => {
     expect(sum.bySource.find((b) => b.key === "news")).toMatchObject({ avgExcess: -3, avgExcessR: -0.6 });
     expect(parseIdea({ ...idea, benchmark: "smh" }).idea?.benchmark).toBe("SMH");
     expect(parseIdea({ ...idea, benchmark: "" }).idea?.benchmark).toBeNull();
+  });
+  it("planned add: 1/3 starter, R on total planned risk, adds only in profit with a stop inside the risk budget", () => {
+    expect(starterShares(300, true)).toBe(100);
+    expect(starterShares(300, false)).toBe(300);
+    // $100k, entry 200, stop 190: full 1% risk = 100 sh (capped by 15% → 75 sh). Starter 25, planned risk 75 × 10 = 750.
+    const t = trade({ planAdd: true, addTrigger: "guidance raise", shadowShares: 25, fullShadowShares: 75, plannedRisk: 750, shadowRiskPct: 1 });
+    const s15 = { ...DEFAULT_SETTINGS };
+    const base = { trade: t, note: "Raised guidance 10%", settings: s15, trades: [t], killSwitch: false, now: NOW };
+    const notInProfit = checkAdd({ ...base, last: 199, newStop: 195 });
+    expect(notInProfit.checks.find((c) => c.name === "In profit")?.ok).toBe(false);
+    // At 210: add 2/3 = 50 sh but the 15% cap leaves (15,000 − 25×200) ÷ 210 = 47 sh. Budget $1,000:
+    // stop ≥ (25×200 + 47×210 − 1000) ÷ 72 = 192.64.
+    const tooLoose = checkAdd({ ...base, last: 210, newStop: 191 });
+    expect(tooLoose.addShadowShares).toBe(47);
+    expect(tooLoose.requiredStop).toBe(192.64);
+    expect(tooLoose.ok).toBe(false);
+    expect(checkAdd({ ...base, last: 210, newStop: 193 }).ok).toBe(true);
+    expect(checkAdd({ ...base, last: 210, newStop: 193, trade: { ...t, add: { status: "filled" } as Trade["add"] } }).ok).toBe(false); // one add only
+    // P/L on both legs; R on the planned 750: starter 25 × (220 − 200) + add 47 × (220 − 210) = 970 → 1.29R.
+    const both = closeOut({ ...t, add: { status: "filled", price: 210, shadowShares: 47, liveShares: 1, note: "", requestedAt: 0, priceAtSubmit: 210, stopAtAdd: 193 } }, 220, NOW, "target");
+    expect(both).toMatchObject({ shadowPl: 970, r: 1.29, pl: 30 });
+  });
+  it("post-mortems: more than 2 overdue (3 trading days) blocks new entries", () => {
+    const closedOn = (d: string, pm = false) =>
+      trade({ ticker: `P${d}${pm}`, status: "closed", pl: 5, exitTime: at(d, 12), submittedAt: at("2026-11-09", 11), postMortem: pm ? { thesisRight: "yes", catalystHappened: "yes", rightReason: "yes", learned: "x", at: 0 } : null });
+    const three = [closedOn("2026-11-12"), closedOn("2026-11-13"), closedOn("2026-11-13")];
+    expect(overduePostMortems(three, "dry", NOW).length).toBe(3); // Nov 12/13 + 3 trading days ≤ Nov 18
+    expect(failed(preTradeChecks(ctx({ trades: three })))).toContain("Post-mortems");
+    expect(failed(preTradeChecks(ctx({ trades: [...three.slice(0, 2), closedOn("2026-11-13", true)] })))).not.toContain("Post-mortems");
+    expect(overduePostMortems([closedOn("2026-11-16")], "dry", NOW).length).toBe(0); // only 2 trading days ago
+    const sum = summarize([closedOn("2026-11-13", true), closedOn("2026-11-12")], "dry");
+    expect(sum.reasons).toEqual({ filled: 1, yes: 1, luck: 0, no: 0 });
+    expect(sum.byStage[0].key).toBe("1 Recognition");
   });
   it("dates", () => {
     expect(weekStart("2026-11-22")).toBe("2026-11-16");

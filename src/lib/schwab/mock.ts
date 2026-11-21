@@ -22,7 +22,7 @@ export function mockResponse(path: string): unknown {
       $SPX: { quote: { lastPrice: spot, netChange: spot - 7731.2, netPercentChange: ((spot - 7731.2) / 7731.2) * 100, closePrice: 7731.2 } },
       // Stock Trades fixtures.
       AAPL: stock(200, true, false, "Apple Inc"),
-      NVDA: stock(150, true, false, "NVIDIA Corp"),
+      NVDA: stock(Math.round((150 + ((Date.now() / 1000) % 600) / 30) * 100) / 100, true, false, "NVIDIA Corp"), // drifts up 0–20 over 10 min
       GME: stock(25, true, true, "GameStop Corp"),
       TSLA: stock(300, true, false, "Tesla Inc"),
       SPY: stock(600 + Math.sin(Date.now() / 30_000) * 3, true, false, "SPDR S&P 500 ETF"),

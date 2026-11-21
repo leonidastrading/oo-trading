@@ -16,12 +16,72 @@ export interface IdeaInput {
   stop: number;
   target?: number | null;
   thesis: string;
-  /** No longer asked for (the stop is the invalidation); kept for older ideas. */
+  /** What proves it wrong: the thesis kill criteria (separate from the stop). */
   invalidation?: string;
   days: number;
   source: Source;
   /** Optional sector ETF to score against, in addition to SPY (e.g. XBI, SMH, XLE). */
   benchmark?: string | null;
+  /** Stage of the story at entry (0 Stealth … 4 Unwind). */
+  stage?: Stage;
+  /** Stage 3 long: ticked "I understand" on the late-stage warning. */
+  lateStageAck?: boolean;
+  /** Variant perception. */
+  marketBelieves?: string;
+  iBelieve?: string;
+  becauseData?: string;
+  /** What forces the market to see it, and when (date or window). */
+  catalyst?: string;
+  catalystDate?: string;
+  /** Optional: what the price implies, e.g. "priced for 10% growth". */
+  priceImplies?: string | null;
+  /** Optional: crowding at entry (manual low / normal / high; Stocktwits figures when available). */
+  crowding?: Crowding | null;
+  /** One planned add: the starter is 1/3 of full shadow size, the add the other 2/3. */
+  planAdd?: boolean;
+  addTrigger?: string | null;
+}
+
+export const STAGES = [
+  { value: 0, label: "0 Stealth", hint: "fundamentals turning, few notice" },
+  { value: 1, label: "1 Recognition", hint: "first hard-number surprise or guidance raise" },
+  { value: 2, label: "2 Institutional", hint: "revisions cascading, funds buying" },
+  { value: 3, label: "3 Mania", hint: "social and media hype, price outrunning fundamentals" },
+  { value: 4, label: "4 Unwind", hint: "crowd exhausted, story cracking" },
+] as const;
+export type Stage = 0 | 1 | 2 | 3 | 4;
+export const CROWDING_LEVELS = ["low", "normal", "high"] as const;
+export interface Crowding {
+  level: (typeof CROWDING_LEVELS)[number];
+  source: "manual" | "stocktwits";
+  /** Stocktwits: message volume vs its 90-day average (× and σ) and sentiment, when available. */
+  volumeMultiple?: number | null;
+  volumeSigma?: number | null;
+  sentiment?: string | null;
+}
+
+/** The planned add, once triggered. */
+export interface AddLeg {
+  status: "pending" | "filled" | "cancelled";
+  note: string;
+  requestedAt: number;
+  priceAtSubmit: number;
+  liveShares: number;
+  shadowShares: number;
+  stopAtAdd: number;
+  orderId?: string | null;
+  stopOrderId?: string | null;
+  targetOrderId?: string | null;
+  price?: number | null;
+  time?: number | null;
+}
+
+export interface PostMortem {
+  thesisRight: "yes" | "no" | "partly";
+  catalystHappened: "yes" | "no" | "not yet";
+  rightReason: "yes" | "no" | "luck";
+  learned: string;
+  at: number;
 }
 
 export interface Trade extends IdeaInput {
@@ -75,6 +135,12 @@ export interface Trade extends IdeaInput {
   stopHistory: { at: number; stop: number }[];
   targetHistory: { at: number; target: number | null }[];
   notes: string[];
+  /** Full risk-based shadow size; with a planned add the starter holds 1/3 of it (shadowShares) and the add 2/3. */
+  fullShadowShares?: number;
+  /** Total planned $ risk (full shadow size × initial stop distance): the R denominator. */
+  plannedRisk?: number | null;
+  add?: AddLeg | null;
+  postMortem?: PostMortem | null;
 }
 
 export interface StockSettings {
@@ -265,6 +331,33 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
   if (benchRaw && !/^[A-Z][A-Z0-9.\-/]{0,9}$/.test(benchRaw)) errors.push("Benchmark ETF must be a ticker (e.g. XBI) or left empty");
   if (!source) errors.push("Source is required");
   if ("shares" in raw || "quantity" in raw || "size" in raw) errors.push("Size can't be set here (fixed in Settings)");
+  const txt = (k: string, label: string, min: number, max: number, required = true) => {
+    const v = String(raw[k] ?? "").trim();
+    if (required && v.length < min) errors.push(`${label} is required`);
+    if (v.length > max) errors.push(`${label} is too long`);
+    return v;
+  };
+  if (invalidation.length < 5) errors.push("What proves it wrong is required (the thesis kill criteria, separate from the stop)");
+  const stageNum = num(raw.stage);
+  const stage = [0, 1, 2, 3, 4].includes(stageNum) ? (stageNum as Stage) : null;
+  if (stage === null) errors.push("Stage is required (0–4)");
+  const lateStageAck = raw.lateStageAck === true;
+  if (stage === 3 && direction === "long" && !lateStageAck) errors.push('Late stage: crowd is in — tick "I understand" to go long at stage 3');
+  const marketBelieves = txt("marketBelieves", '"Market believes…"', 5, 300);
+  const iBelieve = txt("iBelieve", '"I believe…"', 5, 300);
+  const becauseData = txt("becauseData", '"Because of this data…"', 5, 300);
+  const catalyst = txt("catalyst", "Catalyst", 5, 300);
+  const catalystDate = txt("catalystDate", "Catalyst date or window", 3, 80);
+  const priceImplies = txt("priceImplies", "What the price implies", 0, 300, false);
+  let crowding: Crowding | null = null;
+  const cr = raw.crowding as Record<string, unknown> | string | null | undefined;
+  const level = typeof cr === "string" ? cr : (cr as Record<string, unknown> | null)?.level;
+  if (level !== undefined && level !== null && level !== "") {
+    if (!CROWDING_LEVELS.includes(level as Crowding["level"])) errors.push("Crowding must be low, normal or high");
+    else crowding = { level: level as Crowding["level"], source: "manual" };
+  }
+  const planAdd = raw.planAdd === true;
+  const addTrigger = planAdd ? txt("addTrigger", "Add trigger", 5, 200) : null;
   if (errors.length) return { idea: null, errors };
   return {
     idea: {
@@ -279,6 +372,17 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
       days,
       source: source!,
       benchmark: benchRaw || null,
+      stage: stage!,
+      lateStageAck,
+      marketBelieves,
+      iBelieve,
+      becauseData,
+      catalyst,
+      catalystDate,
+      priceImplies: priceImplies || null,
+      crowding,
+      planAdd,
+      addTrigger,
     },
     errors: [],
   };
@@ -401,11 +505,19 @@ export function preTradeChecks(c: CheckContext): Check[] {
     const ref = idea.entryType === "limit" && idea.limitPrice ? idea.limitPrice : last;
     const size = shadowSize(c.accountValue, settings, ref, idea.stop);
     const ex = shadowExposure(c.trades, mode);
-    const add$ = size.position;
+    // With a planned add only the 1/3 starter goes on now; the add is checked when it's triggered.
+    const starter = starterShares(size.shares, idea.planAdd);
+    const add$ = Math.round(starter * ref * 100) / 100;
     const gross = ex.gross + add$;
     const net = ex.net + (idea.direction === "long" ? add$ : -add$);
     const pctOf = (v: number) => (v / c.accountValue!) * 100;
-    add("Shadow size", size.shares > 0, size.shares > 0 ? `${size.shares} sh · ${size.positionPct}% position · ${size.riskPct}% risk${size.capped ? " (capped by max position)" : ""}` : "Size works out to 0 shares");
+    add(
+      "Shadow size",
+      starter > 0,
+      starter > 0
+        ? `${size.shares} sh full · ${size.positionPct}% position · ${size.riskPct}% risk${size.capped ? " (capped by max position)" : ""}${idea.planAdd ? ` · starter ${starter} sh now, add ${size.shares - starter} later` : ""}`
+        : "Size works out to 0 shares",
+    );
     add("Gross exposure", pctOf(gross) <= settings.maxGrossPct, `${pctOf(gross).toFixed(1)}% with this idea (max ${settings.maxGrossPct}%)`);
     add("Net exposure", Math.abs(pctOf(net)) <= settings.maxNetPct, `${pctOf(net) >= 0 ? "+" : ""}${pctOf(net).toFixed(1)}% with this idea (max ±${settings.maxNetPct}%)`);
   } else if (!c.accountValue) add("Exposure", false, "Account value unknown: can't size or check exposure");
@@ -422,6 +534,12 @@ export function preTradeChecks(c: CheckContext): Check[] {
   const lockUntil = streakLockUntil(c.trades, mode);
   const streakOk = !lockUntil || etParts(now).date >= lockUntil;
   add("Losing-streak lockout", streakOk, streakOk ? "No 3-loss lockout running" : `3 losses in a row: blocked until ${lockUntil}`);
+  const overdue = overduePostMortems(c.trades, mode, now);
+  add(
+    "Post-mortems",
+    overdue.length <= 2,
+    overdue.length <= 2 ? `${overdue.length} overdue` : `${overdue.length} closed trades have no post-mortem after 3 trading days (${overdue.map((t) => t.ticker).join(", ")}): fill them in first`,
+  );
   return out;
 }
 
@@ -474,19 +592,134 @@ export function closeOut(t: Trade, exitPrice: number, exitTime: number, reason: 
 function closeOutRaw(t: Trade, exitPrice: number, exitTime: number, reason: ExitReason): Trade {
   const entry = t.entryPrice ?? t.priceAtSubmit;
   const dir = t.direction === "long" ? 1 : -1;
+  // Legs: the starter, plus the planned add once it has filled. Both exit at the same price.
+  const legs = [{ price: entry, live: t.shares, shadow: t.shadowShares }];
+  if (t.add?.status === "filled" && t.add.price) legs.push({ price: t.add.price, live: t.add.liveShares, shadow: t.add.shadowShares });
+  const pl = legs.reduce((s, l) => s + (exitPrice - l.price) * dir * l.live, 0);
+  const cost = legs.reduce((s, l) => s + l.price * l.live, 0);
+  const shadowPl = legs.reduce((s, l) => s + (exitPrice - l.price) * dir * l.shadow, 0);
   const perShare = (exitPrice - entry) * dir;
   const risk = Math.abs(entry - t.initialStop) || t.riskPerShare;
+  // R on the total planned risk (full shadow size × initial stop distance); older trades: per share.
+  const r = t.plannedRisk && t.plannedRisk > 0 ? shadowPl / t.plannedRisk : risk > 0 ? perShare / risk : null;
   return {
     ...t,
     status: "closed",
     exitPrice: round2(exitPrice),
     exitTime,
     exitReason: reason,
-    pl: round2(perShare * t.shares),
-    plPct: Math.round((perShare / entry) * 10000) / 100,
-    r: risk > 0 ? Math.round((perShare / risk) * 100) / 100 : null,
-    shadowPl: round2(perShare * t.shadowShares),
+    pl: round2(pl),
+    plPct: cost > 0 ? Math.round((pl / cost) * 10000) / 100 : null,
+    r: r === null ? null : Math.round(r * 100) / 100,
+    shadowPl: round2(shadowPl),
   };
+}
+
+/** Starter/add split of the full shadow size: the starter is 1/3 with a planned add, else all of it. */
+export function starterShares(full: number, planAdd: boolean | undefined): number {
+  return planAdd ? Math.floor(full / 3) : full;
+}
+
+export interface AddCheck {
+  checks: Check[];
+  ok: boolean;
+  /** Shadow shares the add gets (2/3 of full, capped by the max position), and the stop the 1% budget needs. */
+  addShadowShares: number;
+  requiredStop: number | null;
+}
+
+/**
+ * The planned add: once per trade, only while the position is in profit (never averaging down), only after
+ * the stop is moved so the whole position (starter + add) risks no more than the idea's risk budget, and
+ * within the max position and the exposure caps. It doesn't count as a new idea.
+ */
+export function checkAdd(c: {
+  trade: Trade;
+  last: number | null;
+  newStop: number;
+  note: string;
+  settings: StockSettings;
+  trades: Trade[];
+  killSwitch: boolean;
+  now: number;
+}): AddCheck {
+  const { trade: t, last, newStop, settings } = c;
+  const out: Check[] = [];
+  const add = (name: string, ok: boolean, detail: string) => out.push({ name, ok, detail });
+  add("Kill switch", !c.killSwitch, c.killSwitch ? "Kill switch is on" : "Off");
+  add("Planned add", !!t.planAdd, t.planAdd ? `Trigger: ${t.addTrigger}` : "This trade had no planned add");
+  add("One add only", !t.add, t.add ? `Already added (${t.add.status})` : "Not used yet");
+  add("Position open", t.status === "open" && !!t.entryPrice, t.status === "open" ? "Starter filled" : `Trade is ${t.status}`);
+  add("Note", c.note.trim().length >= 5, c.note.trim().length >= 5 ? "Logged" : "Write one line on what happened");
+  add("Session", regularSession(c.now), regularSession(c.now) ? "Regular session (market order)" : "Adds go in at market during the regular session (9:30–16:00 ET)");
+  const e1 = t.entryPrice ?? 0;
+  const p = last ?? 0;
+  const long = t.direction === "long";
+  const inProfit = !!last && e1 > 0 && (long ? p > e1 : p < e1);
+  add("In profit", inProfit, last ? `Price ${p} vs average entry ${e1}${inProfit ? "" : ": never average down"}` : "No current price");
+
+  // Size: the add gets the remaining 2/3, capped so the whole position stays within the max position.
+  const acct = t.accountValue ?? 0;
+  const full = t.fullShadowShares ?? t.shadowShares * 3;
+  let s2 = Math.max(0, full - t.shadowShares);
+  if (p > 0 && acct > 0) s2 = Math.max(0, Math.min(s2, Math.floor(((settings.maxPositionPct / 100) * acct - t.shadowShares * e1) / p)));
+  add("Max position", s2 > 0, s2 > 0 ? `Add ${s2} shadow sh · position ${(((t.shadowShares * e1 + s2 * p) / (acct || 1)) * 100).toFixed(1)}% (max ${settings.maxPositionPct}%)` : "No room left under the max position");
+
+  // Stop: the whole position may risk at most the idea's budget.
+  const budget = (t.shadowRiskPct / 100) * acct;
+  const s1 = t.shadowShares;
+  let requiredStop: number | null = null;
+  if (s1 + s2 > 0 && p > 0 && acct > 0) {
+    const raw = long ? (s1 * e1 + s2 * p - budget) / (s1 + s2) : (s1 * e1 + s2 * p + budget) / (s1 + s2);
+    requiredStop = long ? Math.ceil(raw * 100) / 100 : Math.floor(raw * 100) / 100;
+  }
+  const cur = t.stopHistory.at(-1)?.stop ?? t.initialStop;
+  const sideOk = p > 0 && (long ? newStop < p : newStop > p);
+  const tightOk = long ? newStop >= cur : newStop <= cur;
+  const riskOk = requiredStop !== null && (long ? newStop >= requiredStop : newStop <= requiredStop);
+  const risk = long ? s1 * (e1 - newStop) + s2 * (p - newStop) : s1 * (newStop - e1) + s2 * (newStop - p);
+  add(
+    "Stop for the full position",
+    sideOk && tightOk && riskOk,
+    !sideOk
+      ? `The stop must be ${long ? "below" : "above"} the price (${p})`
+      : !tightOk
+        ? `Stops only tighten (current ${cur})`
+        : riskOk
+          ? `Risk on starter + add ${Math.round(risk).toLocaleString("en-US")} ≤ budget ${Math.round(budget).toLocaleString("en-US")}`
+          : `Move the stop to ${long ? "at least" : "at most"} ${requiredStop} so starter + add risk ≤ ${t.shadowRiskPct}% (${Math.round(budget).toLocaleString("en-US")})`,
+  );
+
+  const mode: Mode = t.mode;
+  const ex = shadowExposure(c.trades, mode);
+  const add$ = s2 * p;
+  const gross = acct ? ((ex.gross + add$) / acct) * 100 : 0;
+  const net = acct ? ((ex.net + (long ? add$ : -add$)) / acct) * 100 : 0;
+  add("Gross exposure", gross <= settings.maxGrossPct, `${gross.toFixed(1)}% with the add (max ${settings.maxGrossPct}%)`);
+  add("Net exposure", Math.abs(net) <= settings.maxNetPct, `${net >= 0 ? "+" : ""}${net.toFixed(1)}% with the add (max ±${settings.maxNetPct}%)`);
+  return { checks: out, ok: out.every((x) => x.ok), addShadowShares: s2, requiredStop };
+}
+
+/** Closed trades (this mode) still missing a post-mortem 3+ trading days after they closed. */
+export function overduePostMortems(trades: Trade[], mode: Mode, now: number): Trade[] {
+  const today = etParts(now).date;
+  return trades.filter((t) => t.mode === mode && t.status === "closed" && !t.postMortem && t.exitTime && addTradingDays(etParts(t.exitTime).date, 3) <= today);
+}
+
+export function parsePostMortem(raw: Record<string, unknown>, now = Date.now()): { pm: PostMortem | null; errors: string[] } {
+  const errors: string[] = [];
+  const pick = <T extends string>(k: string, opts: readonly T[], label: string) => {
+    const v = raw[k] as T;
+    if (!opts.includes(v)) errors.push(`${label}: choose ${opts.join(" / ")}`);
+    return v;
+  };
+  const thesisRight = pick("thesisRight", ["yes", "no", "partly"] as const, "Was the thesis right?");
+  const catalystHappened = pick("catalystHappened", ["yes", "no", "not yet"] as const, "Did the catalyst happen?");
+  const rightReason = pick("rightReason", ["yes", "no", "luck"] as const, "Did it work for the reason you gave?");
+  const learned = String(raw.learned ?? "").trim();
+  if (learned.length < 3) errors.push("One line on what you learned");
+  if (learned.length > 300) errors.push("Keep the lesson to one line");
+  return errors.length ? { pm: null, errors } : { pm: { thesisRight, catalystHappened, rightReason, learned, at: now }, errors };
 }
 
 export interface ShadowSize {
@@ -528,7 +761,8 @@ export function shadowExposure(trades: Trade[], mode: Mode): { long: number; sho
   let short = 0;
   for (const t of trades) {
     if (t.mode !== mode || !isOpen(t)) continue;
-    const v = t.shadowShares * (t.entryPrice ?? t.limitPrice ?? t.priceAtSubmit);
+    let v = t.shadowShares * (t.entryPrice ?? t.limitPrice ?? t.priceAtSubmit);
+    if (t.add && t.add.status !== "cancelled") v += t.add.shadowShares * (t.add.price ?? t.add.priceAtSubmit);
     if (t.direction === "long") long += v;
     else short += v;
   }
@@ -561,6 +795,11 @@ export interface Summary {
   avgExcessR: number | null;
   bySource: GroupRow[];
   byDirection: GroupRow[];
+  byStage: GroupRow[];
+  byCrowding: GroupRow[];
+  byAdd: GroupRow[];
+  /** From the post-mortems: did it work for the stated reason? */
+  reasons: { filled: number; yes: number; luck: number; no: number };
 }
 
 export function summarize(trades: Trade[], mode: Mode): Summary {
@@ -594,6 +833,15 @@ export function summarize(trades: Trade[], mode: Mode): Summary {
     pl: round2(closed.reduce((s, t) => s + (t.pl ?? 0), 0)),
     bySource: group((t) => t.source),
     byDirection: group((t) => t.direction),
+    byStage: group((t) => (t.stage === undefined || t.stage === null ? "not set" : STAGES[t.stage].label)),
+    byCrowding: group((t) => t.crowding?.level ?? "not set"),
+    byAdd: group((t) => (t.add?.status === "filled" ? "add used" : t.planAdd ? "add planned, not used" : "no add planned")),
+    reasons: {
+      filled: closed.filter((t) => t.postMortem).length,
+      yes: closed.filter((t) => t.postMortem?.rightReason === "yes").length,
+      luck: closed.filter((t) => t.postMortem?.rightReason === "luck").length,
+      no: closed.filter((t) => t.postMortem?.rightReason === "no").length,
+    },
   };
 }
 

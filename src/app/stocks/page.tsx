@@ -7,7 +7,7 @@ import { StockPnlChart } from "@/components/StockPnlChart";
 import { StockTradeChart } from "@/components/StockTradeChart";
 import { usePoll } from "@/components/usePoll";
 import type { Check, Trade } from "@/lib/stocks/rules";
-import { excessReturn, SOURCES } from "@/lib/stocks/rules";
+import { excessReturn, SOURCES, STAGES } from "@/lib/stocks/rules";
 import { formatDateTimeET } from "@/lib/time";
 
 const post = async (url: string, body: unknown) => {
@@ -28,7 +28,30 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 }
 
 function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
-  const blank = { ticker: "", direction: "long", entryType: "market", limitPrice: "", stop: "", target: "", thesis: "", days: "", source: "", benchmark: "" };
+  const blank = {
+    ticker: "",
+    direction: "long",
+    entryType: "market",
+    limitPrice: "",
+    stop: "",
+    target: "",
+    thesis: "",
+    days: "",
+    source: "",
+    benchmark: "",
+    stage: "",
+    lateStageAck: false,
+    marketBelieves: "",
+    iBelieve: "",
+    becauseData: "",
+    catalyst: "",
+    catalystDate: "",
+    invalidation: "",
+    priceImplies: "",
+    crowding: "",
+    planAdd: false,
+    addTrigger: "",
+  };
   const [f, setF] = useState(blank);
   const [busy, setBusy] = useState(false);
   type Res = {
@@ -38,19 +61,47 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
     checks?: Check[];
     order?: unknown;
     error?: string;
-    sizing?: { liveShares: number; entryRef: number; accountValue: number | null; shadow: { shares: number; position: number; positionPct: number; risk: number; riskPct: number; capped: boolean } };
+    sizing?: {
+      liveShares: number;
+      entryRef: number;
+      accountValue: number | null;
+      shadow: { shares: number; position: number; positionPct: number; risk: number; riskPct: number; capped: boolean };
+      planAdd?: boolean;
+      starterShadow?: number;
+      addShadow?: number;
+      starterPosition?: number;
+      starterRisk?: number;
+    };
   };
   const [res, setRes] = useState<Res | null>(null);
   const [previewed, setPreviewed] = useState<string | null>(null);
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+  const lateLong = f.stage === "3" && f.direction === "long";
   const complete =
-    f.ticker && f.stop && f.thesis.trim() && f.days && f.source && (f.entryType === "market" || f.limitPrice);
+    f.ticker &&
+    f.stop &&
+    f.thesis.trim() &&
+    f.days &&
+    f.source &&
+    (f.entryType === "market" || f.limitPrice) &&
+    f.stage !== "" &&
+    (!lateLong || f.lateStageAck) &&
+    f.marketBelieves.trim() &&
+    f.iBelieve.trim() &&
+    f.becauseData.trim() &&
+    f.catalyst.trim() &&
+    f.catalystDate.trim() &&
+    f.invalidation.trim() &&
+    (!f.planAdd || f.addTrigger.trim());
   const payload = () => ({
     ...f,
     limitPrice: f.entryType === "limit" ? Number(f.limitPrice) : null,
     stop: Number(f.stop),
     target: f.target ? Number(f.target) : null,
     days: Number(f.days),
+    stage: f.stage === "" ? null : Number(f.stage),
+    crowding: f.crowding || null,
+    addTrigger: f.planAdd ? f.addTrigger : null,
   });
   const key = JSON.stringify(f);
   // Step 1: check and size (nothing logged or sent). Step 2: confirm — the server re-runs every check.
@@ -129,6 +180,78 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
         Thesis (1–3 sentences)
         <textarea className={inputCls} rows={2} value={f.thesis} onChange={set("thesis")} />
       </label>
+      <label className="block text-xs text-muted">
+        Stage
+        <select className={inputCls} value={f.stage} onChange={(e) => setF({ ...f, stage: e.target.value, lateStageAck: false })}>
+          <option value="">Choose…</option>
+          {STAGES.map((st) => (
+            <option key={st.value} value={st.value}>
+              {st.label}: {st.hint}
+            </option>
+          ))}
+        </select>
+      </label>
+      {lateLong && (
+        <label className="flex items-center gap-2 rounded-lg border border-warn/60 bg-warn/10 p-2 text-sm text-warn">
+          <input type="checkbox" checked={f.lateStageAck} onChange={(e) => setF({ ...f, lateStageAck: e.target.checked })} />
+          Late stage: crowd is in. I understand.
+        </label>
+      )}
+      <div className="grid gap-2 md:grid-cols-3">
+        <label className="text-xs text-muted">
+          Market believes…
+          <textarea className={inputCls} rows={2} value={f.marketBelieves} onChange={set("marketBelieves")} />
+        </label>
+        <label className="text-xs text-muted">
+          I believe…
+          <textarea className={inputCls} rows={2} value={f.iBelieve} onChange={set("iBelieve")} />
+        </label>
+        <label className="text-xs text-muted">
+          Because of this data…
+          <textarea className={inputCls} rows={2} value={f.becauseData} onChange={set("becauseData")} />
+        </label>
+      </div>
+      <div className="grid gap-2 md:grid-cols-3">
+        <label className="text-xs text-muted md:col-span-2">
+          Catalyst (what forces the market to see it)
+          <input className={inputCls} value={f.catalyst} onChange={set("catalyst")} placeholder="Q4 earnings, product launch, FDA decision…" />
+        </label>
+        <label className="text-xs text-muted">
+          Catalyst date or window
+          <input className={inputCls} value={f.catalystDate} onChange={set("catalystDate")} placeholder="Feb 12 / mid-March" />
+        </label>
+      </div>
+      <label className="block text-xs text-muted">
+        What proves it wrong (thesis kill criteria, separate from the stop)
+        <textarea className={inputCls} rows={2} value={f.invalidation} onChange={set("invalidation")} />
+      </label>
+      <div className="grid gap-2 md:grid-cols-3">
+        <label className="text-xs text-muted md:col-span-2">
+          What the price implies (optional)
+          <input className={inputCls} value={f.priceImplies} onChange={set("priceImplies")} placeholder="priced for 10% growth" />
+        </label>
+        <label className="text-xs text-muted">
+          Crowding at entry (optional)
+          <select className={inputCls} value={f.crowding} onChange={set("crowding")}>
+            <option value="">—</option>
+            <option value="low">Low</option>
+            <option value="normal">Normal</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+      </div>
+      <div className="space-y-2 rounded-lg bg-surface-2 p-2">
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={f.planAdd} onChange={(e) => setF({ ...f, planAdd: e.target.checked })} />
+          Plan one add (starter = 1/3 of full shadow size, add = the other 2/3)
+        </label>
+        {f.planAdd && (
+          <label className="block text-xs text-muted">
+            Add trigger (decided now)
+            <input className={inputCls} value={f.addTrigger} onChange={set("addTrigger")} placeholder="guidance raise at next earnings / close above $X after earnings" />
+          </label>
+        )}
+      </div>
       <div className="flex flex-wrap items-center gap-3">
         <button className="rounded-lg border border-accent px-4 py-2 font-semibold text-accent disabled:opacity-40" disabled={!complete || busy} onClick={() => void check()}>
           {busy ? "Checking…" : "Check & size"}
@@ -169,6 +292,12 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
                 Shadow risk: <b>{money(res.sizing.shadow.risk)}</b> ({res.sizing.shadow.riskPct}% of account)
               </span>
               {res.sizing.shadow.capped && <span className="text-warn">Max position cap binds: risk is below the target %</span>}
+              {res.sizing.planAdd && (
+                <span className="col-span-full text-ink-2">
+                  Planned add: starter <b>{res.sizing.starterShadow}</b> shadow sh now ({money(res.sizing.starterPosition ?? 0)}, risk {money(res.sizing.starterRisk ?? 0)}), add{" "}
+                  <b>{res.sizing.addShadow}</b> sh when the trigger is met · live 1 + 1 share
+                </span>
+              )}
             </div>
           )}
           {res.error && <div className="text-loss">{res.error}</div>}
@@ -198,6 +327,8 @@ const xFmt = (x: { pct: number; r: number | null } | null) => (x ? `${x.pct >= 0
 
 function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | null; spy: number | null; bench: number | null; onDone: () => void }) {
   const [stop, setStop] = useState("");
+  const [addStop, setAddStop] = useState("");
+  const [addNote, setAddNote] = useState("");
   const [target, setTarget] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const dir = t.direction === "long" ? 1 : -1;
@@ -273,6 +404,96 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
         </button>
         {msg && <span className="text-xs text-ink-2">{msg}</span>}
       </div>
+      {t.planAdd && (
+        <div className="mt-2 space-y-1 rounded-lg border border-border p-2 text-xs">
+          <div>
+            <b>Planned add</b> · trigger: {t.addTrigger}
+            {t.add ? (
+              <span className="ml-1 text-ink-2">
+                · {t.add.status} {t.add.price ? `at ${t.add.price}` : ""} · +{t.add.shadowShares} shadow sh · &quot;{t.add.note}&quot;
+              </span>
+            ) : (
+              <span className="ml-1 text-muted">· not used (only in profit; move the stop so starter + add risk ≤ {t.shadowRiskPct}%)</span>
+            )}
+          </div>
+          {!t.add && t.status === "open" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input className={`${inputCls} w-24`} inputMode="decimal" placeholder="new stop" value={addStop} onChange={(e) => setAddStop(e.target.value)} />
+              <input className={`${inputCls} min-w-40 flex-1`} placeholder="what happened (one line)" value={addNote} onChange={(e) => setAddNote(e.target.value)} />
+              <button
+                className="rounded-lg bg-accent px-2 py-1 font-semibold text-page disabled:opacity-40"
+                disabled={!addStop || !addNote.trim()}
+                onClick={async () => {
+                  setMsg(null);
+                  const { json } = await post("/api/stocks/trade", { id: t.id, action: "add", value: Number(addStop), note: addNote });
+                  setMsg(json.ok ? "Add sent" : `${json.error ?? "Blocked"}${json.requiredStop ? ` (stop needed: ${json.requiredStop})` : ""}`);
+                  onDone();
+                }}
+              >
+                Trigger met
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PM_OPTS = {
+  thesisRight: ["yes", "no", "partly"],
+  catalystHappened: ["yes", "no", "not yet"],
+  rightReason: ["yes", "no", "luck"],
+} as const;
+
+/** Post-mortem for a closed trade (more than 2 left open for 3 trading days blocks new entries). */
+function PostMortemForm({ t, onDone }: { t: Trade; onDone: () => void }) {
+  const [v, setV] = useState({ thesisRight: "", catalystHappened: "", rightReason: "", learned: "" });
+  const [msg, setMsg] = useState<string | null>(null);
+  const sel = (k: keyof typeof PM_OPTS, label: string) => (
+    <label className="text-xs text-muted">
+      {label}
+      <select className={inputCls} value={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.value })}>
+        <option value="">—</option>
+        {PM_OPTS[k].map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+  return (
+    <div className="space-y-2 rounded-xl bg-surface-2 p-3 text-sm">
+      <div>
+        <b>{t.ticker}</b> {t.direction} · {t.exitReason} · {t.r ?? "—"}R · closed {t.exitTime ? formatDateTimeET(t.exitTime) : ""}
+        <div className="text-xs text-muted">Thesis: {t.thesis}</div>
+        {t.catalyst && (
+          <div className="text-xs text-muted">
+            Catalyst: {t.catalyst} ({t.catalystDate})
+          </div>
+        )}
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        {sel("thesisRight", "Was the thesis right?")}
+        {sel("catalystHappened", "Did the catalyst happen?")}
+        {sel("rightReason", "Did it work for the reason you gave?")}
+      </div>
+      <input className={inputCls} placeholder="One line on what you learned" value={v.learned} onChange={(e) => setV({ ...v, learned: e.target.value })} />
+      <div className="flex items-center gap-2">
+        <button
+          className="rounded-lg bg-accent px-3 py-1 font-semibold text-page disabled:opacity-40"
+          disabled={!v.thesisRight || !v.catalystHappened || !v.rightReason || !v.learned.trim()}
+          onClick={async () => {
+            const { json } = await post("/api/stocks/trade", { id: t.id, action: "postmortem", postMortem: v });
+            setMsg(json.ok ? "Saved" : String(json.error ?? "Failed"));
+            onDone();
+          }}
+        >
+          Save post-mortem
+        </button>
+        {msg && <span className="text-xs">{msg}</span>}
+      </div>
     </div>
   );
 }
@@ -288,6 +509,7 @@ export default function StocksPage() {
   const closed = data.trades.filter((t) => t.status === "closed" || t.status === "cancelled");
   const s = data.summary;
   const chartTrade = closed.find((t) => t.id === shownChart) ?? null;
+  const needPm = data.trades.filter((t) => t.mode === data.mode && t.status === "closed" && !t.postMortem);
   const kill = async (on: boolean) => {
     setBusy(true);
     await post("/api/stocks/kill", { on });
@@ -382,6 +604,9 @@ export default function StocksPage() {
           {[
             ["By source", s.bySource],
             ["By direction", s.byDirection],
+            ["By stage at entry", s.byStage],
+            ["By crowding at entry", s.byCrowding],
+            ["By planned add", s.byAdd],
           ].map(([title, rows]) => (
             <div key={title as string} className="overflow-x-auto">
               <div className="mb-1 text-sm font-semibold text-ink-2">{title as string}</div>
@@ -423,6 +648,17 @@ export default function StocksPage() {
             </div>
           ))}
         </div>
+        <div className="text-sm">
+          <span className="font-semibold text-ink-2">Worked for the stated reason (post-mortems): </span>
+          {s.reasons.filled ? (
+            <>
+              yes {Math.round((s.reasons.yes / s.reasons.filled) * 100)}% · luck {Math.round((s.reasons.luck / s.reasons.filled) * 100)}% · no{" "}
+              {Math.round((s.reasons.no / s.reasons.filled) * 100)}% <span className="text-muted">({s.reasons.filled} filled in)</span>
+            </>
+          ) : (
+            <span className="text-muted">no post-mortems yet</span>
+          )}
+        </div>
         <div>
           <div className="mb-1 text-sm font-semibold text-ink-2">Rule-break attempts ({data.blocks.length})</div>
           <ul className="max-h-40 space-y-0.5 overflow-y-auto text-xs">
@@ -435,6 +671,16 @@ export default function StocksPage() {
           </ul>
         </div>
       </section>
+
+      {needPm.length > 0 && (
+        <section className="card space-y-2 border-warn/50 p-4">
+          <h2 className="font-bold text-warn">Post-mortem ({needPm.length})</h2>
+          <p className="text-xs text-muted">More than 2 trades left without one for 3 trading days blocks new entries.</p>
+          {needPm.map((t) => (
+            <PostMortemForm key={t.id} t={t} onDone={refresh} />
+          ))}
+        </section>
+      )}
 
       <IdeaForm dry={dry} onDone={refresh} />
 

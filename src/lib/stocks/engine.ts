@@ -22,6 +22,9 @@ import {
   preTradeChecks,
   regularSession,
   shadowSize,
+  starterShares,
+  checkAdd,
+  parsePostMortem,
   stopReplacement,
   targetReplacement,
   timeExitDue,
@@ -220,7 +223,17 @@ export interface SubmitResult {
   ok: boolean;
   /** A preview: checks and sizing only, nothing logged or sent. */
   preview?: boolean;
-  sizing?: { liveShares: number; shadow: ReturnType<typeof shadowSize>; entryRef: number; accountValue: number | null };
+  sizing?: {
+    liveShares: number;
+    shadow: ReturnType<typeof shadowSize>;
+    entryRef: number;
+    accountValue: number | null;
+    planAdd: boolean;
+    starterShadow: number;
+    addShadow: number;
+    starterPosition: number;
+    starterRisk: number;
+  };
   errors: string[];
   checks: Check[];
   trade?: Trade;
@@ -249,7 +262,19 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
     const failed = checks.filter((c) => !c.ok);
     const lastPx = quote?.last ?? null;
     const entryRef = idea.entryType === "limit" && idea.limitPrice ? idea.limitPrice : (lastPx ?? 0);
-    const sizing = { liveShares: settings.shares, shadow: shadowSize(acctValue, settings, entryRef, idea.stop), entryRef, accountValue: acctValue };
+    const full = shadowSize(acctValue, settings, entryRef, idea.stop);
+    const starterN = starterShares(full.shares, idea.planAdd);
+    const sizing = {
+      liveShares: settings.shares,
+      shadow: full,
+      entryRef,
+      accountValue: acctValue,
+      planAdd: !!idea.planAdd,
+      starterShadow: starterN,
+      addShadow: full.shares - starterN,
+      starterPosition: Math.round(starterN * entryRef * 100) / 100,
+      starterRisk: Math.round(starterN * Math.abs(entryRef - idea.stop) * 100) / 100,
+    };
     if (opts.preview) return { ok: failed.length === 0, preview: true, sizing, errors: failed.map((c) => `${c.name}: ${c.detail}`), checks, mode, order: bracketOrder(idea, settings.shares, entrySession(idea.entryType, now).session) };
     if (failed.length) {
       await log({ kind: "block", mode, ticker: idea.ticker, text: failed.map((c) => `${c.name}: ${c.detail}`).join("; "), detail: { idea } });
@@ -274,10 +299,14 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
       riskPerShare: Math.round(risk * 100) / 100,
       accountValue: acctValue,
       shadowRiskPct: settings.riskPct,
-      shadowShares: size.shares,
-      shadowPosition: size.position,
-      shadowRisk: size.risk,
+      shadowShares: starterShares(size.shares, idea.planAdd),
+      fullShadowShares: size.shares,
+      plannedRisk: Math.round(size.shares * risk * 100) / 100,
+      shadowPosition: Math.round(starterShares(size.shares, idea.planAdd) * ref * 100) / 100,
+      shadowRisk: Math.round(starterShares(size.shares, idea.planAdd) * risk * 100) / 100,
       shadowCapped: size.capped,
+      add: null,
+      postMortem: null,
       exitBy: exitByDate(etParts(now).date, idea.days),
       orderJson: order,
       session,
@@ -373,6 +402,11 @@ export async function changeStop(id: string, newStop: number): Promise<{ ok: boo
         const acct = await tradingAccount();
         const r = await schwabOrder("PUT", `/trader/v1/accounts/${acct.hash}/orders/${t.stopOrderId}`, stopReplacement(t, stop));
         if (r.orderId) t.stopOrderId = r.orderId;
+        // The add carries its own stop order (same level): move it too.
+        if (t.add?.status === "filled" && t.add.stopOrderId) {
+          const r2 = await schwabOrder("PUT", `/trader/v1/accounts/${acct.hash}/orders/${t.add.stopOrderId}`, stopReplacement({ ...t, shares: t.add.liveShares }, stop));
+          if (r2.orderId) t.add.stopOrderId = r2.orderId;
+        }
       } catch (e) {
         await log({ kind: "error", mode: "live", ticker: t.ticker, tradeId: id, text: `Stop change failed (old stop still working): ${(e as Error).message}` });
         return { ok: false, error: `Schwab refused the change; the old stop is still working: ${(e as Error).message}` };
@@ -393,6 +427,9 @@ export async function changeTarget(id: string, target: number): Promise<{ ok: bo
     const tgt = Math.round(target * 100) / 100;
     const ref = t.entryPrice ?? t.priceAtSubmit;
     if (!(tgt > 0) || (t.direction === "long" ? tgt <= ref : tgt >= ref)) return { ok: false, error: `A ${t.direction} target must be ${t.direction === "long" ? "above" : "below"} the entry (${ref})` };
+    if (t.mode === "live" && t.add && t.add.status !== "cancelled" && (!t.target || !t.add.targetOrderId)) {
+      return { ok: false, error: "With the add on, a target can only be changed if the trade already had one" };
+    }
     if (t.mode === "live" && (!t.target || !t.targetOrderId)) {
       // Adding a target: put on a new stop+target OCO, then pull the old lone stop.
       if (t.status !== "open" || !t.stopOrderId) return { ok: false, error: "Add a target once the entry has filled and its stop is synced" };
@@ -432,6 +469,10 @@ export async function changeTarget(id: string, target: number): Promise<{ ok: bo
         const acct = await tradingAccount();
         const r = await schwabOrder("PUT", `/trader/v1/accounts/${acct.hash}/orders/${t.targetOrderId}`, targetReplacement(t, tgt));
         if (r.orderId) t.targetOrderId = r.orderId;
+        if (t.add?.status === "filled" && t.add.targetOrderId) {
+          const r2 = await schwabOrder("PUT", `/trader/v1/accounts/${acct.hash}/orders/${t.add.targetOrderId}`, targetReplacement({ ...t, shares: t.add.liveShares }, tgt));
+          if (r2.orderId) t.add.targetOrderId = r2.orderId;
+        }
       } catch (e) {
         return { ok: false, error: `Schwab refused the change: ${(e as Error).message}` };
       }
@@ -440,6 +481,88 @@ export async function changeTarget(id: string, target: number): Promise<{ ok: bo
     t.target = tgt;
     await saveTrade(t);
     await log({ kind: "change", mode: t.mode, ticker: t.ticker, tradeId: id, text: `Target changed to ${tgt}` });
+    return { ok: true };
+  });
+}
+
+// ---- Planned add ----
+
+/**
+ * "Trigger met": send the one planned add (2/3 of full shadow size; 1 live share for now). The server checks
+ * it's the only add, the position is in profit, the new stop keeps starter + add within the idea's risk
+ * budget, and the max position / exposure caps; the stop is moved first, then the add goes in with its own
+ * stop (and target) attached so no share is ever unprotected.
+ */
+export async function triggerAdd(id: string, newStop: number, note: string) {
+  return withLock(async () => {
+    const t = (await store().hgetall<Trade>(KEYS.stockTrades))[id];
+    if (!t) return { ok: false, error: "No trade with that id", checks: [] as Check[] };
+    const settings = await settingsNow();
+    const [quotes, trades, kill] = await Promise.all([stockQuotes([t.ticker, "SPY", ...(t.benchmark ? [t.benchmark] : [])]).catch(() => ({}) as Record<string, StockQuote>), loadTrades(), killSwitchOn()]);
+    const last = quotes[t.ticker]?.last ?? null;
+    const stop = Math.round(newStop * 100) / 100;
+    const r = checkAdd({ trade: t, last, newStop: stop, note, settings, trades, killSwitch: kill, now: clock() });
+    if (t.mode === "live" && !liveTradingEnabled()) r.checks.push({ name: "Server live switch", ok: false, detail: "STOCK_LIVE_TRADING is off" });
+    const failed = r.checks.filter((c) => !c.ok);
+    if (failed.length) {
+      await log({ kind: "block", mode: t.mode, ticker: t.ticker, tradeId: id, text: `Add blocked: ${failed.map((c) => `${c.name}: ${c.detail}`).join("; ")}` });
+      return { ok: false, error: failed.map((c) => `${c.name}: ${c.detail}`).join("; "), checks: r.checks, requiredStop: r.requiredStop };
+    }
+    const cur = t.stopHistory.at(-1)?.stop ?? t.initialStop;
+    const addOrder = bracketOrder({ ...t, entryType: "market", limitPrice: null, stop }, 1, "NORMAL");
+    if (t.mode === "live") {
+      const acct = await tradingAccount();
+      try {
+        if (stop !== cur && t.stopOrderId) {
+          const rs = await schwabOrder("PUT", `/trader/v1/accounts/${acct.hash}/orders/${t.stopOrderId}`, stopReplacement(t, stop));
+          if (rs.orderId) t.stopOrderId = rs.orderId;
+        }
+      } catch (e) {
+        return { ok: false, error: `Couldn't move the stop, so the add wasn't sent: ${(e as Error).message}`, checks: r.checks };
+      }
+      if (stop !== cur) {
+        t.stopHistory.push({ at: Date.now(), stop });
+        t.stop = stop;
+      }
+      try {
+        const ro = await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, addOrder);
+        t.add = { status: "pending", note: note.trim(), requestedAt: Date.now(), priceAtSubmit: last!, liveShares: 1, shadowShares: r.addShadowShares, stopAtAdd: stop, orderId: ro.orderId };
+      } catch (e) {
+        await saveTrade(t);
+        await log({ kind: "error", mode: "live", ticker: t.ticker, tradeId: id, text: `Add rejected: ${(e as Error).message}` });
+        return { ok: false, error: `Schwab didn't take the add (the stop move stands): ${(e as Error).message}`, checks: r.checks };
+      }
+    } else {
+      if (stop !== cur) {
+        t.stopHistory.push({ at: Date.now(), stop });
+        t.stop = stop;
+      }
+      t.add = { status: "filled", note: note.trim(), requestedAt: Date.now(), priceAtSubmit: last!, liveShares: 1, shadowShares: r.addShadowShares, stopAtAdd: stop, orderId: `dry-add-${t.id}`, price: last, time: Date.now() };
+    }
+    await saveTrade(t);
+    await log({
+      kind: "order",
+      mode: t.mode,
+      ticker: t.ticker,
+      tradeId: id,
+      text: `${t.mode === "dry" ? "DRY RUN — would send" : "Sent"} ADD ${t.direction === "long" ? "BUY" : "SELL SHORT"} 1 ${t.ticker} at market (shadow +${r.addShadowShares} sh), stop ${stop}${t.target ? `, target ${t.target}` : ""} · trigger met: "${note.trim()}"`,
+      detail: { order: addOrder },
+    });
+    return { ok: true, checks: r.checks, order: addOrder };
+  });
+}
+
+// ---- Post-mortem ----
+
+export async function savePostMortem(id: string, raw: Record<string, unknown>) {
+  return withLock(async () => {
+    const t = (await store().hgetall<Trade>(KEYS.stockTrades))[id];
+    if (!t || t.status !== "closed") return { ok: false, error: "Post-mortems are for closed trades" };
+    const { pm, errors } = parsePostMortem(raw);
+    if (!pm) return { ok: false, error: errors.join("; ") };
+    t.postMortem = pm;
+    await saveTrade(t);
+    await log({ kind: "change", mode: t.mode, ticker: t.ticker, tradeId: id, text: `Post-mortem: thesis ${pm.thesisRight}, catalyst ${pm.catalystHappened}, right reason ${pm.rightReason} — ${pm.learned}` });
     return { ok: true };
   });
 }
@@ -457,6 +580,7 @@ async function closeTradeUnlocked(t: Trade, reason: ExitReason, quote: StockQuot
       return t;
     }
     const px = quote?.last ?? t.entryPrice ?? t.priceAtSubmit;
+    if (t.add?.status === "pending") t.add.status = "cancelled";
     const done = closeOut(t, px, now, reason, await marksAt(t, now));
     await saveTrade(done);
     await log({ kind: "exit", mode: "dry", ticker: t.ticker, tradeId: t.id, text: `DRY RUN — would close at market (${reason}) ~${px}: ${done.pl! >= 0 ? "+" : ""}${done.pl} (${done.r}R)` });
@@ -474,10 +598,20 @@ async function closeTradeUnlocked(t: Trade, reason: ExitReason, quote: StockQuot
   // Pull the protective legs first so they can't fill too, then close at market.
   await cancelOrder(acct, t.targetOrderId);
   await cancelOrder(acct, t.stopOrderId);
-  const r = await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, marketClose(t));
+  if (t.add && t.add.status !== "cancelled") {
+    await cancelOrder(acct, t.add.targetOrderId);
+    await cancelOrder(acct, t.add.stopOrderId);
+    if (t.add.status === "pending") {
+      await cancelOrder(acct, t.add.orderId);
+      t.add.status = "cancelled";
+    }
+  }
+  const total = t.shares + (t.add?.status === "filled" ? t.add.liveShares : 0);
+  const closeOrder = marketClose({ ...t, shares: total });
+  const r = await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, closeOrder);
   Object.assign(t, { status: "closing", exitOrderId: r.orderId, exitReason: reason });
   await saveTrade(t);
-  await log({ kind: "order", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Sent market close (${reason}) · order ${r.orderId} · account ••${acct.last4}`, detail: { order: marketClose(t) } });
+  await log({ kind: "order", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Sent market close of ${total} (${reason}) · order ${r.orderId} · account ••${acct.last4}`, detail: { order: closeOrder } });
   return t;
 }
 
@@ -618,7 +752,15 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
               ...(() => {
                 // Re-size the shadow at the actual fill (same risk %, same cap).
                 const z = shadowSize(t.accountValue, { riskPct: t.shadowRiskPct, maxPositionPct: settingsCap }, f.price, t.initialStop);
-                return { shadowShares: z.shares, shadowPosition: z.position, shadowRisk: z.risk, shadowCapped: z.capped };
+                const st = starterShares(z.shares, t.planAdd);
+                return {
+                  shadowShares: st,
+                  fullShadowShares: z.shares,
+                  plannedRisk: Math.round(z.shares * risk * 100) / 100,
+                  shadowPosition: Math.round(st * f.price * 100) / 100,
+                  shadowRisk: Math.round(st * risk * 100) / 100,
+                  shadowCapped: z.capped,
+                };
               })(),
             });
             await markEntry(t, f.time, quotes);
@@ -637,12 +779,48 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
           }
         }
 
+        // The planned add: pick up its fill and its own stop/target ids; check its stop like the starter's.
+        let addExit: { price: number; time: number } | null = null;
+        if (t.add?.orderId && t.add.status !== "cancelled") {
+          const ap = await getOrder(acct, t.add.orderId);
+          const akids = flatChildren(ap);
+          const ak = akids.find((k) => k.orderType === "STOP");
+          const at = akids.find((k) => k.orderType === "LIMIT");
+          if (!t.add.stopOrderId && ak?.orderId) t.add.stopOrderId = String(ak.orderId);
+          if (!t.add.targetOrderId && at?.orderId) t.add.targetOrderId = String(at.orderId);
+          const af = fillOf(ap);
+          if (t.add.status === "pending" && ap.status === "FILLED" && af) {
+            Object.assign(t.add, { status: "filled", price: af.price, time: af.time });
+            await log({ kind: "order", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Add filled at ${af.price}` });
+            changes.push(`${t.ticker}: add filled`);
+          } else if (t.add.status === "pending" && DEAD.has(ap.status ?? "")) {
+            t.add.status = "cancelled";
+            await log({ kind: "cancel", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Add order ${t.add.orderId} ${ap.status?.toLowerCase()}` });
+          }
+          if (t.add.status === "filled") {
+            const aso = t.add.stopOrderId ? await getOrder(acct, t.add.stopOrderId) : ak;
+            const ato = t.add.targetOrderId ? await getOrder(acct, t.add.targetOrderId) : at;
+            addExit = (aso?.status === "FILLED" ? fillOf(aso) : null) ?? (ato?.status === "FILLED" ? fillOf(ato) : null);
+            if (!addExit && (!aso || (DEAD.has(aso.status ?? "") && aso.status !== "REPLACED"))) {
+              await alert(`${t.ticker}: the add has no working stop (${aso?.status ?? "missing"}). Flattening the position.`, t.id);
+              await closeTradeUnlocked(t, "kill", q);
+              changes.push(`${t.ticker}: add stop missing → flattened`);
+              continue;
+            }
+          }
+        }
+
         // Open: read the current stop/target orders (a tightened stop is a replacement with its own id).
         const stopO = t.stopOrderId ? await getOrder(acct, t.stopOrderId) : stopKid;
         const tgtO = t.targetOrderId ? await getOrder(acct, t.targetOrderId) : tgtKid;
         const sf = stopO?.status === "FILLED" ? fillOf(stopO) : null;
         const tf = tgtO?.status === "FILLED" ? fillOf(tgtO) : null;
         if (sf || tf) {
+          // With the add on, wait until its own stop/target has filled too (they sit at the same levels).
+          if (t.add?.status === "filled" && !addExit) {
+            await saveTrade(t);
+            continue;
+          }
           const f = (sf ?? tf)!;
           const done = closeOut(t, f.price, f.time, sf ? "stop" : "target", await marksAt(t, f.time, quotes));
           await saveTrade(done);
