@@ -77,22 +77,26 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
   const [previewed, setPreviewed] = useState<string | null>(null);
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const lateLong = f.stage === "3" && f.direction === "long";
-  const complete =
-    f.ticker &&
-    f.stop &&
-    f.thesis.trim() &&
-    f.days &&
-    f.source &&
-    (f.entryType === "market" || f.limitPrice) &&
-    f.stage !== "" &&
-    (!lateLong || f.lateStageAck) &&
-    f.marketBelieves.trim() &&
-    f.iBelieve.trim() &&
-    f.becauseData.trim() &&
-    f.catalyst.trim() &&
-    f.catalystDate.trim() &&
-    f.invalidation.trim() &&
-    (!f.planAdd || f.addTrigger.trim());
+  // What's still missing, with the same minimum lengths the server enforces.
+  const len = (v: string, n: number) => v.trim().length >= n;
+  const missing = [
+    !f.ticker && "Ticker",
+    !f.stop && "Stop",
+    f.entryType === "limit" && !f.limitPrice && "Limit price",
+    !f.days && "Time frame (days)",
+    !f.source && "Source",
+    !len(f.thesis, 10) && "Thesis (10+ characters)",
+    f.stage === "" && "Stage",
+    lateLong && !f.lateStageAck && '"I understand" (late stage)',
+    !len(f.marketBelieves, 5) && "Market believes… (5+ characters)",
+    !len(f.iBelieve, 5) && "I believe… (5+ characters)",
+    !len(f.becauseData, 5) && "Because of this data… (5+ characters)",
+    !len(f.catalyst, 5) && "Catalyst (5+ characters)",
+    !len(f.catalystDate, 3) && "Catalyst date (3+ characters)",
+    !len(f.invalidation, 5) && "What proves it wrong (5+ characters)",
+    f.planAdd && !len(f.addTrigger, 5) && "Add trigger (5+ characters)",
+  ].filter((x): x is string => !!x);
+  const complete = missing.length === 0;
   const payload = () => ({
     ...f,
     limitPrice: f.entryType === "limit" ? Number(f.limitPrice) : null,
@@ -264,6 +268,7 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
         >
           {dry ? "Confirm dry run" : "Confirm & send order"}
         </button>
+        {missing.length > 0 && <span className="w-full text-xs text-warn">Still needed: {missing.join(" · ")}</span>}
         <span className="text-xs text-muted">
           Size is fixed in Settings. Every check runs on the server. Outside 9:30–16:00 ET use a limit (extended hours); the stop only
           works in the regular session.
