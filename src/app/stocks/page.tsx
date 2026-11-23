@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { StocksData } from "@/app/api/stocks/route";
 import { money, plClass } from "@/components/format";
 import { StockPnlChart } from "@/components/StockPnlChart";
 import { StockTradeChart } from "@/components/StockTradeChart";
 import { usePoll } from "@/components/usePoll";
-import type { Check, Trade } from "@/lib/stocks/rules";
+import type { Check, StockQuote, Trade } from "@/lib/stocks/rules";
 import { excessReturn, SOURCES, STAGES } from "@/lib/stocks/rules";
 import { formatDateTimeET } from "@/lib/time";
 
@@ -23,6 +23,59 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
     <div className="rounded-xl bg-surface-2 p-3">
       <div className="text-xs text-muted">{label}</div>
       <div className={`mt-0.5 text-lg font-bold ${tone ?? ""}`}>{value}</div>
+    </div>
+  );
+}
+
+type LiveQuote = { symbol: string; q: StockQuote | null; error?: string; at: number } | null;
+
+/** Quote for the ticker being typed: fetched 400 ms after typing stops, then refreshed every 10 s. */
+function useLiveQuote(ticker: string): LiveQuote {
+  const [lq, setLq] = useState<LiveQuote>(null);
+  const sym = ticker.trim().toUpperCase();
+  useEffect(() => {
+    if (!/^[A-Z][A-Z0-9.\-/]{0,9}$/.test(sym)) return;
+    let off = false;
+    const load = () =>
+      fetch(`/api/stocks/quote?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((j: { quote?: StockQuote | null; error?: string }) => !off && setLq({ symbol: sym, q: j.quote ?? null, error: j.error, at: Date.now() }))
+        .catch(() => !off && setLq({ symbol: sym, q: null, error: "Quote failed", at: Date.now() }));
+    const first = setTimeout(load, 400);
+    const every = setInterval(load, 10_000);
+    return () => {
+      off = true;
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  }, [sym]);
+  return lq?.symbol === sym ? lq : null;
+}
+
+function QuoteLine({ q, stop, target, limit, long }: { q: LiveQuote; stop: number; target: number; limit: number; long: boolean }) {
+  if (!q) return null;
+  if (!q.q) return <div className="col-span-2 text-xs text-loss md:col-span-4">{q.error ?? "No quote"}</div>;
+  const { last, bid, ask, description, shortable, hardToBorrow } = q.q;
+  const ref = limit > 0 ? limit : last;
+  const pct = (v: number) => (ref ? (((v - ref) / ref) * 100).toFixed(2) : "–");
+  const stopBad = ref != null && stop > 0 && (long ? stop >= ref : stop <= ref);
+  return (
+    <div className="col-span-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg bg-surface-2 px-2 py-1.5 text-xs md:col-span-4">
+      <span className="text-ink">
+        <b className="text-base">{last ?? "–"}</b> <span className="text-muted">{description}</span>
+      </span>
+      <span className="text-muted">
+        bid {bid ?? "–"} · ask {ask ?? "–"}
+      </span>
+      {stop > 0 && ref != null && (
+        <span className={stopBad ? "text-loss" : "text-ink-2"}>
+          stop {pct(stop)}%{limit > 0 ? " from limit" : ""}
+          {stopBad ? ` (wrong side for a ${long ? "long" : "short"})` : ""}
+        </span>
+      )}
+      {target > 0 && ref != null && <span className="text-ink-2">target {pct(target)}%</span>}
+      {!long && shortable === false && <span className="text-loss">not shortable</span>}
+      {!long && hardToBorrow && <span className="text-warn">hard to borrow</span>}
     </div>
   );
 }
@@ -62,6 +115,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
   };
   const [f, setF] = useState(adopt ? { ...blank, ticker: adopt.symbol, direction: adopt.qty > 0 ? "long" : "short" } : blank);
   const endpoint = adopt ? "/api/stocks/adopt" : "/api/stocks/ideas";
+  const quote = useLiveQuote(f.ticker);
   const [busy, setBusy] = useState(false);
   type Res = {
     ok: boolean;
@@ -165,6 +219,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
             <option value="short">Short</option>
           </select>
         </label>
+        <QuoteLine q={quote} stop={Number(f.stop)} target={Number(f.target)} limit={f.entryType === "limit" ? Number(f.limitPrice) : 0} long={f.direction === "long"} />
         {!adopt && (
           <>
             <label className="text-xs text-muted">
