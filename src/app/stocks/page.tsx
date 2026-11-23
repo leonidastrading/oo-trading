@@ -734,6 +734,18 @@ function workingOrders(trades: Trade[], quotes: Record<string, number | null>): 
   return out;
 }
 
+/**
+ * Entry legs of a filled position (incl. a filled add). A dry-run position is counted at its shadow size
+ * (what the account-based sizing would trade); a live one at the shares actually held.
+ */
+function positionLegs(t: Trade): { sh: number; px: number }[] {
+  const dry = t.mode === "dry";
+  return [
+    { sh: dry ? t.shadowShares : t.shares, px: t.entryPrice! },
+    ...(t.add?.status === "filled" && t.add.price ? [{ sh: dry ? t.add.shadowShares : t.add.liveShares, px: t.add.price }] : []),
+  ];
+}
+
 /** One row per filled open position, with its unrealized P/L on the actual shares (incl. a filled add). */
 function OpenPositions({ trades, quotes }: { trades: Trade[]; quotes: Record<string, number | null> }) {
   const rows = trades
@@ -741,7 +753,7 @@ function OpenPositions({ trades, quotes }: { trades: Trade[]; quotes: Record<str
     .map((t) => {
       const last = quotes[t.ticker] ?? null;
       const dir = t.direction === "long" ? 1 : -1;
-      const legs = [{ sh: t.shares, px: t.entryPrice! }, ...(t.add?.status === "filled" && t.add.price ? [{ sh: t.add.liveShares, px: t.add.price }] : [])];
+      const legs = positionLegs(t);
       const shares = legs.reduce((a, l) => a + l.sh, 0);
       const cost = legs.reduce((a, l) => a + l.sh * l.px, 0);
       const pl = last === null ? null : legs.reduce((a, l) => a + (last - l.px) * dir * l.sh, 0);
@@ -787,7 +799,7 @@ function OpenPositions({ trades, quotes }: { trades: Trade[]; quotes: Record<str
                 <td className={`num ${plClass(r ?? 0)}`}>{r === null ? "—" : `${r >= 0 ? "+" : ""}${r.toFixed(2)}R`}</td>
                 <td className="num">{t.stop}</td>
                 <td className="num">{t.target ?? "—"}</td>
-                <td className="text-xs text-muted">{t.mode === "dry" ? "dry run" : t.status === "closing" ? "closing" : ""}</td>
+                <td className="text-xs text-muted">{t.mode === "dry" ? "dry run (shadow size)" : t.status === "closing" ? "closing" : ""}</td>
               </tr>
             ))}
             {rows.length > 1 && (
@@ -925,7 +937,7 @@ export default function StocksPage() {
       const last = data.quotes[t.ticker];
       if (t.entryPrice == null || last == null || (t.status !== "open" && t.status !== "closing")) return a;
       const dir = t.direction === "long" ? 1 : -1;
-      const legs = [{ sh: t.shares, px: t.entryPrice }, ...(t.add?.status === "filled" && t.add.price ? [{ sh: t.add.liveShares, px: t.add.price }] : [])];
+      const legs = positionLegs(t);
       for (const l of legs) {
         a.pl += (last - l.px) * dir * l.sh;
         a.cost += l.px * l.sh;
@@ -981,7 +993,7 @@ export default function StocksPage() {
               "—"
             )}
           </div>
-          {openPl.dryN > 0 && <div className="text-xs text-muted">{openPl.dryN === openPl.n ? "dry-run positions" : `includes ${openPl.dryN} dry-run`}</div>}
+          {openPl.dryN > 0 && <div className="text-xs text-muted">{openPl.dryN === openPl.n ? "dry-run positions, at shadow size" : `includes ${openPl.dryN} dry-run at shadow size`}</div>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded-lg px-2.5 py-1 text-sm font-bold ${dry ? "bg-warn/20 text-warn" : "bg-loss/20 text-loss"}`}>{dry ? "DRY RUN" : "LIVE"}</span>
