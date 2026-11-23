@@ -688,6 +688,101 @@ const PM_OPTS = {
   rightReason: ["yes", "no", "luck"],
 } as const;
 
+interface WorkingOrder {
+  key: string;
+  ticker: string;
+  kind: string;
+  side: string;
+  shares: number;
+  price: string;
+  last: number | null;
+  tif: string;
+  dry: boolean;
+  id: string | null;
+  note?: string;
+}
+
+/** Every order that is working right now, read off the trades: unfilled entries, protective stops, targets. */
+function workingOrders(trades: Trade[], quotes: Record<string, number | null>): WorkingOrder[] {
+  const out: WorkingOrder[] = [];
+  for (const t of trades) {
+    const long = t.direction === "long";
+    const open = long ? "Buy" : "Sell short";
+    const close = long ? "Sell" : "Buy to cover";
+    const base = { ticker: t.ticker, last: quotes[t.ticker] ?? null, dry: t.mode === "dry" };
+    const id = (v: string | null | undefined) => (v && !v.startsWith("dry-") ? v : null);
+    if (t.status === "pending") {
+      const kind = t.entryType === "stop" ? "Entry stop" : t.entryType === "limit" ? "Entry limit" : "Entry market";
+      out.push({ ...base, key: `${t.id}-e`, kind, side: open, shares: t.shares, price: t.entryType === "market" ? "market" : String(t.limitPrice), tif: t.entryType === "market" ? "Day" : "GTC", id: id(t.orderId) });
+      // The stop and target are attached to the entry and start working once it fills.
+      out.push({ ...base, key: `${t.id}-s`, kind: "Stop", side: close, shares: t.shares, price: String(t.stop), tif: "GTC", id: id(t.stopOrderId), note: "after entry fills" });
+      if (t.target) out.push({ ...base, key: `${t.id}-t`, kind: "Target", side: close, shares: t.shares, price: String(t.target), tif: "GTC", id: id(t.targetOrderId), note: "after entry fills" });
+    } else if (t.status === "open") {
+      out.push({ ...base, key: `${t.id}-s`, kind: "Stop", side: close, shares: t.shares, price: String(t.stop), tif: "GTC", id: id(t.stopOrderId) });
+      if (t.target) out.push({ ...base, key: `${t.id}-t`, kind: "Target", side: close, shares: t.shares, price: String(t.target), tif: "GTC", id: id(t.targetOrderId) });
+      if (t.add?.status === "pending") out.push({ ...base, key: `${t.id}-a`, kind: "Add (market)", side: open, shares: t.add.liveShares, price: "market", tif: "Day", id: id(t.add.orderId) });
+      if (t.add?.status === "filled") {
+        out.push({ ...base, key: `${t.id}-as`, kind: "Stop (add)", side: close, shares: t.add.liveShares, price: String(t.stop), tif: "GTC", id: id(t.add.stopOrderId) });
+        if (t.target) out.push({ ...base, key: `${t.id}-at`, kind: "Target (add)", side: close, shares: t.add.liveShares, price: String(t.target), tif: "GTC", id: id(t.add.targetOrderId) });
+      }
+    } else if (t.status === "closing") {
+      out.push({ ...base, key: `${t.id}-x`, kind: "Close (market)", side: close, shares: t.shares + (t.add?.status === "filled" ? t.add.liveShares : 0), price: "market", tif: "Day", id: id(t.exitOrderId) });
+    }
+  }
+  return out;
+}
+
+function PendingOrders({ orders }: { orders: WorkingOrder[] }) {
+  return (
+    <section className="card space-y-2 p-4">
+      <h2 className="font-bold text-accent">Pending orders ({orders.length})</h2>
+      {orders.length === 0 ? (
+        <p className="text-sm text-muted">No working orders.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="data w-full text-sm">
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Order</th>
+                <th>Side</th>
+                <th>Shares</th>
+                <th>Price</th>
+                <th>Last</th>
+                <th>Away</th>
+                <th>Good for</th>
+                <th>Where</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((o) => {
+                const px = Number(o.price);
+                const away = o.last && px > 0 ? (((px - o.last) / o.last) * 100).toFixed(2) + "%" : "—";
+                return (
+                  <tr key={o.key}>
+                    <td className="font-semibold">{o.ticker}</td>
+                    <td className={o.kind.startsWith("Stop") ? "text-loss" : o.kind.startsWith("Target") ? "text-gain" : ""}>
+                      {o.kind}
+                      {o.note && <span className="text-xs text-muted"> ({o.note})</span>}
+                    </td>
+                    <td>{o.side}</td>
+                    <td className="num">{o.shares}</td>
+                    <td className="num">{o.price}</td>
+                    <td className="num">{o.last ?? "—"}</td>
+                    <td className="num">{away}</td>
+                    <td>{o.tif}</td>
+                    <td className="text-xs text-muted">{o.dry ? "dry run (not at Schwab)" : o.id ? `Schwab #${o.id}` : "Schwab (syncing)"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Post-mortem for a closed trade (more than 2 left open for 3 trading days blocks new entries). */
 function PostMortemForm({ t, onDone }: { t: Trade; onDone: () => void }) {
   const [v, setV] = useState({ thesisRight: "", catalystHappened: "", rightReason: "", learned: "" });
@@ -948,6 +1043,8 @@ export default function StocksPage() {
       {adopting && <IdeaForm key={adopting.symbol} dry={dry} adopt={adopting} onCancel={() => setAdopting(null)} onDone={refresh} />}
 
       <IdeaForm dry={dry} onDone={refresh} />
+
+      <PendingOrders orders={workingOrders(open, data.quotes)} />
 
       <section className="card space-y-2 p-4">
         <h2 className="font-bold text-accent">Open ({open.length} of {data.settings.maxOpen})</h2>
