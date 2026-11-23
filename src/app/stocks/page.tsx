@@ -70,7 +70,7 @@ function QuoteLine({ q, stop, target, limit, long }: { q: LiveQuote; stop: numbe
       </span>
       {stop > 0 && ref != null && (
         <span className={stopBad ? "text-loss" : "text-ink-2"}>
-          stop {pct(stop)}%{limit > 0 ? " from limit" : ""}
+          stop {pct(stop)}%{limit > 0 ? " from entry" : ""}
           {stopBad ? ` (wrong side for a ${long ? "long" : "short"})` : ""}
         </span>
       )}
@@ -155,12 +155,12 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
       stop,
       initialStop: stop,
       target: Number(f.target) > 0 ? Number(f.target) : null,
-      entryType: f.entryType === "limit" ? "limit" : "market",
-      limitPrice: f.entryType === "limit" && Number(f.limitPrice) > 0 ? Number(f.limitPrice) : null,
+      entryType: f.entryType === "limit" ? "limit" : f.entryType === "stop" ? "stop" : "market",
+      limitPrice: f.entryType !== "market" && Number(f.limitPrice) > 0 ? Number(f.limitPrice) : null,
     };
   }, [f.ticker, f.direction, f.stop, f.target, f.entryType, f.limitPrice]);
   // 20% stop suggestion from the entry reference (the limit price for a limit entry, else the last price).
-  const stopRef = f.entryType === "limit" && Number(f.limitPrice) > 0 ? Number(f.limitPrice) : (quote?.q?.last ?? 0);
+  const stopRef = f.entryType !== "market" && Number(f.limitPrice) > 0 ? Number(f.limitPrice) : (quote?.q?.last ?? 0);
   const stop20 = stopRef > 0 ? String(suggestedStop(stopRef, f.direction === "long")) : "";
   async function loadCard() {
     setCardBusy(true);
@@ -248,7 +248,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
   const missing = [
     !f.ticker && "Ticker",
     !f.stop && "Stop",
-    f.entryType === "limit" && !f.limitPrice && "Limit price",
+    f.entryType !== "market" && !f.limitPrice && (f.entryType === "stop" ? "Entry price" : "Limit price"),
     !f.days && "Time frame (days)",
     !f.source && "Source",
     !len(f.thesis, 10) && "Thesis (10+ characters)",
@@ -263,7 +263,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
   const payload = () => ({
     ...f,
     cardId: card?.cardId ?? null,
-    limitPrice: f.entryType === "limit" ? Number(f.limitPrice) : null,
+    limitPrice: f.entryType !== "market" ? Number(f.limitPrice) : null,
     stop: Number(f.stop),
     target: f.target ? Number(f.target) : null,
     days: Number(f.days),
@@ -332,7 +332,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
             <option value="short">Short</option>
           </select>
         </label>
-        <QuoteLine q={quote} stop={Number(f.stop)} target={Number(f.target)} limit={f.entryType === "limit" ? Number(f.limitPrice) : 0} long={f.direction === "long"} />
+        <QuoteLine q={quote} stop={Number(f.stop)} target={Number(f.target)} limit={f.entryType !== "market" ? Number(f.limitPrice) : 0} long={f.direction === "long"} />
         {chartTrade && (
           <div className="col-span-2 md:col-span-4">
             <StockTradeChart trade={chartTrade} live />
@@ -345,11 +345,12 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
               <select className={inputCls} value={f.entryType} onChange={set("entryType")}>
                 <option value="market">Market</option>
                 <option value="limit">Limit</option>
+                <option value="stop">Stop (enter on a move through a price)</option>
               </select>
             </label>
             <label className="text-xs text-ink-2">
-              Limit price
-              <input className={inputCls} inputMode="decimal" disabled={f.entryType !== "limit"} value={f.limitPrice} onChange={set("limitPrice")} />
+              {f.entryType === "stop" ? `Enter if price goes ${f.direction === "long" ? "above" : "below"}` : "Limit price"}
+              <input className={inputCls} inputMode="decimal" disabled={f.entryType === "market"} value={f.limitPrice} onChange={set("limitPrice")} />
             </label>
           </>
         )}
@@ -607,7 +608,7 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
         </div>
       </div>
       <div className="mt-1 text-xs text-ink-2">
-        entry {entry ?? (t.entryType === "limit" ? `limit ${t.limitPrice} (working)` : "pending")} · last {r2(last)} · stop {t.stop} · target {t.target ?? "—"} · risk/sh {t.riskPerShare} · shadow{" "}
+        entry {entry ?? (t.entryType !== "market" ? `${t.entryType} ${t.limitPrice} (working)` : "pending")} · last {r2(last)} · stop {t.stop} · target {t.target ?? "—"} · risk/sh {t.riskPerShare} · shadow{" "}
         {t.shadowShares} sh
       </div>
       {entry !== null && (

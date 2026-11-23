@@ -73,8 +73,8 @@ export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boo
     const line = (price: number | null | undefined, color: string, title: string, style = LineStyle.Solid) => {
       if (price) series.createPriceLine({ price, color, lineWidth: 2, lineStyle: style, axisLabelVisible: true, title });
     };
-    const entry = trade.entryPrice ?? (trade.entryType === "limit" ? trade.limitPrice : null);
-    line(entry, css("--spot", "#3987e5"), trade.entryPrice ? "entry" : "limit", trade.entryPrice ? LineStyle.Solid : LineStyle.Dashed);
+    const entry = trade.entryPrice ?? (trade.entryType && trade.entryType !== "market" ? trade.limitPrice : null);
+    line(entry, css("--spot", "#3987e5"), trade.entryPrice ? "entry" : trade.entryType === "stop" ? "entry stop" : "limit", trade.entryPrice ? LineStyle.Solid : LineStyle.Dashed);
     line(trade.stop, loss, "stop");
     if (trade.initialStop !== trade.stop) line(trade.initialStop, loss, "initial stop", LineStyle.Dotted);
     line(trade.target, gain, "target", LineStyle.Dashed);

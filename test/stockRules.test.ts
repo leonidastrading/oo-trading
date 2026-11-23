@@ -297,3 +297,13 @@ describe("20% stop suggestion", () => {
     expect(cardToPrefill({ ticker: "ELBM", thesis: "Lifts the stock within 90 days." }, "334")!.days).toBe("90");
   });
 });
+
+describe("stop entry", () => {
+  it("needs an entry price and sends a STOP order with the bracket", () => {
+    expect(parseIdea({ ...idea, entryType: "stop" }).errors).toContain("Entry price is required for a stop entry");
+    const i = parseIdea({ ...idea, entryType: "stop", limitPrice: 210 }).idea!;
+    const o = bracketOrder(i, 1, "NORMAL");
+    expect(o).toMatchObject({ orderType: "STOP", stopPrice: "210.00", orderStrategyType: "TRIGGER" });
+    expect("price" in o).toBe(false);
+  });
+});

@@ -11,7 +11,9 @@ export type Mode = "dry" | "live";
 export interface IdeaInput {
   ticker: string;
   direction: Direction;
-  entryType: "market" | "limit";
+  /** "stop" = enter only when the price trades through `limitPrice` (above it for a long, below for a short). */
+  entryType: "market" | "limit" | "stop";
+  /** The limit price, or the trigger price of a stop entry. */
   limitPrice?: number | null;
   stop: number;
   target?: number | null;
@@ -286,7 +288,9 @@ export function exitByDate(entryDate: string, days: number): string {
  */
 export function entrySession(entryType: IdeaInput["entryType"], now = Date.now()): { ok: boolean; session: "NORMAL" | "SEAMLESS"; why: string } {
   if (regularSession(now)) return { ok: true, session: "NORMAL", why: "Regular session" };
-  if (entryType === "market") return { ok: false, session: "SEAMLESS", why: "Outside the regular session (9:30–16:00 ET) entries must be limit orders" };
+  // A stop entry only triggers in the regular session: placed outside it, it waits for the next one.
+  if (entryType === "stop") return { ok: true, session: "NORMAL", why: "Stop entry: triggers in the next regular session (9:30–16:00 ET)" };
+  if (entryType === "market") return { ok: false, session: "SEAMLESS", why: "Outside the regular session (9:30–16:00 ET) entries must be limit or stop orders" };
   return { ok: true, session: "SEAMLESS", why: "Extended hours: limit order, working 7:00–20:00 ET" };
 }
 
@@ -325,10 +329,11 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
   if (!/^[A-Z][A-Z0-9.\-/]{0,9}$/.test(ticker)) errors.push("Ticker is required (letters, e.g. AAPL or BRK/B)");
   const direction = raw.direction === "long" || raw.direction === "short" ? raw.direction : null;
   if (!direction) errors.push("Direction is required (long or short)");
-  const entryType = raw.entryType === "market" || raw.entryType === "limit" ? raw.entryType : null;
-  if (!entryType) errors.push("Entry type is required (market or limit)");
+  const entryType = raw.entryType === "market" || raw.entryType === "limit" || raw.entryType === "stop" ? raw.entryType : null;
+  if (!entryType) errors.push("Entry type is required (market, limit or stop)");
   const limitPrice = num(raw.limitPrice);
   if (entryType === "limit" && !(limitPrice > 0)) errors.push("Limit price is required for a limit entry");
+  if (entryType === "stop" && !(limitPrice > 0)) errors.push("Entry price is required for a stop entry");
   const stop = num(raw.stop);
   if (!(stop > 0)) errors.push("Stop price is required");
   const targetRaw = raw.target === null || raw.target === undefined || raw.target === "" ? null : num(raw.target);
@@ -380,7 +385,7 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
       ticker,
       direction: direction!,
       entryType: entryType!,
-      limitPrice: entryType === "limit" ? roundPx(limitPrice) : null,
+      limitPrice: entryType !== "market" ? roundPx(limitPrice) : null,
       stop: roundPx(stop),
       target: targetRaw === null ? null : roundPx(targetRaw),
       thesis,
@@ -473,7 +478,7 @@ export function preTradeChecks(c: CheckContext): Check[] {
   add("Quote", last !== null && last > 0, last ? `${idea.ticker} last ${last}` : `No current quote for ${idea.ticker}`);
   if (last !== null && last > 0) {
     // Reference price for the risk: the limit for a limit entry (that's where it fills), else the last price.
-    const ref = idea.entryType === "limit" && idea.limitPrice ? idea.limitPrice : last;
+    const ref = idea.entryType !== "market" && idea.limitPrice ? idea.limitPrice : last;
     const sideOk = idea.direction === "long" ? idea.stop < last && idea.stop < ref : idea.stop > last && idea.stop > ref;
     add(
       "Stop side",
@@ -485,9 +490,14 @@ export function preTradeChecks(c: CheckContext): Check[] {
     const riskPct = (Math.abs(ref - idea.stop) / ref) * 100;
     const riskOk = riskPct >= 2 && riskPct <= 25;
     add("Risk to stop", riskOk, `${riskPct.toFixed(2)}% of the entry price${riskOk ? "" : " (must be 2%–25%)"}`);
-    if (idea.entryType === "limit" && idea.limitPrice) {
+    if (idea.entryType !== "market" && idea.limitPrice) {
       const lOk = idea.direction === "long" ? idea.limitPrice > idea.stop : idea.limitPrice < idea.stop;
-      add("Limit vs stop", lOk, lOk ? "Limit is on the right side of the stop" : "The limit price is past the stop");
+      add("Limit vs stop", lOk, lOk ? "Entry price is on the right side of the stop" : "The entry price is past the stop");
+    }
+    if (idea.entryType === "stop" && idea.limitPrice) {
+      const long = idea.direction === "long";
+      const eOk = long ? idea.limitPrice > last : idea.limitPrice < last;
+      add("Stop entry side", eOk, eOk ? `Enters if the price trades ${long ? "up" : "down"} through ${idea.limitPrice}` : `A ${idea.direction} stop entry must be ${long ? "above" : "below"} the current price ${last} (use Market to enter now)`);
     }
     if (idea.target) {
       const tOk = idea.direction === "long" ? idea.target > ref : idea.target < ref;
@@ -519,7 +529,7 @@ export function preTradeChecks(c: CheckContext): Check[] {
   add("One position per ticker", !sameTicker, sameTicker ? `Already ${sameTicker.status} in ${idea.ticker}: no adding to a position` : "None open");
 
   if (last !== null && last > 0 && c.accountValue) {
-    const ref = idea.entryType === "limit" && idea.limitPrice ? idea.limitPrice : last;
+    const ref = idea.entryType !== "market" && idea.limitPrice ? idea.limitPrice : last;
     const size = shadowSize(c.accountValue, settings, ref, idea.stop);
     const ex = shadowExposure(c.trades, mode);
     // With a planned add only the 1/3 starter goes on now; the add is checked when it's triggered.
@@ -911,8 +921,9 @@ export function bracketOrder(idea: IdeaInput, shares: number, session: "NORMAL" 
     // don't trigger outside it).
     session,
     duration: "DAY",
-    orderType: idea.entryType === "market" ? "MARKET" : "LIMIT",
+    orderType: idea.entryType === "market" ? "MARKET" : idea.entryType === "stop" ? "STOP" : "LIMIT",
     ...(idea.entryType === "limit" ? { price: px(idea.limitPrice!) } : {}),
+    ...(idea.entryType === "stop" ? { stopPrice: px(idea.limitPrice!) } : {}),
     orderLegCollection: leg(open),
     childOrderStrategies: children,
   };
@@ -956,7 +967,7 @@ export function marketClose(t: Pick<Trade, "direction" | "ticker" | "shares">) {
 /** Pre-trade checks that can't be undone after the fact: an adopted trade must have a usable stop now. */
 const ADOPT_HARD = new Set(["Quote", "Stop side", "Shortable"]);
 /** Checks that don't apply to a trade that already happened. */
-const ADOPT_SKIP = new Set(["Session", "Limit vs stop", "Target side"]);
+const ADOPT_SKIP = new Set(["Session", "Limit vs stop", "Stop entry side", "Target side"]);
 
 /**
  * Adopting a position opened outside the app: the stop must be on the right side of the current price; any
