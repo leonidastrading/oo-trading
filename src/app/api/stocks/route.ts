@@ -27,6 +27,8 @@ export interface StocksData {
   unmanaged: HeldStock[];
   overrides: number;
   accountValue: number | null;
+  /** Server time of this snapshot (ms). */
+  now: number;
   exposure: { long: number; short: number; gross: number; net: number; grossPct: number | null; netPct: number | null };
   lockouts: { weekShadowPl: number; streakUntil: string | null };
 }
@@ -76,6 +78,7 @@ export async function GET() {
     unmanaged,
     overrides,
     accountValue: acctValue,
+    now: Date.now(),
     exposure: { ...ex, grossPct: acctValue ? (ex.gross / acctValue) * 100 : null, netPct: acctValue ? (ex.net / acctValue) * 100 : null },
     lockouts: { weekShadowPl: weekShadowPl(trades, mode, Date.now()), streakUntil: streakLockUntil(trades, mode) },
   };

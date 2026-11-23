@@ -580,7 +580,7 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
     onDone();
   };
   return (
-    <div className="rounded-xl bg-surface-2 p-3 text-sm">
+    <div id={`trade-${t.id}`} className="scroll-mt-4 rounded-xl bg-surface-2 p-3 text-sm">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <span className="font-bold">{t.ticker}</span> <span className={t.direction === "long" ? "text-gain" : "text-loss"}>{t.direction}</span>{" "}
@@ -747,7 +747,9 @@ function positionLegs(t: Trade): { sh: number; px: number }[] {
 }
 
 /** One row per filled open position, with its unrealized P/L on the actual shares (incl. a filled add). */
-function OpenPositions({ trades, quotes }: { trades: Trade[]; quotes: Record<string, number | null> }) {
+function OpenPositions({ trades, quotes, accountValue, now }: { trades: Trade[]; quotes: Record<string, number | null>; accountValue: number | null; now: number }) {
+  type Key = "ticker" | "side" | "shares" | "avg" | "last" | "pl" | "pct" | "acct" | "r" | "days" | "stop" | "target";
+  const [sort, setSort] = useState<{ key: Key; desc: boolean }>({ key: "days", desc: false });
   const rows = trades
     .filter((t) => (t.status === "open" || t.status === "closing") && t.entryPrice != null)
     .map((t) => {
@@ -758,14 +760,49 @@ function OpenPositions({ trades, quotes }: { trades: Trade[]; quotes: Record<str
       const cost = legs.reduce((a, l) => a + l.sh * l.px, 0);
       const pl = last === null ? null : legs.reduce((a, l) => a + (last - l.px) * dir * l.sh, 0);
       const r = last !== null && t.riskPerShare ? ((last - t.entryPrice!) * dir) / t.riskPerShare : null;
-      return { t, last, shares, cost, avg: shares ? cost / shares : 0, pl, pct: pl === null || !cost ? null : (pl / cost) * 100, r };
+      // Share of the account: the position's current market value (its cost when there's no quote).
+      const value = last === null ? cost : shares * last;
+      return {
+        t,
+        last,
+        shares,
+        cost,
+        value,
+        avg: shares ? cost / shares : 0,
+        pl,
+        pct: pl === null || !cost ? null : (pl / cost) * 100,
+        acct: accountValue ? (value / accountValue) * 100 : null,
+        r,
+        days: t.entryTime ? Math.max(0, Math.floor((now - t.entryTime) / 86_400_000)) : null,
+      };
     });
   if (!rows.length) return null;
+  const val = (x: (typeof rows)[number], k: Key): string | number | null =>
+    k === "ticker" ? x.t.ticker : k === "side" ? x.t.direction : k === "stop" ? x.t.stop : k === "target" ? (x.t.target ?? null) : x[k];
+  const sorted = [...rows].sort((a, b) => {
+    const [va, vb] = [val(a, sort.key), val(b, sort.key)];
+    if (va === null || vb === null) return va === vb ? 0 : va === null ? 1 : -1; // blanks last
+    const c = typeof va === "string" ? va.localeCompare(String(vb)) : va - (vb as number);
+    return sort.desc ? -c : c;
+  });
   const priced = rows.filter((x) => x.pl !== null);
   const totPl = priced.reduce((a, x) => a + x.pl!, 0);
   const totCost = priced.reduce((a, x) => a + x.cost, 0);
+  const totValue = rows.reduce((a, x) => a + x.value, 0);
   const dp = (v: number) => (v < 1 ? 4 : 2);
   const pct = (v: number | null) => (v === null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`);
+  const th = (k: Key, label: string) => (
+    <th key={k}>
+      <button
+        className={`uppercase tracking-wide ${sort.key === k ? "text-ink" : ""}`}
+        title="Sort"
+        onClick={() => setSort({ key: k, desc: sort.key === k ? !sort.desc : !["ticker", "side", "days"].includes(k) })}
+      >
+        {label}
+        {sort.key === k ? (sort.desc ? " ▼" : " ▲") : ""}
+      </button>
+    </th>
+  );
   return (
     <section className="card space-y-2 p-4">
       <h2 className="font-bold text-accent">Open positions ({rows.length})</h2>
@@ -773,30 +810,45 @@ function OpenPositions({ trades, quotes }: { trades: Trade[]; quotes: Record<str
         <table className="data w-full text-sm">
           <thead>
             <tr>
-              <th>Ticker</th>
-              <th>Side</th>
-              <th>Shares</th>
-              <th>Entry</th>
-              <th>Last</th>
-              <th>Open P/L</th>
-              <th>%</th>
-              <th>R</th>
-              <th>Stop</th>
-              <th>Target</th>
+              {th("ticker", "Ticker")}
+              {th("side", "Side")}
+              {th("shares", "Shares")}
+              {th("avg", "Entry")}
+              {th("last", "Last")}
+              {th("pl", "Open P/L")}
+              {th("pct", "%")}
+              {th("acct", "% of acct")}
+              {th("r", "R")}
+              {th("days", "Days")}
+              {th("stop", "Stop")}
+              {th("target", "Target")}
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ t, last, shares, avg, pl, pct: p, r }) => (
+            {sorted.map(({ t, last, shares, avg, pl, pct: p, acct, r, days }) => (
               <tr key={t.id}>
-                <td className="font-semibold">{t.ticker}</td>
+                <td className="font-semibold">
+                  <a
+                    className="text-accent underline"
+                    href={`#trade-${t.id}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      document.getElementById(`trade-${t.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                  >
+                    {t.ticker}
+                  </a>
+                </td>
                 <td className={t.direction === "long" ? "text-gain" : "text-loss"}>{t.direction}</td>
-                <td className="num">{shares}</td>
+                <td className="num">{shares.toLocaleString("en-US")}</td>
                 <td className="num">{avg.toFixed(dp(avg))}</td>
                 <td className="num">{last === null ? "—" : last.toFixed(dp(last))}</td>
                 <td className={`num font-semibold ${plClass(pl ?? 0)}`}>{pl === null ? "—" : money(pl, { sign: true, cents: true })}</td>
                 <td className={`num ${plClass(pl ?? 0)}`}>{pct(p)}</td>
+                <td className="num">{acct === null ? "—" : `${acct.toFixed(2)}%`}</td>
                 <td className={`num ${plClass(r ?? 0)}`}>{r === null ? "—" : `${r >= 0 ? "+" : ""}${r.toFixed(2)}R`}</td>
+                <td className="num">{days ?? "—"}</td>
                 <td className="num">{t.stop}</td>
                 <td className="num">{t.target ?? "—"}</td>
                 <td className="text-xs text-muted">{t.mode === "dry" ? "dry run (shadow size)" : t.status === "closing" ? "closing" : ""}</td>
@@ -807,7 +859,8 @@ function OpenPositions({ trades, quotes }: { trades: Trade[]; quotes: Record<str
                 <td colSpan={5}>Total</td>
                 <td className={`num ${plClass(totPl)}`}>{money(totPl, { sign: true, cents: true })}</td>
                 <td className={`num ${plClass(totPl)}`}>{pct(totCost ? (totPl / totCost) * 100 : null)}</td>
-                <td colSpan={4}></td>
+                <td className="num">{accountValue ? `${((totValue / accountValue) * 100).toFixed(2)}%` : "—"}</td>
+                <td colSpan={5}></td>
               </tr>
             )}
           </tbody>
@@ -1013,7 +1066,7 @@ export default function StocksPage() {
         {data.meta.errors.length > 0 && <div className="w-full text-xs text-loss">{data.meta.errors.join(" · ")}</div>}
       </section>
 
-      <OpenPositions trades={open} quotes={data.quotes} />
+      <OpenPositions trades={open} quotes={data.quotes} accountValue={data.accountValue} now={data.now} />
 
       {data.alerts.map((a) => (
         <div key={a.id} className="card flex items-start justify-between gap-3 border-loss/60 p-3 text-sm text-loss">
