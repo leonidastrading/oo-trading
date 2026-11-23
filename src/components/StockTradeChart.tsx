@@ -48,6 +48,9 @@ export function StockTradeChart({ trade }: { trade: Trade }) {
     const shift = tf === "5m" ? etOffsetMinutes(bars[0].time * 1000) * 60 : 0;
     const series = chart.addSeries(CandlestickSeries, { upColor: gain, downColor: loss, borderVisible: false, wickUpColor: gain, wickDownColor: loss });
     const data = bars.map((b) => ({ ...b, time: (b.time + shift) as UTCTimestamp }));
+    // Sub-dollar stocks trade in finer ticks: show 4 decimals instead of cents.
+    const lastClose = bars[bars.length - 1].close;
+    series.applyOptions({ priceFormat: lastClose < 1 ? { type: "price", precision: 4, minMove: 0.0001 } : { type: "price", precision: 2, minMove: 0.01 } });
     series.setData(data);
 
     // Keep the entry, stop and target on screen even when price is far from them.
