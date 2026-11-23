@@ -98,7 +98,6 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
     stop: "",
     target: "",
     thesis: "",
-    days: "",
     source: "",
     benchmark: "",
     stage: "",
@@ -174,11 +173,11 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
       const base = adopt ? f : blank;
       const next = { ...base, ticker: p.ticker, source: "trend scout" };
       const labels: Record<string, string> = {
-        stop: "stop", days: "time frame", thesis: "thesis", stage: "stage",
+        stop: "stop", thesis: "thesis", stage: "stage",
         becauseData: "because of this data", catalyst: "catalyst", invalidation: "what proves it wrong",
       };
       const empty: string[] = [];
-      for (const k of ["stop", "target", "days", "thesis", "invalidation", "ideaNotes", "becauseData", "catalyst", "catalystDate", "priceImplies", "stage", "crowding", "benchmark"] as const) {
+      for (const k of ["stop", "target", "thesis", "invalidation", "ideaNotes", "becauseData", "catalyst", "catalystDate", "priceImplies", "stage", "crowding", "benchmark"] as const) {
         if (p[k]) next[k] = p[k];
         else if (labels[k]) empty.push(labels[k]);
       }
@@ -249,7 +248,6 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
     !f.ticker && "Ticker",
     !f.stop && "Stop",
     f.entryType !== "market" && !f.limitPrice && (f.entryType === "stop" ? "Entry price" : "Limit price"),
-    !f.days && "Time frame (days)",
     !f.source && "Source",
     !len(f.thesis, 10) && "Thesis (10+ characters)",
     f.stage === "" && "Stage",
@@ -266,7 +264,6 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
     limitPrice: f.entryType !== "market" ? Number(f.limitPrice) : null,
     stop: Number(f.stop),
     target: f.target ? Number(f.target) : null,
-    days: Number(f.days),
     stage: f.stage === "" ? null : Number(f.stage),
     crowding: f.crowding || null,
     addTrigger: f.planAdd ? f.addTrigger : null,
@@ -381,10 +378,6 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
         <label className="text-xs text-ink-2">
           Target (optional)
           <input className={inputCls} inputMode="decimal" value={f.target} onChange={set("target")} />
-        </label>
-        <label className="text-xs text-ink-2">
-          Time frame (days)
-          <input className={inputCls} inputMode="numeric" value={f.days} onChange={set("days")} />
         </label>
         <label className="text-xs text-ink-2">
           Source
@@ -599,7 +592,7 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
                 </a>
               </>
             )}{" "}
-            · exit by {t.exitBy}
+            {t.exitBy ? `· exit by ${t.exitBy}` : ""}
             {t.mode === "dry" ? " · DRY RUN" : ""}
           </span>
         </div>

@@ -84,7 +84,7 @@ describe("stock idea form", () => {
     expect(parseIdea({ ...idea }).errors).toEqual([]);
     const r = parseIdea({ ticker: "", direction: "up", thesis: "", source: "x", shares: 100 });
     expect(r.idea).toBeNull();
-    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Time frame[^]*Source[^]*Size[^]*What proves it wrong[^]*Stage[^]*Because of this data[^]*Catalyst is required/);
+    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Source[^]*Size[^]*What proves it wrong[^]*Stage[^]*Because of this data[^]*Catalyst is required/);
     expect(parseIdea({ ...idea, entryType: "limit" }).errors).toContain("Limit price is required for a limit entry");
     expect(parseIdea({ ...idea, target: "" }).idea?.target).toBeNull();
     // Stage 3 long needs the late-stage tick; a short at stage 3 doesn't.
@@ -100,10 +100,10 @@ describe("pre-trade checks", () => {
   it("passes a good long idea", () => {
     expect(failed(preTradeChecks(ctx()))).toEqual([]);
   });
-  it("checks the stop side and the 1–25% risk", () => {
+  it("checks the stop side; any stop distance is allowed", () => {
     expect(failed(preTradeChecks(ctx({ idea: { ...idea, stop: 205 } })))).toContain("Stop side");
-    expect(failed(preTradeChecks(ctx({ idea: { ...idea, stop: 199 } })))).toContain("Risk to stop"); // 0.5%
-    expect(failed(preTradeChecks(ctx({ idea: { ...idea, stop: 140 } })))).toContain("Risk to stop"); // 30%
+    expect(failed(preTradeChecks(ctx({ idea: { ...idea, stop: 199 } })))).not.toContain("Risk to stop"); // 0.5%
+    expect(failed(preTradeChecks(ctx({ idea: { ...idea, stop: 140 } })))).not.toContain("Risk to stop"); // 30%
     const short = { ...idea, direction: "short" as const, stop: 210, target: 180 };
     expect(failed(preTradeChecks(ctx({ idea: short })))).toEqual([]);
     expect(failed(preTradeChecks(ctx({ idea: short, quote: { ...quote, hardToBorrow: true } })))).toContain("Shortable");
@@ -306,5 +306,14 @@ describe("stop entry", () => {
     expect(o).toMatchObject({ orderType: "STOP", stopPrice: "210.00", orderStrategyType: "TRIGGER", duration: "GOOD_TILL_CANCEL" });
     expect(bracketOrder(parseIdea({ ...idea }).idea!, 1, "NORMAL").duration).toBe("DAY"); // market entry
     expect("price" in o).toBe(false);
+  });
+});
+
+describe("no time frame", () => {
+  it("is optional and means no time exit", () => {
+    const { days: _d, ...noDays } = idea;
+    void _d;
+    expect(parseIdea(noDays).errors).toEqual([]);
+    expect(parseIdea(noDays).idea!.days).toBeNull();
   });
 });

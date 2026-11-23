@@ -20,7 +20,8 @@ export interface IdeaInput {
   thesis: string;
   /** What proves it wrong: the thesis kill criteria (separate from the stop). */
   invalidation?: string;
-  days: number;
+  /** Optional time frame in days; without it the trade has no time exit. */
+  days?: number | null;
   source: Source;
   /** Optional sector ETF to score against, in addition to SPY (e.g. XBI, SMH, XLE). */
   benchmark?: string | null;
@@ -108,7 +109,7 @@ export interface Trade extends IdeaInput {
   shadowPosition?: number;
   shadowRisk?: number;
   shadowCapped?: boolean;
-  exitBy: string; // YYYY-MM-DD (ET): closed at market on this day
+  exitBy: string; // YYYY-MM-DD (ET): closed at market on this day ("" = no time exit)
   orderId?: string | null;
   stopOrderId?: string | null;
   targetOrderId?: string | null;
@@ -310,6 +311,7 @@ export function regularSession(now = Date.now()): boolean {
 
 /** Time exit is due from 15:30 ET on the exit-by day (or any session after it). */
 export function timeExitDue(t: Pick<Trade, "exitBy">, now = Date.now()): boolean {
+  if (!t.exitBy) return false;
   const p = etParts(now);
   return regularSession(now) && (p.date > t.exitBy || (p.date === t.exitBy && p.minutesOfDay >= 15 * 60 + 30));
 }
@@ -345,8 +347,9 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
   if (thesis.length > 600) errors.push("Thesis is too long (keep it to 1–3 sentences)");
   const invalidation = String(raw.invalidation ?? "").trim();
   if (invalidation.length > 400) errors.push("Invalidation is too long");
-  const days = num(raw.days);
-  if (!(days >= 1 && days <= 365 && Number.isInteger(days))) errors.push("Time frame is required (whole days, 1–365)");
+  const daysGiven = raw.days !== undefined && raw.days !== null && raw.days !== "";
+  const days = daysGiven ? num(raw.days) : null;
+  if (days !== null && !(days >= 1 && days <= 365 && Number.isInteger(days))) errors.push("Time frame must be whole days, 1–365 (or left out)");
   const source = SOURCES.includes(raw.source as Source) ? (raw.source as Source) : null;
   const benchRaw = String(raw.benchmark ?? "").trim().toUpperCase();
   if (benchRaw && !/^[A-Z][A-Z0-9.\-/]{0,9}$/.test(benchRaw)) errors.push("Benchmark ETF must be a ticker (e.g. XBI) or left empty");
@@ -490,8 +493,8 @@ export function preTradeChecks(c: CheckContext): Check[] {
         : `A ${idea.direction} stop must be ${idea.direction === "long" ? "below" : "above"} the current price (${last}) and the entry`,
     );
     const riskPct = (Math.abs(ref - idea.stop) / ref) * 100;
-    const riskOk = riskPct >= 2 && riskPct <= 25;
-    add("Risk to stop", riskOk, `${riskPct.toFixed(2)}% of the entry price${riskOk ? "" : " (must be 2%–25%)"}`);
+    // Any stop distance is allowed: the shadow size shrinks or grows to keep the risk at the set %.
+    add("Risk to stop", true, `${riskPct.toFixed(2)}% of the entry price`);
     if (idea.entryType !== "market" && idea.limitPrice) {
       const lOk = idea.direction === "long" ? idea.limitPrice > idea.stop : idea.limitPrice < idea.stop;
       add("Limit vs stop", lOk, lOk ? "Entry price is on the right side of the stop" : "The entry price is past the stop");
