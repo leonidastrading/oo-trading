@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireKv } from "@/lib/apiGuard";
 import { kv } from "@/lib/kv";
 import { liveTradingEnabled } from "@/lib/schwab/trading";
-import { accountValue, killSwitchOn, loadAlerts, loadLog, loadSettings, loadTrades, reconcile, stockQuotes, tradingAccount, type LogEntry } from "@/lib/stocks/engine";
+import { accountValue, unmanagedStocks, type HeldStock, killSwitchOn, loadAlerts, loadLog, loadSettings, loadTrades, reconcile, stockQuotes, tradingAccount, type LogEntry } from "@/lib/stocks/engine";
 import { cached } from "@/lib/cache";
 import { effectiveSettings, extendedSession, regularSession, shadowExposure, sizeUpStage, streakLockUntil, summarize, weekShadowPl, type StoredSettings, type Summary, type Trade } from "@/lib/stocks/rules";
 
@@ -23,6 +23,9 @@ export interface StocksData {
   summary: Summary;
   blocks: LogEntry[];
   sizeUp: string | null;
+  /** Stock positions at Schwab the tab isn't managing (to adopt). */
+  unmanaged: HeldStock[];
+  overrides: number;
   accountValue: number | null;
   exposure: { long: number; short: number; gross: number; net: number; grossPct: number | null; netPct: number | null };
   lockouts: { weekShadowPl: number; streakUntil: string | null };
@@ -52,7 +55,9 @@ export async function GET() {
   const summary = summarize(trades, mode);
   summary.shadowPlPct = acctValue ? Math.round((summary.shadowPl / acctValue) * 10000) / 100 : null;
   const ex = shadowExposure(trades, mode);
-  const overrides = log.filter((l) => l.kind === "change" && /override/i.test(l.text)).length; // none exist: the rules can't be overridden
+  // Overrides only come from adopted trades that broke a guardrail; any of them stops the size-up banner.
+  const overrides = trades.filter((t) => t.mode === mode && (t.overrides?.length ?? 0) > 0).length;
+  const unmanaged = acct ? await unmanagedStocks(acct, trades).catch((e: Error) => (errors.push(`Positions: ${e.message}`), [] as HeldStock[])) : [];
   const body: StocksData = {
     meta: { pollMs: regularSession() ? 60_000 : extendedSession() ? 5 * 60_000 : null, errors },
     account,
@@ -68,6 +73,8 @@ export async function GET() {
     summary,
     blocks: log.filter((l) => l.kind === "block"),
     sizeUp: sizeUpStage(trades, mode, overrides).label,
+    unmanaged,
+    overrides,
     accountValue: acctValue,
     exposure: { ...ex, grossPct: acctValue ? (ex.gross / acctValue) * 100 : null, netPct: acctValue ? (ex.net / acctValue) * 100 : null },
     lockouts: { weekShadowPl: weekShadowPl(trades, mode, Date.now()), streakUntil: streakLockUntil(trades, mode) },

@@ -27,7 +27,15 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
   );
 }
 
-function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
+interface Held {
+  symbol: string;
+  description: string;
+  qty: number;
+  avgPrice: number;
+}
+
+/** New idea — or, with `adopt`, the same form for a position already opened outside the app. */
+function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: boolean; adopt?: Held; onCancel?: () => void }) {
   const blank = {
     ticker: "",
     direction: "long",
@@ -52,7 +60,8 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
     planAdd: false,
     addTrigger: "",
   };
-  const [f, setF] = useState(blank);
+  const [f, setF] = useState(adopt ? { ...blank, ticker: adopt.symbol, direction: adopt.qty > 0 ? "long" : "short" } : blank);
+  const endpoint = adopt ? "/api/stocks/adopt" : "/api/stocks/ideas";
   const [busy, setBusy] = useState(false);
   type Res = {
     ok: boolean;
@@ -61,6 +70,7 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
     checks?: Check[];
     order?: unknown;
     error?: string;
+    overrides?: string[];
     sizing?: {
       liveShares: number;
       entryRef: number;
@@ -112,14 +122,14 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
   async function check() {
     setBusy(true);
     setRes(null);
-    const { json } = await post("/api/stocks/ideas", { ...payload(), preview: true });
+    const { json } = await post(endpoint, { ...payload(), preview: true });
     setRes(json as Res);
     setPreviewed(json.ok ? key : null);
     setBusy(false);
   }
   async function submit() {
     setBusy(true);
-    const { json } = await post("/api/stocks/ideas", payload());
+    const { json } = await post(endpoint, payload());
     setRes(json as Res);
     setPreviewed(null);
     setBusy(false);
@@ -128,30 +138,48 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
   }
   return (
     <section className="card space-y-3 p-4">
-      <h2 className="font-bold text-accent">New idea</h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-bold text-accent">{adopt ? `Manage ${adopt.symbol} (opened outside the app)` : "New idea"}</h2>
+        {onCancel && (
+          <button className="text-xs text-muted underline" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
+      </div>
+      {adopt && (
+        <p className="rounded-lg bg-surface-2 p-2 text-xs text-ink-2">
+          Schwab position: <b>{Math.abs(adopt.qty)}</b> sh {adopt.qty > 0 ? "long" : "short"} @ <b>{adopt.avgPrice}</b>. Fill in the rest; on confirm the server places a
+          real stop{f.target ? " and target" : ""} for these shares at Schwab and manages it from then on. Cancel any stop you set in the Schwab app first, or both
+          could fill. Guardrails it already broke are logged as overrides.
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         <label className="text-xs text-muted">
           Ticker
-          <input className={inputCls} value={f.ticker} onChange={(e) => setF({ ...f, ticker: e.target.value.toUpperCase() })} placeholder="AAPL" />
+          <input className={inputCls} value={f.ticker} disabled={!!adopt} onChange={(e) => setF({ ...f, ticker: e.target.value.toUpperCase() })} placeholder="AAPL" />
         </label>
         <label className="text-xs text-muted">
           Direction
-          <select className={inputCls} value={f.direction} onChange={set("direction")}>
+          <select className={inputCls} value={f.direction} disabled={!!adopt} onChange={set("direction")}>
             <option value="long">Long</option>
             <option value="short">Short</option>
           </select>
         </label>
-        <label className="text-xs text-muted">
-          Entry
-          <select className={inputCls} value={f.entryType} onChange={set("entryType")}>
-            <option value="market">Market</option>
-            <option value="limit">Limit</option>
-          </select>
-        </label>
-        <label className="text-xs text-muted">
-          Limit price
-          <input className={inputCls} inputMode="decimal" disabled={f.entryType !== "limit"} value={f.limitPrice} onChange={set("limitPrice")} />
-        </label>
+        {!adopt && (
+          <>
+            <label className="text-xs text-muted">
+              Entry
+              <select className={inputCls} value={f.entryType} onChange={set("entryType")}>
+                <option value="market">Market</option>
+                <option value="limit">Limit</option>
+              </select>
+            </label>
+            <label className="text-xs text-muted">
+              Limit price
+              <input className={inputCls} inputMode="decimal" disabled={f.entryType !== "limit"} value={f.limitPrice} onChange={set("limitPrice")} />
+            </label>
+          </>
+        )}
         <label className="text-xs text-muted">
           Stop
           <input className={inputCls} inputMode="decimal" value={f.stop} onChange={set("stop")} />
@@ -244,7 +272,7 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
           </select>
         </label>
       </div>
-      <div className="space-y-2 rounded-lg bg-surface-2 p-2">
+      <div className={`space-y-2 rounded-lg bg-surface-2 p-2 ${adopt ? "hidden" : ""}`}>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={f.planAdd} onChange={(e) => setF({ ...f, planAdd: e.target.checked })} />
           Plan one add (starter = 1/3 of full shadow size, add = the other 2/3)
@@ -266,7 +294,7 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
           onClick={() => void submit()}
           title={previewed !== key ? "Check & size first" : undefined}
         >
-          {dry ? "Confirm dry run" : "Confirm & send order"}
+          {adopt ? "Confirm & place stop" : dry ? "Confirm dry run" : "Confirm & send order"}
         </button>
         {missing.length > 0 && <span className="w-full text-xs text-warn">Still needed: {missing.join(" · ")}</span>}
         <span className="text-xs text-muted">
@@ -277,12 +305,24 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
       {res && (
         <div className={`rounded-xl border p-3 text-sm ${res.ok ? "border-gain/40" : "border-loss/40"}`}>
           <div className={`font-semibold ${res.ok ? "text-gain" : "text-loss"}`}>
-            {res.preview ? (res.ok ? "All checks pass — review the size, then confirm" : "Blocked") : res.ok ? (dry ? "Dry run logged (nothing sent)" : "Order sent") : "Blocked"}
+            {res.preview
+              ? res.ok
+                ? adopt
+                  ? "Ready — review, then confirm to place the stop"
+                  : "All checks pass — review the size, then confirm"
+                : "Blocked"
+              : res.ok
+                ? adopt
+                  ? "Adopted — stop placed at Schwab"
+                  : dry
+                    ? "Dry run logged (nothing sent)"
+                    : "Order sent"
+                : "Blocked"}
           </div>
           {res.sizing && (
             <div className="my-2 grid grid-cols-2 gap-x-4 gap-y-0.5 rounded-lg bg-surface-2 p-2 text-xs sm:grid-cols-3">
               <span>
-                {dry ? "Order (dry run, not sent)" : "Order to Schwab"}: <b>{res.sizing.liveShares}</b> share{res.sizing.liveShares === 1 ? "" : "s"}
+                {adopt ? "Position (from Schwab)" : dry ? "Order (dry run, not sent)" : "Order to Schwab"}: <b>{res.sizing.liveShares}</b> share{res.sizing.liveShares === 1 ? "" : "s"}
               </span>
               <span>
                 Shadow shares: <b>{res.sizing.shadow.shares.toLocaleString("en-US")}</b>
@@ -306,6 +346,11 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
             </div>
           )}
           {res.error && <div className="text-loss">{res.error}</div>}
+          {!!res.overrides?.length && (
+            <div className="text-warn">
+              Recorded as overrides (stops the size-up banner): {res.overrides.join("; ")}
+            </div>
+          )}
           {!res.checks?.length && res.errors?.map((e) => <div key={e} className="text-loss">{e}</div>)}
           {res.checks && (
             <ul className="mt-1 space-y-0.5">
@@ -508,9 +553,11 @@ export default function StocksPage() {
   const [busy, setBusy] = useState(false);
   const [flatMsg, setFlatMsg] = useState<string | null>(null);
   const [shownChart, setShownChart] = useState<string | null>(null);
+  const [adopting, setAdopting] = useState<Held | null>(null);
   if (!data) return <div className="text-sm text-muted">{error ?? "Loading…"}</div>;
   const dry = data.mode === "dry";
-  const open = data.trades.filter((t) => ["pending", "open", "closing"].includes(t.status) && t.mode === data.mode);
+  // Every open trade, dry and live (an adopted position is live even while new ideas are dry runs).
+  const open = data.trades.filter((t) => ["pending", "open", "closing"].includes(t.status));
   const closed = data.trades.filter((t) => t.status === "closed" || t.status === "cancelled");
   const s = data.summary;
   const chartTrade = closed.find((t) => t.id === shownChart) ?? null;
@@ -686,6 +733,27 @@ export default function StocksPage() {
           ))}
         </section>
       )}
+
+      {data.unmanaged.length > 0 && (
+        <section className="card space-y-2 p-4">
+          <h2 className="font-bold text-accent">At Schwab, not managed here ({data.unmanaged.length})</h2>
+          <p className="text-xs text-muted">
+            Stock positions in account ••{data.account?.last4} this tab doesn&apos;t manage, e.g. bought in the Schwab app while the API was down. Adopt one to have its stop
+            and target managed here.
+          </p>
+          {data.unmanaged.map((h) => (
+            <div key={h.symbol} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2 p-2 text-sm">
+              <span>
+                <b>{h.symbol}</b> {h.qty > 0 ? "long" : "short"} {Math.abs(h.qty)} sh @ {h.avgPrice} <span className="text-xs text-muted">{h.description}</span>
+              </span>
+              <button className="rounded-lg border border-accent px-3 py-1 text-xs font-semibold text-accent" onClick={() => setAdopting(h)}>
+                Manage this position
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
+      {adopting && <IdeaForm key={adopting.symbol} dry={dry} adopt={adopting} onCancel={() => setAdopting(null)} onDone={refresh} />}
 
       <IdeaForm dry={dry} onDone={refresh} />
 

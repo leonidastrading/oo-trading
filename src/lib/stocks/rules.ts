@@ -141,6 +141,10 @@ export interface Trade extends IdeaInput {
   plannedRisk?: number | null;
   add?: AddLeg | null;
   postMortem?: PostMortem | null;
+  /** Placed outside the app (e.g. in the Schwab app while the API was down) and adopted afterwards. */
+  adopted?: boolean;
+  /** Guardrails it broke (only possible for adopted trades); any override stops the size-up banner. */
+  overrides?: string[];
 }
 
 export interface StockSettings {
@@ -933,5 +937,23 @@ export function marketClose(t: Pick<Trade, "direction" | "ticker" | "shares">) {
     duration: "DAY",
     orderType: "MARKET",
     orderLegCollection: [{ instruction: close, quantity: t.shares, instrument: { symbol: t.ticker, assetType: "EQUITY" } }],
+  };
+}
+
+/** Pre-trade checks that can't be undone after the fact: an adopted trade must have a usable stop now. */
+const ADOPT_HARD = new Set(["Quote", "Stop side", "Shortable"]);
+/** Checks that don't apply to a trade that already happened. */
+const ADOPT_SKIP = new Set(["Session", "Limit vs stop", "Target side"]);
+
+/**
+ * Adopting a position opened outside the app: the stop must be on the right side of the current price; any
+ * other guardrail it breaks is recorded as an override (it can't be undone, but it's counted).
+ */
+export function adoptChecks(checks: Check[]): { hard: Check[]; overrides: Check[]; shown: Check[] } {
+  const shown = checks.filter((c) => !ADOPT_SKIP.has(c.name));
+  return {
+    shown,
+    hard: shown.filter((c) => !c.ok && ADOPT_HARD.has(c.name)),
+    overrides: shown.filter((c) => !c.ok && !ADOPT_HARD.has(c.name)),
   };
 }

@@ -4,7 +4,9 @@
 import "server-only";
 import { KEYS, kv } from "../kv";
 import { schwabGet, SchwabApiError, type AccountNumber } from "../schwab/client";
-import { cachedMinuteBars } from "../schwab/data";
+import { cachedFills, cachedMinuteBars } from "../schwab/data";
+import { cached } from "../cache";
+import { normalizePosition, type SchwabPosition } from "../spreads";
 import { mockEnabled } from "../schwab/mock";
 import { liveTradingEnabled, schwabOrder } from "../schwab/trading";
 import { addDays, etParts, isTradingDay } from "../time";
@@ -25,6 +27,7 @@ import {
   starterShares,
   checkAdd,
   parsePostMortem,
+  adoptChecks,
   stopReplacement,
   targetReplacement,
   timeExitDue,
@@ -147,6 +150,34 @@ export async function accountValue(acct: TradingAccount): Promise<number | null>
     `/trader/v1/accounts/${acct.hash}`,
   );
   return raw.securitiesAccount?.currentBalances?.liquidationValue ?? raw.aggregatedBalance?.currentLiquidationValue ?? null;
+}
+
+export interface HeldStock {
+  symbol: string;
+  description: string;
+  assetType: string;
+  qty: number;
+  avgPrice: number;
+  marketValue: number;
+}
+
+/** Stock/ETF positions in the trading account (Schwab), cached briefly. */
+export async function heldStocks(acct: TradingAccount, force = false): Promise<HeldStock[]> {
+  const load = async () => {
+    const raw = await schwabGet<{ securitiesAccount?: { positions?: SchwabPosition[] } }>(`/trader/v1/accounts/${acct.hash}`, { fields: "positions" });
+    return (raw.securitiesAccount?.positions ?? [])
+      .map(normalizePosition)
+      .filter((p) => ["EQUITY", "COLLECTIVE_INVESTMENT", "ETF"].includes(p.assetType) && p.qty !== 0)
+      .map((p) => ({ symbol: p.symbol, description: p.description, assetType: p.assetType, qty: p.qty, avgPrice: Math.round(p.avgPrice * 100) / 100, marketValue: p.marketValue }));
+  };
+  if (force) return load();
+  return (await cached("stocks:held", 60_000, load)).data ?? [];
+}
+
+/** Held stocks the tab isn't managing (e.g. bought in the Schwab app while the API was down). */
+export async function unmanagedStocks(acct: TradingAccount, trades: Trade[]): Promise<HeldStock[]> {
+  const managed = new Set(trades.filter((t) => t.mode === "live" && ["pending", "open", "closing"].includes(t.status)).map((t) => t.ticker));
+  return (await heldStocks(acct)).filter((h) => !managed.has(h.symbol));
 }
 
 export async function stockQuotes(symbols: string[]): Promise<Record<string, StockQuote>> {
@@ -482,6 +513,133 @@ export async function changeTarget(id: string, target: number): Promise<{ ok: bo
     await saveTrade(t);
     await log({ kind: "change", mode: t.mode, ticker: t.ticker, tradeId: id, text: `Target changed to ${tgt}` });
     return { ok: true };
+  });
+}
+
+// ---- Adopt a position opened outside the app ----
+
+/**
+ * Take over a stock position placed in the Schwab app (e.g. while the API was down): the idea fields are
+ * filled in after the fact, the server puts on the stop (and target) for the actual share count, and from
+ * then on it's managed like any other trade. A stop on the wrong side of the price blocks it; any other
+ * guardrail it broke is recorded as an override (counted against the size-up rule).
+ */
+export async function adoptPosition(raw: Record<string, unknown>, opts: { preview?: boolean } = {}) {
+  return withLock(async () => {
+    const { idea, errors } = parseIdea({ ...raw, entryType: "market", limitPrice: null, planAdd: false });
+    if (!idea) return { ok: false, errors, checks: [] as Check[] };
+    const now = clock();
+    const acct = await tradingAccount();
+    const [held, quotes, trades, kill, settings] = await Promise.all([
+      heldStocks(acct, true),
+      stockQuotes([idea.ticker, "SPY", ...(idea.benchmark ? [idea.benchmark] : [])]).catch(() => ({}) as Record<string, StockQuote>),
+      loadTrades(),
+      killSwitchOn(),
+      settingsNow(),
+    ]);
+    const pos = held.find((h) => h.symbol === idea.ticker);
+    const pre: Check[] = [];
+    pre.push({ name: "Position at Schwab", ok: !!pos, detail: pos ? `${pos.qty} sh @ ${pos.avgPrice}` : `No ${idea.ticker} position in account ••${acct.last4}` });
+    if (pos) pre.push({ name: "Direction", ok: (pos.qty > 0) === (idea.direction === "long"), detail: pos.qty > 0 ? "Held long" : "Held short" });
+    const already = trades.find((t) => t.ticker === idea.ticker && t.mode === "live" && ["pending", "open", "closing"].includes(t.status));
+    pre.push({ name: "Not managed yet", ok: !already, detail: already ? "Already managed here" : "Not managed" });
+    pre.push({ name: "Server live switch", ok: liveTradingEnabled(), detail: liveTradingEnabled() ? "On (the stop is a real order)" : "STOCK_LIVE_TRADING is off" });
+    const acctValue = await accountValue(acct).catch(() => null);
+    const quote = quotes[idea.ticker] ?? null;
+    // Same guardrails as a new idea, judged as live, at the position's entry price.
+    const all = preTradeChecks({ idea, quote, trades, settings: { ...settings, dryRun: false }, killSwitch: kill, accountValue: acctValue, now });
+    const split = adoptChecks(all);
+    const blocking = [...pre.filter((c) => !c.ok), ...split.hard];
+    const checks = [...pre, ...split.shown];
+    const entry = pos?.avgPrice ?? 0;
+    const shares = Math.abs(pos?.qty ?? 0);
+    const size = shadowSize(acctValue, settings, entry, idea.stop);
+    const sizing = {
+      liveShares: shares,
+      shadow: size,
+      entryRef: entry,
+      accountValue: acctValue,
+      planAdd: false,
+      starterShadow: size.shares,
+      addShadow: 0,
+      starterPosition: size.position,
+      starterRisk: size.risk,
+    };
+    const overrides = split.overrides.map((c) => `${c.name}: ${c.detail}`);
+    if (opts.preview || blocking.length) {
+      if (!opts.preview) await log({ kind: "block", mode: "live", ticker: idea.ticker, text: `Adopt blocked: ${blocking.map((c) => `${c.name}: ${c.detail}`).join("; ")}` });
+      return { ok: blocking.length === 0, preview: opts.preview, errors: blocking.map((c) => `${c.name}: ${c.detail}`), overrides, checks, sizing, mode: "live" as const };
+    }
+
+    // Protective orders for the actual shares: stop + target as one OCO, or the stop alone.
+    const t0 = { ...idea, shares };
+    const protect = idea.target ? { orderStrategyType: "OCO", childOrderStrategies: [targetReplacement(t0, idea.target), stopReplacement(t0, idea.stop)] } : stopReplacement(t0, idea.stop);
+    let orderId: string | null = null;
+    let stopOrderId: string | null = null;
+    let targetOrderId: string | null = null;
+    try {
+      const r = await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, protect);
+      orderId = r.orderId;
+      if (idea.target && r.orderId) {
+        const kids = flatChildren(await getOrder(acct, r.orderId));
+        stopOrderId = kids.find((k) => k.orderType === "STOP")?.orderId?.toString() ?? null;
+        targetOrderId = kids.find((k) => k.orderType === "LIMIT")?.orderId?.toString() ?? null;
+      } else stopOrderId = r.orderId;
+    } catch (e) {
+      await log({ kind: "error", mode: "live", ticker: idea.ticker, text: `Adopt: Schwab refused the stop: ${(e as Error).message}`, detail: { order: protect } });
+      return { ok: false, errors: [`Schwab refused the stop: ${(e as Error).message}`], overrides, checks, sizing, mode: "live" as const };
+    }
+    const fills = await cachedFills(etParts(now).date, 60_000).catch(() => null);
+    const lastFill = (fills?.data ?? []).filter((f) => f.symbol === idea.ticker).sort((a, b) => b.time - a.time)[0];
+    const entryTime = lastFill?.time ?? now;
+    const risk = Math.abs(entry - idea.stop);
+    const trade: Trade = {
+      ...idea,
+      id: rid(),
+      mode: "live",
+      status: "open",
+      shares,
+      submittedAt: entryTime,
+      priceAtSubmit: entry,
+      initialStop: idea.stop,
+      riskPerShare: Math.round(risk * 100) / 100,
+      accountValue: acctValue,
+      shadowRiskPct: settings.riskPct,
+      shadowShares: size.shares,
+      fullShadowShares: size.shares,
+      plannedRisk: Math.round(size.shares * risk * 100) / 100,
+      shadowPosition: size.position,
+      shadowRisk: size.risk,
+      shadowCapped: size.capped,
+      exitBy: exitByDate(etParts(entryTime).date, idea.days),
+      orderId,
+      stopOrderId,
+      targetOrderId,
+      orderJson: protect,
+      session: "NORMAL",
+      entryPrice: entry,
+      entryTime,
+      slippage: null,
+      stopHistory: [{ at: now, stop: idea.stop }],
+      targetHistory: [{ at: now, target: idea.target ?? null }],
+      notes: ["Adopted: opened outside the app"],
+      add: null,
+      postMortem: null,
+      adopted: true,
+      overrides,
+    };
+    await markEntry(trade, entryTime, quotes);
+    await saveTrade(trade);
+    await log({
+      kind: "order",
+      mode: "live",
+      ticker: idea.ticker,
+      tradeId: trade.id,
+      text: `Adopted ${shares} sh ${idea.ticker} @ ${entry} (opened outside the app); sent ${idea.target ? `stop ${idea.stop} + target ${idea.target} (OCO)` : `stop ${idea.stop}`} · order ${orderId} · account ••${acct.last4}`,
+      detail: { order: protect },
+    });
+    for (const o of overrides) await log({ kind: "block", mode: "live", ticker: idea.ticker, tradeId: trade.id, text: `Override (adopted trade): ${o}` });
+    return { ok: true, errors: [], overrides, checks, sizing, mode: "live" as const, trade };
   });
 }
 

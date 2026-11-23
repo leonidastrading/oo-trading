@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  adoptChecks,
   bracketOrder,
   changeSettings,
   checkStopChange,
@@ -242,5 +243,21 @@ describe("stops, results and settings", () => {
   it("dates", () => {
     expect(weekStart("2026-11-22")).toBe("2026-11-16");
     expect(exitByDate("2026-11-18", 10)).toBe("2026-11-30"); // the 28th is a Saturday
+  });
+});
+
+describe("adopting a position opened outside the app", () => {
+  it("skips entry-only checks, blocks on hard ones, records the rest as overrides", () => {
+    const r = adoptChecks([
+      { name: "Session", ok: false, detail: "closed" },
+      { name: "Quote", ok: true, detail: "" },
+      { name: "Stop side", ok: false, detail: "stop above price" },
+      { name: "Risk", ok: false, detail: "30%" },
+      { name: "Gross exposure", ok: false, detail: "80%" },
+      { name: "Max open", ok: true, detail: "" },
+    ]);
+    expect(r.shown.map((c) => c.name)).not.toContain("Session");
+    expect(r.hard.map((c) => c.name)).toEqual(["Stop side"]);
+    expect(r.overrides.map((c) => c.name)).toEqual(["Risk", "Gross exposure"]);
   });
 });

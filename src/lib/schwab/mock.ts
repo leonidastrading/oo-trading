@@ -80,6 +80,11 @@ export function mockResponse(path: string): unknown {
       instrument: { assetType: "OPTION", symbol: sym(exp, pc, k), putCall: pc === "P" ? "PUT" : "CALL", underlyingSymbol: "$SPX" },
     };
   });
+  // One stock bought in the Schwab app (exercises the Stocks tab's "adopt" flow).
+  positions.push({
+    longQuantity: 2, shortQuantity: 0, averagePrice: 290, marketValue: 600, currentDayProfitLoss: 4, longOpenProfitLoss: 20,
+    instrument: { assetType: "EQUITY", symbol: "TSLA", description: "TESLA INC" },
+  } as unknown as (typeof positions)[number]);
   return {
     securitiesAccount: {
       type: "MARGIN", accountNumber: "12349061", positions,
