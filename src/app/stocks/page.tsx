@@ -846,6 +846,24 @@ export default function StocksPage() {
   // Every open trade, dry and live (an adopted position is live even while new ideas are dry runs).
   const open = data.trades.filter((t) => ["pending", "open", "closing"].includes(t.status));
   const closed = data.trades.filter((t) => t.status === "closed" || t.status === "cancelled");
+  // Total unrealized P/L of the filled positions (actual shares, incl. a filled add), and as a % of their cost.
+  const openPl = open.reduce(
+    (a, t) => {
+      const last = data.quotes[t.ticker];
+      if (t.entryPrice == null || last == null || (t.status !== "open" && t.status !== "closing")) return a;
+      const dir = t.direction === "long" ? 1 : -1;
+      const legs = [{ sh: t.shares, px: t.entryPrice }, ...(t.add?.status === "filled" && t.add.price ? [{ sh: t.add.liveShares, px: t.add.price }] : [])];
+      for (const l of legs) {
+        a.pl += (last - l.px) * dir * l.sh;
+        a.cost += l.px * l.sh;
+      }
+      a.n += 1;
+      if (t.mode === "dry") a.dryN += 1;
+      a.pct = a.cost > 0 ? (a.pl / a.cost) * 100 : 0;
+      return a;
+    },
+    { pl: 0, cost: 0, pct: 0, n: 0, dryN: 0 },
+  );
   const s = data.summary;
   const chartTrade = closed.find((t) => t.id === shownChart) ?? null;
   const needPm = data.trades.filter((t) => t.mode === data.mode && t.status === "closed" && !t.postMortem);
@@ -874,6 +892,23 @@ export default function StocksPage() {
             {data.account ? `${data.account.nickname ?? "Schwab"} ••${data.account.last4}` : "Not connected"}
             {data.account?.type && <span className="ml-2 text-sm font-normal text-muted">{data.account.type}</span>}
           </div>
+        </div>
+        <div>
+          <div className="text-xs uppercase tracking-wide text-muted">Open P/L ({openPl.n} position{openPl.n === 1 ? "" : "s"})</div>
+          <div className={`text-lg font-bold ${openPl.n ? plClass(openPl.pl) : "text-muted"}`}>
+            {openPl.n ? (
+              <>
+                {money(openPl.pl, { sign: true, cents: true })}{" "}
+                <span className="text-sm">
+                  ({openPl.pct >= 0 ? "+" : ""}
+                  {openPl.pct.toFixed(2)}%)
+                </span>
+              </>
+            ) : (
+              "—"
+            )}
+          </div>
+          {openPl.dryN > 0 && <div className="text-xs text-muted">{openPl.dryN === openPl.n ? "dry-run positions" : `includes ${openPl.dryN} dry-run`}</div>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded-lg px-2.5 py-1 text-sm font-bold ${dry ? "bg-warn/20 text-warn" : "bg-loss/20 text-loss"}`}>{dry ? "DRY RUN" : "LIVE"}</span>
