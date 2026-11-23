@@ -19,6 +19,7 @@ export type ChartTrade = Pick<Trade, "ticker" | "direction" | "stop" | "initialS
 /** `live` re-reads the bars every 30 s (used on the entry form, before there is a trade). */
 export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
+  const legend = useRef<HTMLSpanElement>(null);
   const [tf, setTf] = useState<"D" | "5m">("D");
   const [bars, setBars] = useState<Bar[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -95,6 +96,17 @@ export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boo
     if (xt) markers.push({ time: xt, position: long ? ("aboveBar" as const) : ("belowBar" as const), shape: long ? ("arrowDown" as const) : ("arrowUp" as const), color: (trade.pl ?? 0) >= 0 ? gain : loss, text: `${trade.exitReason} ${trade.exitPrice}` });
     markers.sort((a, b) => a.time - b.time);
     if (markers.length) createSeriesMarkers(series, markers);
+    // Open / high / low / close of the bar under the crosshair (the latest bar when not hovering).
+    const dp = lastClose < 1 ? 4 : 2;
+    const show = (b: { open: number; high: number; low: number; close: number } | undefined) => {
+      if (!legend.current) return;
+      const x = b ?? data[data.length - 1];
+      const chg = x.open ? ((x.close - x.open) / x.open) * 100 : 0;
+      legend.current.textContent = `O ${x.open.toFixed(dp)}  H ${x.high.toFixed(dp)}  L ${x.low.toFixed(dp)}  C ${x.close.toFixed(dp)}  ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%`;
+      legend.current.style.color = x.close >= x.open ? gain : loss;
+    };
+    show(undefined);
+    chart.subscribeCrosshairMove((p) => show(p.time ? (p.seriesData.get(series) as { open: number; high: number; low: number; close: number } | undefined) : undefined));
     if (tf === "D") chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 90), to: data.length + 3 });
     else chart.timeScale().fitContent();
     return () => chart.remove();
@@ -108,6 +120,7 @@ export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boo
             {k === "D" ? "Daily" : "5 min"}
           </button>
         ))}
+        <span ref={legend} className="num ml-2 whitespace-pre" />
         {err && <span className="text-loss">{err}</span>}
       </div>
       <div ref={box} className="h-64 w-full" />
