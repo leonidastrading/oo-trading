@@ -10,7 +10,7 @@ import { cached } from "../cache";
 import { normalizePosition, type SchwabPosition } from "../spreads";
 import { mockEnabled } from "../schwab/mock";
 import { liveTradingEnabled, schwabOrder } from "../schwab/trading";
-import { addDays, etParts, isTradingDay } from "../time";
+import { etParts } from "../time";
 import {
   bracketOrder,
   entrySession,
@@ -207,19 +207,6 @@ export async function stockQuotes(symbols: string[]): Promise<Record<string, Sto
   return out;
 }
 
-/** A paper DAY entry expires at its session's end (16:00, or 20:00 for extended hours) on the first trading day it could work. */
-function dayOrderExpired(t: Trade, now: number): boolean {
-  let d = etParts(t.submittedAt).date;
-  const endMin = t.session === "SEAMLESS" ? 20 * 60 : 16 * 60;
-  // Placed after that day's end (or on a non-trading day): it works on the next trading day.
-  if (!isTradingDay(d) || etParts(t.submittedAt).minutesOfDay >= endMin) {
-    do d = addDays(d, 1);
-    while (!isTradingDay(d));
-  }
-  const p = etParts(now);
-  return p.date > d || (p.date === d && p.minutesOfDay >= endMin);
-}
-
 // ---- Market-relative marks ----
 
 /**
@@ -406,6 +393,27 @@ const fillOf = (o: RawOrder | null | undefined): { price: number; time: number }
 };
 const flatChildren = (o: RawOrder): RawOrder[] => (o.childOrderStrategies ?? []).flatMap((c) => [c, ...flatChildren(c)]);
 const DEAD = new Set(["CANCELED", "REJECTED", "EXPIRED", "REPLACED"]);
+/** Most times the sync puts an order of one trade back before giving up. */
+const MAX_REENTRIES = 5;
+
+/** Put the protective stop (with the target as an OCO, when there is one) back on an open live trade. */
+async function replaceProtection(acct: TradingAccount, t: Trade): Promise<void> {
+  const order = t.target ? { orderStrategyType: "OCO", childOrderStrategies: [targetReplacement(t, t.target), stopReplacement(t, t.stop)] } : stopReplacement(t, t.stop);
+  const r = await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, order);
+  if (!r.orderId) throw new Error("Schwab returned no order id");
+  if (t.target) {
+    const kids = flatChildren(await getOrder(acct, r.orderId));
+    const stop = kids.find((k) => k.orderType === "STOP")?.orderId;
+    const tgt = kids.find((k) => k.orderType === "LIMIT")?.orderId;
+    if (!stop) throw new Error("the new stop's id wasn't returned");
+    t.stopOrderId = String(stop);
+    t.targetOrderId = tgt ? String(tgt) : null;
+  } else {
+    t.stopOrderId = r.orderId;
+    t.targetOrderId = null;
+  }
+  t.reentries = (t.reentries ?? 0) + 1;
+}
 
 async function getOrder(acct: TradingAccount, id: string): Promise<RawOrder> {
   return (await schwabOrder<RawOrder>("GET", `/trader/v1/accounts/${acct.hash}/orders/${id}`)).data ?? {};
@@ -870,11 +878,6 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
               await markEntry(t, Date.now(), quotes);
               await saveTrade(t);
               changes.push(`${t.ticker}: paper entry filled at ${t.entryPrice}`);
-            } else if (dayOrderExpired(t, now)) {
-              Object.assign(t, { status: "cancelled", exitReason: null });
-              await saveTrade(t);
-              await log({ kind: "cancel", mode: "dry", ticker: t.ticker, tradeId: t.id, text: `DRY RUN — ${t.entryType} entry not filled by the close (day order expired)` });
-              changes.push(`${t.ticker}: paper limit expired`);
             }
             continue;
           }
@@ -948,6 +951,16 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
             await saveTrade(t);
             await log({ kind: "order", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Entry filled at ${f.price} (slippage ${t.slippage})` });
             changes.push(`${t.ticker}: entry filled`);
+          } else if (parent.status === "EXPIRED" && (t.reentries ?? 0) < MAX_REENTRIES && !(await killSwitchOn())) {
+            // An entry that expired unfilled goes back in at the next session (cancel it here to stop that).
+            if (t.session === "SEAMLESS" ? extendedSession(now) : regularSession(now)) {
+              const r = await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, bracketOrder(t, t.shares, t.session ?? "NORMAL"));
+              Object.assign(t, { orderId: r.orderId, stopOrderId: null, targetOrderId: null, reentries: (t.reentries ?? 0) + 1 });
+              await log({ kind: "order", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Entry order expired unfilled: re-entered as order ${r.orderId}` });
+              changes.push(`${t.ticker}: entry re-entered`);
+            }
+            await saveTrade(t);
+            continue;
           } else if (DEAD.has(parent.status ?? "")) {
             Object.assign(t, { status: "cancelled" });
             await saveTrade(t);
@@ -1015,11 +1028,56 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
           await saveTrade(t);
           continue;
         }
-        // A position must never be without a working stop: alert and flatten.
+        // A position must never be without a working stop. A cancelled or expired stop is put back (with
+        // its target) in the regular session, from the open; if that fails, alert and flatten.
+        const tgtDead = !!t.target && (!tgtO || (DEAD.has(tgtO.status ?? "") && tgtO.status !== "REPLACED"));
         if (!stopO || DEAD.has(stopO.status ?? "")) {
-          await alert(`${t.ticker}: no working stop (stop order ${stopO?.status ?? "missing"}). Flattening the position.`, t.id);
-          await closeTradeUnlocked(t, "kill", q);
-          changes.push(`${t.ticker}: stop missing → flattened`);
+          if (!regularSession(now)) {
+            await saveTrade(t);
+            continue; // stops don't trigger outside the regular session: re-enter at the open
+          }
+          let err = (t.reentries ?? 0) >= MAX_REENTRIES ? `already re-entered ${MAX_REENTRIES} times` : "";
+          if (!err) {
+            try {
+              if (tgtO && !DEAD.has(tgtO.status ?? "")) await cancelOrder(acct, t.targetOrderId);
+              await replaceProtection(acct, t);
+            } catch (e) {
+              err = (e as Error).message;
+            }
+          }
+          if (err) {
+            await alert(`${t.ticker}: no working stop (stop order ${stopO?.status ?? "missing"}) and it couldn't be re-entered (${err}). Flattening the position.`, t.id);
+            await closeTradeUnlocked(t, "kill", q);
+            changes.push(`${t.ticker}: stop missing → flattened`);
+            continue;
+          }
+          await saveTrade(t);
+          await alert(`${t.ticker}: the stop order was ${stopO?.status?.toLowerCase() ?? "missing"}; re-entered stop ${t.stop}${t.target ? ` and target ${t.target}` : ""}.`, t.id);
+          await log({ kind: "order", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Stop was ${stopO?.status?.toLowerCase() ?? "missing"}: re-entered stop ${t.stop}${t.target ? ` + target ${t.target}` : ""}` });
+          changes.push(`${t.ticker}: stop re-entered`);
+          continue;
+        }
+        // The target was cancelled or expired while the stop still works: swap in a fresh stop+target pair.
+        if (tgtDead && regularSession(now) && (t.reentries ?? 0) < MAX_REENTRIES && !(t.add && t.add.status !== "cancelled")) {
+          const oldStop = t.stopOrderId;
+          try {
+            await cancelOrder(acct, oldStop);
+            await replaceProtection(acct, t);
+            await saveTrade(t);
+            await log({ kind: "order", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Target was ${tgtO?.status?.toLowerCase() ?? "missing"}: re-entered stop ${t.stop} + target ${t.target}` });
+            changes.push(`${t.ticker}: target re-entered`);
+          } catch (e) {
+            // The old stop is gone and the pair was refused: put a lone stop back, or flatten.
+            try {
+              const r = await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, stopReplacement(t, t.stop));
+              Object.assign(t, { stopOrderId: r.orderId, targetOrderId: null, reentries: MAX_REENTRIES });
+              await saveTrade(t);
+              await alert(`${t.ticker}: the target couldn't be re-entered (${(e as Error).message}); the stop ${t.stop} is working.`, t.id);
+            } catch (e2) {
+              await alert(`${t.ticker}: re-entering the target failed and the stop couldn't be restored (${(e2 as Error).message}). Flattening.`, t.id);
+              await closeTradeUnlocked(t, "kill", q);
+            }
+          }
           continue;
         }
         await saveTrade(t);

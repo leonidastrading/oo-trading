@@ -303,7 +303,8 @@ describe("stop entry", () => {
     expect(parseIdea({ ...idea, entryType: "stop" }).errors).toContain("Entry price is required for a stop entry");
     const i = parseIdea({ ...idea, entryType: "stop", limitPrice: 210 }).idea!;
     const o = bracketOrder(i, 1, "NORMAL");
-    expect(o).toMatchObject({ orderType: "STOP", stopPrice: "210.00", orderStrategyType: "TRIGGER" });
+    expect(o).toMatchObject({ orderType: "STOP", stopPrice: "210.00", orderStrategyType: "TRIGGER", duration: "GOOD_TILL_CANCEL" });
+    expect(bracketOrder(parseIdea({ ...idea }).idea!, 1, "NORMAL").duration).toBe("DAY"); // market entry
     expect("price" in o).toBe(false);
   });
 });

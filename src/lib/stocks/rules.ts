@@ -126,6 +126,8 @@ export interface Trade extends IdeaInput {
   shadowPl?: number | null;
   /** Entry order session: NORMAL (regular hours) or SEAMLESS (extended-hours limit). */
   session?: "NORMAL" | "SEAMLESS";
+  /** How many times an expired/cancelled order of this trade was put back by the sync. */
+  reentries?: number;
   /** SPY (and benchmark ETF) prices at the entry and exit fills, for market-relative scoring. */
   spyEntry?: number | null;
   spyExit?: number | null;
@@ -920,7 +922,8 @@ export function bracketOrder(idea: IdeaInput, shares: number, session: "NORMAL" 
     // The entry may work in extended hours; the stop and target are regular-session orders (Schwab stops
     // don't trigger outside it).
     session,
-    duration: "DAY",
+    // A resting entry (limit or stop) stays working until it fills or is cancelled; a market entry fills at once.
+    duration: idea.entryType === "market" ? "DAY" : "GOOD_TILL_CANCEL",
     orderType: idea.entryType === "market" ? "MARKET" : idea.entryType === "stop" ? "STOP" : "LIMIT",
     ...(idea.entryType === "limit" ? { price: px(idea.limitPrice!) } : {}),
     ...(idea.entryType === "stop" ? { stopPrice: px(idea.limitPrice!) } : {}),
