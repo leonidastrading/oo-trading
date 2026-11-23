@@ -7,6 +7,7 @@ import { StockPnlChart } from "@/components/StockPnlChart";
 import { StockTradeChart } from "@/components/StockTradeChart";
 import { usePoll } from "@/components/usePoll";
 import type { Check, StockQuote, Trade } from "@/lib/stocks/rules";
+import type { CardPrefill } from "@/lib/stocks/scoutCard";
 import { excessReturn, SOURCES, STAGES } from "@/lib/stocks/rules";
 import { formatDateTimeET } from "@/lib/time";
 
@@ -139,6 +140,75 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
   };
   const [res, setRes] = useState<Res | null>(null);
   const [previewed, setPreviewed] = useState<string | null>(null);
+  // The Trend Scout card the idea comes from: it sets the ticker (locked) and prefills the rest.
+  const [card, setCard] = useState<{ cardId: string; cardUrl: string | null; entryHint: string; empty: string[] } | null>(null);
+  const [cardNo, setCardNo] = useState("");
+  const [cardErr, setCardErr] = useState<string | null>(null);
+  const [cardBusy, setCardBusy] = useState(false);
+  async function loadCard() {
+    setCardBusy(true);
+    setCardErr(null);
+    try {
+      const r = await fetch(`/api/stocks/card?id=${encodeURIComponent(cardNo.trim().replace(/^#/, ""))}`, { cache: "no-store" });
+      const j = (await r.json()) as { ok: boolean; error?: string; prefill?: CardPrefill };
+      if (!j.ok || !j.prefill) return setCardErr(j.error ?? "Couldn't load the card");
+      const p = j.prefill;
+      if (adopt && p.ticker !== adopt.symbol) return setCardErr(`Card ${p.cardId} is for ${p.ticker}, not ${adopt.symbol}`);
+      const base = adopt ? f : blank;
+      const next = { ...base, ticker: p.ticker, source: "trend scout" };
+      const labels: Record<string, string> = {
+        stop: "stop", days: "time frame", thesis: "thesis", stage: "stage", marketBelieves: "market believes", iBelieve: "I believe",
+        becauseData: "because of this data", catalyst: "catalyst", catalystDate: "catalyst date", invalidation: "what proves it wrong",
+      };
+      const empty: string[] = [];
+      for (const k of ["stop", "target", "days", "thesis", "invalidation", "marketBelieves", "iBelieve", "becauseData", "catalyst", "catalystDate", "priceImplies", "stage", "crowding", "benchmark"] as const) {
+        if (p[k]) next[k] = p[k];
+        else if (labels[k]) empty.push(labels[k]);
+      }
+      if (!adopt && p.direction) next.direction = p.direction;
+      setF(next);
+      setRes(null);
+      setCard({ cardId: p.cardId, cardUrl: p.cardUrl, entryHint: p.entryHint, empty });
+    } catch {
+      setCardErr("Couldn't reach the server");
+    } finally {
+      setCardBusy(false);
+    }
+  }
+  const cardBox = (
+    <div className="space-y-1 rounded-lg bg-surface-2 p-2">
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs text-muted">
+          Trend Scout card #
+          <input
+            className={`${inputCls} w-28`}
+            inputMode="numeric"
+            value={cardNo}
+            onChange={(e) => setCardNo(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && cardNo.trim() && loadCard()}
+            placeholder="246"
+          />
+        </label>
+        <button className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-black disabled:opacity-40" disabled={cardBusy || !cardNo.trim()} onClick={loadCard}>
+          {cardBusy ? "Loading…" : card ? "Reload" : "Load card"}
+        </button>
+        {card && (
+          <span className="pb-2 text-xs text-ink-2">
+            Card {card.cardId} loaded{" "}
+            {card.cardUrl && (
+              <a className="text-accent underline" href={card.cardUrl} target="_blank" rel="noreferrer">
+                open card
+              </a>
+            )}
+          </span>
+        )}
+      </div>
+      {cardErr && <div className="text-xs text-loss">{cardErr}</div>}
+      {card && card.empty.length > 0 && <div className="text-xs text-warn">Not on the card, fill in: {card.empty.join(", ")}</div>}
+      {card?.entryHint && !adopt && <div className="text-xs text-muted">Card&apos;s entry price: {card.entryHint} (choose Limit to use it)</div>}
+      {!card && <div className="text-xs text-muted">{adopt ? "Optional: load this position's card to fill in the fields." : "The card sets the ticker and fills in the form; you can adjust everything except the ticker."}</div>}
+    </div>
+  );
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const lateLong = f.stage === "3" && f.direction === "long";
   // What's still missing, with the same minimum lengths the server enforces.
@@ -163,6 +233,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
   const complete = missing.length === 0;
   const payload = () => ({
     ...f,
+    cardId: card?.cardId ?? null,
     limitPrice: f.entryType === "limit" ? Number(f.limitPrice) : null,
     stop: Number(f.stop),
     target: f.target ? Number(f.target) : null,
@@ -187,9 +258,21 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
     setRes(json as Res);
     setPreviewed(null);
     setBusy(false);
-    if (json.ok) setF(blank);
+    if (json.ok) {
+      setF(blank);
+      setCard(null);
+      setCardNo("");
+    }
     onDone();
   }
+  if (!adopt && !card)
+    return (
+      <section className="card space-y-3 p-4">
+        <h2 className="font-bold text-accent">New idea</h2>
+        {cardBox}
+        {res && !res.preview && res.ok && <div className="text-sm text-gain">{dry ? "Dry run logged (nothing sent)" : "Order sent"}</div>}
+      </section>
+    );
   return (
     <section className="card space-y-3 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -207,10 +290,11 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           could fill. Guardrails it already broke are logged as overrides.
         </p>
       )}
+      {cardBox}
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         <label className="text-xs text-muted">
-          Ticker
-          <input className={inputCls} value={f.ticker} disabled={!!adopt} onChange={(e) => setF({ ...f, ticker: e.target.value.toUpperCase() })} placeholder="AAPL" />
+          Ticker{card ? " (from the card)" : ""}
+          <input className={inputCls} value={f.ticker} disabled onChange={(e) => setF({ ...f, ticker: e.target.value.toUpperCase() })} placeholder="AAPL" />
         </label>
         <label className="text-xs text-muted">
           Direction
@@ -249,7 +333,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
         </label>
         <label className="text-xs text-muted">
           Source
-          <select className={inputCls} value={f.source} onChange={set("source")}>
+          <select className={inputCls} value={f.source} disabled={!!card} onChange={set("source")}>
             <option value="">Choose…</option>
             {SOURCES.map((s) => (
               <option key={s} value={s}>
@@ -455,7 +539,16 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
         <div>
           <span className="font-bold">{t.ticker}</span> <span className={t.direction === "long" ? "text-gain" : "text-loss"}>{t.direction}</span>{" "}
           <span className="text-muted">
-            · {t.shares} sh · {t.status} · {t.source} · exit by {t.exitBy}
+            · {t.shares} sh · {t.status} · {t.source}
+            {t.cardId && (
+              <>
+                {" "}
+                <a className="text-accent underline" href={t.cardUrl ?? "#"} target="_blank" rel="noreferrer">
+                  card {t.cardId}
+                </a>
+              </>
+            )}{" "}
+            · exit by {t.exitBy}
             {t.mode === "dry" ? " · DRY RUN" : ""}
           </span>
         </div>
@@ -860,7 +953,7 @@ export default function StocksPage() {
                 <td>{t.exitTime ? formatDateTimeET(t.exitTime) : "—"}</td>
                 <td className="font-semibold">{t.ticker}</td>
                 <td>{t.direction}</td>
-                <td>{t.source}</td>
+                <td>{t.cardId ? `card ${t.cardId}` : t.source}</td>
                 <td className="num">{t.entryPrice ?? "—"}</td>
                 <td className="num">{t.exitPrice ?? "—"}</td>
                 <td>{t.status === "cancelled" ? "not filled" : t.exitReason}</td>

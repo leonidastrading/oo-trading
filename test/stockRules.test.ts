@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { cardToPrefill } from "../src/lib/stocks/scoutCard";
 import {
   adoptChecks,
   bracketOrder,
@@ -259,5 +260,28 @@ describe("adopting a position opened outside the app", () => {
     expect(r.shown.map((c) => c.name)).not.toContain("Session");
     expect(r.hard.map((c) => c.name)).toEqual(["Stop side"]);
     expect(r.overrides.map((c) => c.name)).toEqual(["Risk", "Gross exposure"]);
+  });
+});
+
+describe("Trend Scout card prefill", () => {
+  it("maps loosely named and nested fields", () => {
+    const p = cardToPrefill(
+      {
+        id: 246, symbol: "$sam", side: "Long", stop_price: "210.50", price_target: 260, holding_period: "3 weeks",
+        summary: "Margins are turning.", what_proves_it_wrong: "Volumes keep falling",
+        variant_perception: { market: "Beer is dead", mine: "Mix shift lifts margins", because: "Gross margin +200bp" },
+        catalyst: { text: "Q4 earnings", date: "Feb 2027" }, stage: "Recognition", crowding: "Low", sector_etf: "xlp",
+      },
+      "246",
+    )!;
+    expect(p).toMatchObject({
+      ticker: "SAM", direction: "long", stop: "210.5", target: "260", days: "21", thesis: "Margins are turning.",
+      invalidation: "Volumes keep falling", marketBelieves: "Beer is dead", iBelieve: "Mix shift lifts margins", becauseData: "Gross margin +200bp",
+      catalyst: "Q4 earnings", catalystDate: "Feb 2027", stage: "1", crowding: "low", benchmark: "XLP",
+    });
+  });
+  it("needs a ticker; leaves unknown fields empty", () => {
+    expect(cardToPrefill({ id: 1, thesis: "x" }, "1")).toBeNull();
+    expect(cardToPrefill({ ticker: "AAPL" }, "2")).toMatchObject({ ticker: "AAPL", direction: "", stop: "", stage: "" });
   });
 });

@@ -141,6 +141,9 @@ export interface Trade extends IdeaInput {
   plannedRisk?: number | null;
   add?: AddLeg | null;
   postMortem?: PostMortem | null;
+  /** The Trend Scout card this idea came from. */
+  cardId?: string;
+  cardUrl?: string | null;
   /** Placed outside the app (e.g. in the Schwab app while the API was down) and adopted afterwards. */
   adopted?: boolean;
   /** Guardrails it broke (only possible for adopted trades); any override stops the size-up banner. */

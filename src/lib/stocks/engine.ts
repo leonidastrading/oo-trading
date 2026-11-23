@@ -2,6 +2,7 @@
 // Every path runs the guardrails in rules.ts here on the server; the UI is never trusted. In dry-run mode
 // nothing reaches Schwab's order API: the order is logged and the trade is paper-filled at quotes.
 import "server-only";
+import { fetchCard } from "./scout";
 import { KEYS, kv } from "../kv";
 import { schwabGet, SchwabApiError, type AccountNumber } from "../schwab/client";
 import { cachedFills, cachedMinuteBars } from "../schwab/data";
@@ -276,11 +277,15 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
   return withLock(async () => {
     const settings = await settingsNow();
     const mode = settings.dryRun ? "dry" : "live";
-    const { idea, errors } = parseIdea(raw);
+    // Every idea comes from a Trend Scout card: the ticker is the card's, not the form's.
+    const card = await fetchCard(raw.cardId);
+    if (!card.ok) return { ok: false, errors: [card.error], checks: [], mode };
+    const { idea, errors } = parseIdea({ ...raw, ticker: card.prefill.ticker, source: "trend scout" });
     if (!idea) {
-      await log({ kind: "block", mode, ticker: String(raw.ticker ?? "").toUpperCase() || undefined, text: `Form incomplete: ${errors.join("; ")}` });
+      if (!opts.preview) await log({ kind: "block", mode, ticker: card.prefill.ticker, text: `Form incomplete: ${errors.join("; ")}` });
       return { ok: false, errors, checks: [], mode };
     }
+    const cardRef = { cardId: card.prefill.cardId, cardUrl: card.prefill.cardUrl };
     const now = clock();
     const [acct, quotes, trades, kill] = await Promise.all([tradingAccount(), stockQuotes([idea.ticker]).catch(() => ({}) as Record<string, StockQuote>), loadTrades(), killSwitchOn()]);
     const acctValue = await accountValue(acct).catch(() => null);
@@ -320,6 +325,7 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
     const order = bracketOrder(idea, settings.shares, session);
     const trade: Trade = {
       ...idea,
+      ...cardRef,
       id: rid(),
       mode,
       status: "pending",
@@ -526,6 +532,16 @@ export async function changeTarget(id: string, target: number): Promise<{ ok: bo
  */
 export async function adoptPosition(raw: Record<string, unknown>, opts: { preview?: boolean } = {}) {
   return withLock(async () => {
+    // A card is optional here (the shares are already held and need a stop either way), but if one is
+    // given it must be for this ticker.
+    let cardRef: { cardId?: string; cardUrl?: string | null } = {};
+    if (raw.cardId !== undefined && raw.cardId !== null && raw.cardId !== "") {
+      const card = await fetchCard(raw.cardId);
+      if (!card.ok) return { ok: false, errors: [card.error], checks: [] as Check[] };
+      if (card.prefill.ticker !== String(raw.ticker ?? "").trim().toUpperCase())
+        return { ok: false, errors: [`Card ${card.prefill.cardId} is for ${card.prefill.ticker}, not ${String(raw.ticker ?? "").toUpperCase()}`], checks: [] as Check[] };
+      cardRef = { cardId: card.prefill.cardId, cardUrl: card.prefill.cardUrl };
+    }
     const { idea, errors } = parseIdea({ ...raw, entryType: "market", limitPrice: null, planAdd: false });
     if (!idea) return { ok: false, errors, checks: [] as Check[] };
     const now = clock();
@@ -595,6 +611,7 @@ export async function adoptPosition(raw: Record<string, unknown>, opts: { previe
     const risk = Math.abs(entry - idea.stop);
     const trade: Trade = {
       ...idea,
+      ...cardRef,
       id: rid(),
       mode: "live",
       status: "open",
