@@ -126,6 +126,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
     overrides?: string[];
     sizing?: {
       liveShares: number;
+      byRisk?: boolean;
       entryRef: number;
       accountValue: number | null;
       shadow: { shares: number; position: number; positionPct: number; risk: number; riskPct: number; capped: boolean };
@@ -506,6 +507,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
             <div className="my-2 grid grid-cols-2 gap-x-4 gap-y-0.5 rounded-lg bg-surface-2 p-2 text-xs sm:grid-cols-3">
               <span>
                 {adopt ? "Position (from Schwab)" : dry ? "Order (dry run, not sent)" : "Order to Schwab"}: <b>{res.sizing.liveShares}</b> share{res.sizing.liveShares === 1 ? "" : "s"}
+                {res.sizing.byRisk ? " (sized from the account)" : ""}
               </span>
               <span>
                 Shadow shares: <b>{res.sizing.shadow.shares.toLocaleString("en-US")}</b>
@@ -1252,7 +1254,7 @@ export default function StocksPage() {
         </ul>
       </section>
       <p className="text-xs text-muted">
-        Guardrails ({data.mode}): {data.settings.shares} live share(s) per idea · shadow size {data.settings.riskPct}% risk, max {data.settings.maxPositionPct}%
+        Guardrails ({data.mode}): {data.settings.sizeByRisk ? "orders sized from the account" : `${data.settings.shares} fixed share(s) per order`} · {data.settings.riskPct}% risk per trade, max {data.settings.maxPositionPct}% per position
         position · gross ≤ {data.settings.maxGrossPct}%, net ±{data.settings.maxNetPct}% · max {data.settings.maxOpen} open · {data.settings.maxPerWeek} new ideas per
         week · weekly shadow-loss lockout {data.settings.weeklyLossPct}% · entries any time (limit only outside 9:30–16:00 ET). Change them in Settings (loosening waits
         24 hours).

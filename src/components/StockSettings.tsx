@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import type { StockSettings as S, StoredSettings } from "@/lib/stocks/rules";
 import { formatDateTimeET } from "@/lib/time";
 
-const FIELDS: { key: Exclude<keyof S, "dryRun">; label: string; hint: string }[] = [
-  { key: "shares", label: "Live shares per idea", hint: "fixed size of every live order" },
-  { key: "riskPct", label: "Shadow risk per idea, % of account", hint: "full-size risk to the stop" },
-  { key: "maxPositionPct", label: "Max position, % of account", hint: "caps the shadow size" },
+const FIELDS: { key: Exclude<keyof S, "dryRun" | "sizeByRisk" | "sizeByRiskAt">; label: string; hint: string }[] = [
+  { key: "riskPct", label: "Risk per trade, % of account", hint: "what a stop-out loses; sets the size" },
+  { key: "maxPositionPct", label: "Max position, % of account", hint: "no position bigger than this, whatever the stop" },
+  { key: "shares", label: "Fixed shares per order", hint: "used when account sizing is off" },
   { key: "maxOpen", label: "Max open ideas", hint: "" },
   { key: "maxPerWeek", label: "Max new ideas per week", hint: "Mon–Fri" },
   { key: "weeklyLossPct", label: "Weekly loss lockout, % of account", hint: "shadow P/L; blocks until Monday" },
@@ -17,7 +17,7 @@ const FIELDS: { key: Exclude<keyof S, "dryRun">; label: string; hint: string }[]
 
 /** Stock Trades guardrails. Loosening waits 24 hours (enforced on the server); tightening applies at once. */
 export function StockSettings() {
-  const [data, setData] = useState<{ settings: S; pending: StoredSettings["pending"]; liveSwitch: boolean } | null>(null);
+  const [data, setData] = useState<{ settings: S; pending: StoredSettings["pending"]; liveSwitch: boolean; riskLive: boolean } | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const load = () =>
@@ -62,6 +62,20 @@ export function StockSettings() {
           </button>
         )}
         <span className="text-xs text-muted">Server live switch: {data.liveSwitch ? "on" : "off (live orders blocked)"}</span>
+      </div>
+      <div className="space-y-1 rounded-lg bg-surface-2 p-2">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={data.settings.sizeByRisk} onChange={(e) => void save({ sizeByRisk: e.target.checked })} />
+          <span className="font-semibold">Size orders from the account</span>
+        </label>
+        <p className="text-xs text-muted">
+          On: each order is sized so a stop-out loses the &quot;Risk per trade&quot; % of the account, and never more than &quot;Max position&quot; % in one stock. Off: every
+          order is the fixed share count.{" "}
+          {data.settings.sizeByRisk &&
+            (data.riskLive
+              ? "In force for dry-run and live orders."
+              : `In force for dry-run orders now; for live orders from ${formatDateTimeET(data.settings.sizeByRiskAt + 24 * 3600_000)} (until then live orders use the fixed shares).`)}
+        </p>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {FIELDS.map((f) => (

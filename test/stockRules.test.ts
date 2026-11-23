@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { cardToPrefill } from "../src/lib/stocks/scoutCard";
 import {
   adoptChecks,
+  orderShares,
+  riskSizingActive,
   suggestedStop,
   bracketOrder,
   changeSettings,
@@ -315,5 +317,26 @@ describe("no time frame", () => {
     void _d;
     expect(parseIdea(noDays).errors).toEqual([]);
     expect(parseIdea(noDays).idea!.days).toBeNull();
+  });
+});
+
+describe("account-based order sizing", () => {
+  const t0 = Date.parse("2026-11-23T15:00:00Z");
+  it("switches on at once for dry run, 24 hours later for live", () => {
+    const r = changeSettings(null, { sizeByRisk: true }, t0);
+    const on = effectiveSettings(r.next, t0);
+    expect(on.sizeByRisk).toBe(true);
+    expect(riskSizingActive(on, "dry", t0)).toBe(true);
+    expect(riskSizingActive(on, "live", t0 + 23 * 3600_000)).toBe(false);
+    expect(riskSizingActive(on, "live", t0 + 24 * 3600_000)).toBe(true);
+    // The timestamp can't be backdated from the request.
+    expect(effectiveSettings(changeSettings(r.next, { sizeByRiskAt: 1 }, t0).next, t0).sizeByRiskAt).toBe(t0);
+  });
+  it("uses the risk-based size (starter when an add is planned), else the fixed shares", () => {
+    const on = { ...DEFAULT_SETTINGS, sizeByRisk: true, sizeByRiskAt: t0 };
+    expect(orderShares(on, "dry", 300, false, t0)).toBe(300);
+    expect(orderShares(on, "dry", 300, true, t0)).toBe(100);
+    expect(orderShares(on, "live", 300, false, t0)).toBe(1);
+    expect(orderShares(DEFAULT_SETTINGS, "dry", 300, false, t0)).toBe(1);
   });
 });

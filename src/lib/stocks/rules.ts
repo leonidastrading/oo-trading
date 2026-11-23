@@ -127,6 +127,8 @@ export interface Trade extends IdeaInput {
   shadowPl?: number | null;
   /** Entry order session: NORMAL (regular hours) or SEAMLESS (extended-hours limit). */
   session?: "NORMAL" | "SEAMLESS";
+  /** The order was sized from the account (risk % to the stop), not the fixed share count. */
+  sizedByRisk?: boolean;
   /** How many times an expired/cancelled order of this trade was put back by the sync. */
   reentries?: number;
   /** SPY (and benchmark ETF) prices at the entry and exit fills, for market-relative scoring. */
@@ -172,6 +174,13 @@ export interface StockSettings {
   /** Shadow exposure limits, % of the account: gross (long + short) and net (|long − short|). */
   maxGrossPct: number;
   maxNetPct: number;
+  /**
+   * Size every order from the account: risk `riskPct` to the stop, capped at `maxPositionPct` per position
+   * (the same numbers as the shadow size). Off = the fixed `shares`. Dry-run orders follow it at once; live
+   * orders only once it has been on for 24 hours (`sizeByRiskAt` is when it was switched on).
+   */
+  sizeByRisk: boolean;
+  sizeByRiskAt: number;
 }
 
 // Open ideas / ideas per week stay at 20 (asked for on Nov 21); the rest are the spec's defaults.
@@ -185,6 +194,8 @@ export const DEFAULT_SETTINGS: StockSettings = {
   maxPositionPct: 15,
   maxGrossPct: 75,
   maxNetPct: 50,
+  sizeByRisk: false,
+  sizeByRiskAt: 0,
 };
 
 /** Limits where a higher number is looser: raising them waits 24 hours; lowering them applies at once. */
@@ -218,7 +229,19 @@ const LIMITS: Record<keyof StockSettings, [number, number] | null> = {
   maxPositionPct: [1, 100],
   maxGrossPct: [1, 400],
   maxNetPct: [1, 400],
+  sizeByRisk: null,
+  sizeByRiskAt: null,
 };
+
+/** Is account-based order sizing in force for this mode right now? (Live waits 24 hours after switching it on.) */
+export function riskSizingActive(s: StockSettings, mode: Mode, now = Date.now()): boolean {
+  return s.sizeByRisk && (mode === "dry" || now - s.sizeByRiskAt >= LOOSEN_DELAY_MS);
+}
+
+/** Shares of the entry order: the (starter) risk-based size when account sizing is in force, else the fixed size. */
+export function orderShares(s: StockSettings, mode: Mode, fullShares: number, planAdd: boolean | undefined, now = Date.now()): number {
+  return riskSizingActive(s, mode, now) ? starterShares(fullShares, planAdd) : s.shares;
+}
 
 /** Apply a settings change: tightening (and dry-run either way) at once, loosening 24 hours later. */
 export function changeSettings(
@@ -237,6 +260,19 @@ export function changeSettings(
       else if (v !== next.values.dryRun) {
         next.values.dryRun = v;
         applied.push(`dry run ${v ? "on" : "off"}`);
+      }
+      continue;
+    }
+    if (k === "sizeByRiskAt") continue; // set by the server only
+    if (k === "sizeByRisk") {
+      if (typeof v !== "boolean") errors.push("sizeByRisk must be true or false");
+      else if (v !== next.values.sizeByRisk) {
+        next.values.sizeByRisk = v;
+        next.values.sizeByRiskAt = v ? now : 0;
+        if (v) {
+          applied.push("size by account risk on (dry run)");
+          delayed.push("size by account risk for live orders");
+        } else applied.push("size by account risk off (fixed shares)");
       }
       continue;
     }

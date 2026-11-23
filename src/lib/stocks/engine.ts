@@ -26,6 +26,8 @@ import {
   regularSession,
   shadowSize,
   starterShares,
+  orderShares,
+  riskSizingActive,
   checkAdd,
   parsePostMortem,
   adoptChecks,
@@ -244,6 +246,7 @@ export interface SubmitResult {
   preview?: boolean;
   sizing?: {
     liveShares: number;
+    byRisk?: boolean;
     shadow: ReturnType<typeof shadowSize>;
     entryRef: number;
     accountValue: number | null;
@@ -282,13 +285,19 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
       const on = liveTradingEnabled();
       checks.push({ name: "Server live switch", ok: on, detail: on ? "On" : "STOCK_LIVE_TRADING is off on the server: live orders can't be sent" });
     }
-    const failed = checks.filter((c) => !c.ok);
     const lastPx = quote?.last ?? null;
     const entryRef = idea.entryType !== "market" && idea.limitPrice ? idea.limitPrice : (lastPx ?? 0);
     const full = shadowSize(acctValue, settings, entryRef, idea.stop);
     const starterN = starterShares(full.shares, idea.planAdd);
+    // Order size: from the account (risk % to the stop, capped per position) when that's in force, else fixed.
+    const byRisk = riskSizingActive(settings, mode, now);
+    const liveN = orderShares(settings, mode, full.shares, idea.planAdd, now);
+    if (byRisk) checks.push({ name: "Order size", ok: liveN >= 1, detail: liveN >= 1 ? `${liveN} sh: ${settings.riskPct}% risk to the stop, max ${settings.maxPositionPct}% of the account` : "Sizes to 0 shares (account value unknown, or one share is over the limits)" });
+    else if (settings.sizeByRisk) checks.push({ name: "Order size", ok: true, detail: `Warning: account sizing isn't live yet (24 hours after switching it on) — using the fixed ${settings.shares} share(s)` });
+    const failed = checks.filter((c) => !c.ok);
     const sizing = {
-      liveShares: settings.shares,
+      liveShares: liveN,
+      byRisk,
       shadow: full,
       entryRef,
       accountValue: acctValue,
@@ -298,7 +307,7 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
       starterPosition: Math.round(starterN * entryRef * 100) / 100,
       starterRisk: Math.round(starterN * Math.abs(entryRef - idea.stop) * 100) / 100,
     };
-    if (opts.preview) return { ok: failed.length === 0, preview: true, sizing, errors: failed.map((c) => `${c.name}: ${c.detail}`), checks, mode, order: bracketOrder(idea, settings.shares, entrySession(idea.entryType, now).session) };
+    if (opts.preview) return { ok: failed.length === 0, preview: true, sizing, errors: failed.map((c) => `${c.name}: ${c.detail}`), checks, mode, order: bracketOrder(idea, Math.max(liveN, 1), entrySession(idea.entryType, now).session) };
     if (failed.length) {
       await log({ kind: "block", mode, ticker: idea.ticker, text: failed.map((c) => `${c.name}: ${c.detail}`).join("; "), detail: { idea } });
       return { ok: false, errors: failed.map((c) => `${c.name}: ${c.detail}`), checks, mode, sizing };
@@ -309,14 +318,15 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
     const risk = Math.abs(ref - idea.stop);
     const size = shadowSize(acctValue, settings, ref, idea.stop);
     const session = entrySession(idea.entryType, now).session;
-    const order = bracketOrder(idea, settings.shares, session);
+    const order = bracketOrder(idea, liveN, session);
     const trade: Trade = {
       ...idea,
       ...cardRef,
       id: rid(),
       mode,
       status: "pending",
-      shares: settings.shares,
+      shares: liveN,
+      sizedByRisk: byRisk,
       submittedAt: now,
       priceAtSubmit: last,
       initialStop: idea.stop,
@@ -362,7 +372,7 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
       mode,
       ticker: idea.ticker,
       tradeId: trade.id,
-      text: `${mode === "dry" ? "DRY RUN — would send" : "Sent"} ${idea.direction === "long" ? "BUY" : "SELL SHORT"} ${settings.shares} ${idea.ticker} ${idea.entryType === "market" ? "at market" : `${idea.entryType} ${idea.limitPrice}`}, stop ${idea.stop}${idea.target ? `, target ${idea.target}` : ""} (bracket)${trade.orderId && mode === "live" ? ` · order ${trade.orderId}` : ""} · account ••${acct.last4}`,
+      text: `${mode === "dry" ? "DRY RUN — would send" : "Sent"} ${idea.direction === "long" ? "BUY" : "SELL SHORT"} ${liveN} ${idea.ticker} ${idea.entryType === "market" ? "at market" : `${idea.entryType} ${idea.limitPrice}`}, stop ${idea.stop}${idea.target ? `, target ${idea.target}` : ""} (bracket)${trade.orderId && mode === "live" ? ` · order ${trade.orderId}` : ""} · account ••${acct.last4}`,
       detail: { order },
     });
     return { ok: true, errors: [], checks, trade, order, mode, sizing };
@@ -692,7 +702,9 @@ export async function triggerAdd(id: string, newStop: number, note: string) {
       return { ok: false, error: failed.map((c) => `${c.name}: ${c.detail}`).join("; "), checks: r.checks, requiredStop: r.requiredStop };
     }
     const cur = t.stopHistory.at(-1)?.stop ?? t.initialStop;
-    const addOrder = bracketOrder({ ...t, entryType: "market", limitPrice: null, stop }, 1, "NORMAL");
+    // A risk-sized trade adds the other 2/3 for real; a fixed-size one adds 1 share.
+    const addN = t.sizedByRisk ? Math.max(1, r.addShadowShares) : 1;
+    const addOrder = bracketOrder({ ...t, entryType: "market", limitPrice: null, stop }, addN, "NORMAL");
     if (t.mode === "live") {
       const acct = await tradingAccount();
       try {
@@ -709,7 +721,7 @@ export async function triggerAdd(id: string, newStop: number, note: string) {
       }
       try {
         const ro = await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, addOrder);
-        t.add = { status: "pending", note: note.trim(), requestedAt: Date.now(), priceAtSubmit: last!, liveShares: 1, shadowShares: r.addShadowShares, stopAtAdd: stop, orderId: ro.orderId };
+        t.add = { status: "pending", note: note.trim(), requestedAt: Date.now(), priceAtSubmit: last!, liveShares: addN, shadowShares: r.addShadowShares, stopAtAdd: stop, orderId: ro.orderId };
       } catch (e) {
         await saveTrade(t);
         await log({ kind: "error", mode: "live", ticker: t.ticker, tradeId: id, text: `Add rejected: ${(e as Error).message}` });
@@ -720,7 +732,7 @@ export async function triggerAdd(id: string, newStop: number, note: string) {
         t.stopHistory.push({ at: Date.now(), stop });
         t.stop = stop;
       }
-      t.add = { status: "filled", note: note.trim(), requestedAt: Date.now(), priceAtSubmit: last!, liveShares: 1, shadowShares: r.addShadowShares, stopAtAdd: stop, orderId: `dry-add-${t.id}`, price: last, time: Date.now() };
+      t.add = { status: "filled", note: note.trim(), requestedAt: Date.now(), priceAtSubmit: last!, liveShares: addN, shadowShares: r.addShadowShares, stopAtAdd: stop, orderId: `dry-add-${t.id}`, price: last, time: Date.now() };
     }
     await saveTrade(t);
     await log({
