@@ -13,8 +13,7 @@ export interface CardPrefill {
   days: string;
   thesis: string;
   invalidation: string;
-  marketBelieves: string;
-  iBelieve: string;
+  ideaNotes: string;
   becauseData: string;
   catalyst: string;
   catalystDate: string;
@@ -62,7 +61,7 @@ function text(v: unknown): string {
 
 function price(v: unknown): string {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v.replace(/[$,\s]/g, "")) : NaN;
-  return Number.isFinite(n) && n > 0 ? String(Math.round(n * 100) / 100) : "";
+  return Number.isFinite(n) && n > 0 ? String(n < 1 ? Math.round(n * 10000) / 10000 : Math.round(n * 100) / 100) : "";
 }
 
 /** "10", 10, "2 weeks", "3-6 months" (takes the first number) -> whole days, 1–365. */
@@ -107,6 +106,8 @@ export function cardToPrefill(card: unknown, cardId: string): CardPrefill | null
   if (!/^[A-Z][A-Z0-9.\-/]{0,9}$/.test(ticker)) return null;
   const dirRaw = text(pick("direction", "side", "longshort", "bias", "position")).toLowerCase();
   const direction = /short|bear|sell/.test(dirRaw) ? "short" : /long|bull|buy/.test(dirRaw) ? "long" : "";
+  const thesisText = text(pick("thesis", "summary", "pitch", "description", "idea"));
+  const within = thesisText.match(/within\s+(?:the\s+next\s+)?(\d+\s*(?:trading\s+)?(?:days?|weeks?|months?))/i);
   const bench = text(pick("benchmark", "benchmarketf", "sectoretf", "etf")).toUpperCase();
   const url = text(pick("url", "cardurl", "link"));
   return {
@@ -117,11 +118,18 @@ export function cardToPrefill(card: unknown, cardId: string): CardPrefill | null
     stop: price(pick("stop", "stopprice", "stoploss", "stoplossprice")),
     target: price(pick("target", "targetprice", "pricetarget", "takeprofit")),
     entryHint: price(pick("entry", "entryprice", "limit", "limitprice", "buyprice")),
-    days: days(pick("days", "timeframedays", "holdingperioddays", "horizondays", "holddays", "timeframe", "holdingperiod", "horizon")),
+    days: days(pick("days", "timeframedays", "holdingperioddays", "horizondays", "holddays", "timeframe", "holdingperiod", "horizon")) || (within ? days(within[1]) : ""),
     thesis: cut(pick("thesis", "summary", "pitch", "description", "idea"), 600),
     invalidation: cut(pick("invalidation", "whatprovesitwrong", "provesitwrong", "provedwrong", "killcriteria", "wrongif", "invalidatedif"), 400),
-    marketBelieves: cut(pick("marketbelieves", "marketview", "consensus", "consensusview", "variantperceptionmarket", "variantmarket"), 300),
-    iBelieve: cut(pick("ibelieve", "myview", "variantview", "ourview", "variantperceptionmine", "variantperceptionme", "variantmine", "variantperceptionview"), 300),
+    ideaNotes: [
+      ["Market believes", pick("marketbelieves", "marketview", "consensus", "consensusview", "variantperceptionmarket", "variantmarket")],
+      ["I believe", pick("ibelieve", "myview", "variantview", "ourview", "variantperceptionmine", "variantperceptionme", "variantmine", "variantperceptionview")],
+      ["", pick("notes", "note", "comment", "comments")],
+    ]
+      .filter(([, v]) => v !== undefined)
+      .map(([l, v]) => (l ? `${l}: ${cut(v, 300)}` : cut(v, 400)))
+      .join(" · ")
+      .slice(0, 1000),
     becauseData: cut(pick("becausedata", "because", "becauseofthisdata", "evidence", "data", "variantperceptionbecause", "variantperceptiondata", "variantperceptionevidence"), 300),
     catalyst: cut(pick("catalyst", "catalysttext", "catalystdescription", "catalystevent"), 300),
     catalystDate: cut(pick("catalystdate", "catalystwindow", "catalystwhen", "catalysttiming"), 80),

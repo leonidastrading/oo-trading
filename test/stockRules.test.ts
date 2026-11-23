@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cardToPrefill } from "../src/lib/stocks/scoutCard";
 import {
   adoptChecks,
+  suggestedStop,
   bracketOrder,
   changeSettings,
   checkStopChange,
@@ -83,7 +84,7 @@ describe("stock idea form", () => {
     expect(parseIdea({ ...idea }).errors).toEqual([]);
     const r = parseIdea({ ticker: "", direction: "up", thesis: "", source: "x", shares: 100 });
     expect(r.idea).toBeNull();
-    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Time frame[^]*Source[^]*Size[^]*What proves it wrong[^]*Stage[^]*Market believes[^]*I believe[^]*Because of this data[^]*Catalyst is required[^]*Catalyst date/);
+    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Time frame[^]*Source[^]*Size[^]*What proves it wrong[^]*Stage[^]*Because of this data[^]*Catalyst is required[^]*Catalyst date/);
     expect(parseIdea({ ...idea, entryType: "limit" }).errors).toContain("Limit price is required for a limit entry");
     expect(parseIdea({ ...idea, target: "" }).idea?.target).toBeNull();
     // Stage 3 long needs the late-stage tick; a short at stage 3 doesn't.
@@ -276,12 +277,23 @@ describe("Trend Scout card prefill", () => {
     )!;
     expect(p).toMatchObject({
       ticker: "SAM", direction: "long", stop: "210.5", target: "260", days: "21", thesis: "Margins are turning.",
-      invalidation: "Volumes keep falling", marketBelieves: "Beer is dead", iBelieve: "Mix shift lifts margins", becauseData: "Gross margin +200bp",
+      invalidation: "Volumes keep falling", ideaNotes: "Market believes: Beer is dead · I believe: Mix shift lifts margins", becauseData: "Gross margin +200bp",
       catalyst: "Q4 earnings", catalystDate: "Feb 2027", stage: "1", crowding: "low", benchmark: "XLP",
     });
   });
   it("needs a ticker; leaves unknown fields empty", () => {
     expect(cardToPrefill({ id: 1, thesis: "x" }, "1")).toBeNull();
     expect(cardToPrefill({ ticker: "AAPL" }, "2")).toMatchObject({ ticker: "AAPL", direction: "", stop: "", stage: "" });
+  });
+});
+
+describe("20% stop suggestion", () => {
+  it("is 20% on the losing side, 4 decimals under $1", () => {
+    expect(suggestedStop(200, true)).toBe(160);
+    expect(suggestedStop(200, false)).toBe(240);
+    expect(suggestedStop(0.3562, true)).toBe(0.285);
+  });
+  it("reads a time frame from the thesis when the card has none", () => {
+    expect(cardToPrefill({ ticker: "ELBM", thesis: "Lifts the stock within 90 days." }, "334")!.days).toBe("90");
   });
 });

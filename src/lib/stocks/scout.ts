@@ -4,8 +4,8 @@ import { cardToPrefill, type CardPrefill } from "./scoutCard";
 const BASE = (process.env.SCOUT_BASE_URL ?? "https://trend-scout-livid.vercel.app").replace(/\/$/, "");
 
 const MOCK_CARD = {
-  id: 246, ticker: "AAPL", direction: "long", stop: 190, target: 230, timeframe: "30 days",
-  thesis: "Services margin expansion is not in the numbers yet.",
+  id: 246, ticker: "AAPL", direction: "long", target: 230,
+  thesis: "Services margin expansion is not in the numbers yet, re-rating within 90 days.",
   invalidation: "Services growth below 10% in the next print",
   variantPerception: { market: "Hardware cycle is all that matters", mine: "Services mix drives the multiple", because: "Services gross margin up 3 quarters running" },
   catalyst: { text: "Fiscal Q1 earnings", date: "late January 2027" },

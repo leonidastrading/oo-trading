@@ -8,7 +8,7 @@ import { StockTradeChart } from "@/components/StockTradeChart";
 import { usePoll } from "@/components/usePoll";
 import type { Check, StockQuote, Trade } from "@/lib/stocks/rules";
 import type { CardPrefill } from "@/lib/stocks/scoutCard";
-import { excessReturn, SOURCES, STAGES } from "@/lib/stocks/rules";
+import { excessReturn, SOURCES, STAGES, SUGGESTED_STOP_PCT, suggestedStop } from "@/lib/stocks/rules";
 import { formatDateTimeET } from "@/lib/time";
 
 const post = async (url: string, body: unknown) => {
@@ -103,8 +103,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
     benchmark: "",
     stage: "",
     lateStageAck: false,
-    marketBelieves: "",
-    iBelieve: "",
+    ideaNotes: "",
     becauseData: "",
     catalyst: "",
     catalystDate: "",
@@ -145,6 +144,10 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
   const [cardNo, setCardNo] = useState("");
   const [cardErr, setCardErr] = useState<string | null>(null);
   const [cardBusy, setCardBusy] = useState(false);
+  const [autoStop, setAutoStop] = useState(false);
+  // 20% stop suggestion from the entry reference (the limit price for a limit entry, else the last price).
+  const stopRef = f.entryType === "limit" && Number(f.limitPrice) > 0 ? Number(f.limitPrice) : (quote?.q?.last ?? 0);
+  const stop20 = stopRef > 0 ? String(suggestedStop(stopRef, f.direction === "long")) : "";
   async function loadCard() {
     setCardBusy(true);
     setCardErr(null);
@@ -157,15 +160,30 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
       const base = adopt ? f : blank;
       const next = { ...base, ticker: p.ticker, source: "trend scout" };
       const labels: Record<string, string> = {
-        stop: "stop", days: "time frame", thesis: "thesis", stage: "stage", marketBelieves: "market believes", iBelieve: "I believe",
+        stop: "stop", days: "time frame", thesis: "thesis", stage: "stage",
         becauseData: "because of this data", catalyst: "catalyst", catalystDate: "catalyst date", invalidation: "what proves it wrong",
       };
       const empty: string[] = [];
-      for (const k of ["stop", "target", "days", "thesis", "invalidation", "marketBelieves", "iBelieve", "becauseData", "catalyst", "catalystDate", "priceImplies", "stage", "crowding", "benchmark"] as const) {
+      for (const k of ["stop", "target", "days", "thesis", "invalidation", "ideaNotes", "becauseData", "catalyst", "catalystDate", "priceImplies", "stage", "crowding", "benchmark"] as const) {
         if (p[k]) next[k] = p[k];
         else if (labels[k]) empty.push(labels[k]);
       }
       if (!adopt && p.direction) next.direction = p.direction;
+      let autoStop = false;
+      if (!next.stop) {
+        // No stop on the card: suggest one 20% from the current price (editable).
+        const q = await fetch(`/api/stocks/quote?symbol=${encodeURIComponent(p.ticker)}`, { cache: "no-store" })
+          .then((x) => x.json() as Promise<{ quote?: StockQuote | null }>)
+          .catch(() => null);
+        const last = q?.quote?.last;
+        if (last && last > 0) {
+          next.stop = String(suggestedStop(last, next.direction === "long"));
+          autoStop = true;
+        }
+      }
+      const i = empty.indexOf("stop");
+      if (autoStop && i >= 0) empty.splice(i, 1);
+      setAutoStop(autoStop);
       setF(next);
       setRes(null);
       setCard({ cardId: p.cardId, cardUrl: p.cardUrl, entryHint: p.entryHint, empty });
@@ -222,8 +240,6 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
     !len(f.thesis, 10) && "Thesis (10+ characters)",
     f.stage === "" && "Stage",
     lateLong && !f.lateStageAck && '"I understand" (late stage)',
-    !len(f.marketBelieves, 5) && "Market believes… (5+ characters)",
-    !len(f.iBelieve, 5) && "I believe… (5+ characters)",
     !len(f.becauseData, 5) && "Because of this data… (5+ characters)",
     !len(f.catalyst, 5) && "Catalyst (5+ characters)",
     !len(f.catalystDate, 3) && "Catalyst date (3+ characters)",
@@ -320,8 +336,28 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           </>
         )}
         <label className="text-xs text-muted">
-          Stop
-          <input className={inputCls} inputMode="decimal" value={f.stop} onChange={set("stop")} />
+          Stop{autoStop && f.stop ? ` (auto ${SUGGESTED_STOP_PCT}%)` : ""}
+          <input
+            className={inputCls}
+            inputMode="decimal"
+            value={f.stop}
+            onChange={(e) => {
+              setAutoStop(false);
+              setF({ ...f, stop: e.target.value });
+            }}
+          />
+          {stop20 && f.stop !== stop20 && (
+            <button
+              type="button"
+              className="mt-1 text-accent underline"
+              onClick={() => {
+                setAutoStop(true);
+                setF({ ...f, stop: stop20 });
+              }}
+            >
+              Use {SUGGESTED_STOP_PCT}% stop: {stop20}
+            </button>
+          )}
         </label>
         <label className="text-xs text-muted">
           Target (optional)
@@ -368,15 +404,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           Late stage: crowd is in. I understand.
         </label>
       )}
-      <div className="grid gap-2 md:grid-cols-3">
-        <label className="text-xs text-muted">
-          Market believes…
-          <textarea className={inputCls} rows={2} value={f.marketBelieves} onChange={set("marketBelieves")} />
-        </label>
-        <label className="text-xs text-muted">
-          I believe…
-          <textarea className={inputCls} rows={2} value={f.iBelieve} onChange={set("iBelieve")} />
-        </label>
+      <div className="grid gap-2">
         <label className="text-xs text-muted">
           Because of this data…
           <textarea className={inputCls} rows={2} value={f.becauseData} onChange={set("becauseData")} />
@@ -411,6 +439,10 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           </select>
         </label>
       </div>
+      <label className="block text-xs text-muted">
+        Notes (optional)
+        <textarea className={inputCls} rows={2} value={f.ideaNotes} onChange={set("ideaNotes")} />
+      </label>
       <div className={`space-y-2 rounded-lg bg-surface-2 p-2 ${adopt ? "hidden" : ""}`}>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={f.planAdd} onChange={(e) => setF({ ...f, planAdd: e.target.checked })} />

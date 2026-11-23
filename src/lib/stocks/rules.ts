@@ -29,6 +29,8 @@ export interface IdeaInput {
   /** Variant perception. */
   marketBelieves?: string;
   iBelieve?: string;
+  /** Optional free-form notes. */
+  ideaNotes?: string | null;
   becauseData?: string;
   /** What forces the market to see it, and when (date or window). */
   catalyst?: string;
@@ -309,6 +311,11 @@ export function timeExitDue(t: Pick<Trade, "exitBy">, now = Date.now()): boolean
 // ---- Validation and guardrails ----
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
+/** Order prices: cents, or 4 decimals under $1 (sub-dollar stocks trade in finer ticks). */
+export const roundPx = (v: number) => (v < 1 ? Math.round(v * 10000) / 10000 : round2(v));
+/** Default stop suggestion: 20% from the entry reference, on the losing side. */
+export const SUGGESTED_STOP_PCT = 20;
+export const suggestedStop = (ref: number, long: boolean) => roundPx(ref * (long ? 1 - SUGGESTED_STOP_PCT / 100 : 1 + SUGGESTED_STOP_PCT / 100));
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : NaN);
 
 /** Parse and check the form: every field required (target optional). */
@@ -350,8 +357,10 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
   if (stage === null) errors.push("Stage is required (0–4)");
   const lateStageAck = raw.lateStageAck === true;
   if (stage === 3 && direction === "long" && !lateStageAck) errors.push('Late stage: crowd is in — tick "I understand" to go long at stage 3');
-  const marketBelieves = txt("marketBelieves", '"Market believes…"', 5, 300);
-  const iBelieve = txt("iBelieve", '"I believe…"', 5, 300);
+  // No longer on the form (kept optional so old trades and callers still parse).
+  const marketBelieves = txt("marketBelieves", '"Market believes…"', 0, 300, false);
+  const iBelieve = txt("iBelieve", '"I believe…"', 0, 300, false);
+  const ideaNotes = txt("ideaNotes", "Notes", 0, 1000, false);
   const becauseData = txt("becauseData", '"Because of this data…"', 5, 300);
   const catalyst = txt("catalyst", "Catalyst", 5, 300);
   const catalystDate = txt("catalystDate", "Catalyst date or window", 3, 80);
@@ -371,9 +380,9 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
       ticker,
       direction: direction!,
       entryType: entryType!,
-      limitPrice: entryType === "limit" ? round2(limitPrice) : null,
-      stop: round2(stop),
-      target: targetRaw === null ? null : round2(targetRaw),
+      limitPrice: entryType === "limit" ? roundPx(limitPrice) : null,
+      stop: roundPx(stop),
+      target: targetRaw === null ? null : roundPx(targetRaw),
       thesis,
       invalidation,
       days,
@@ -383,6 +392,7 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
       lateStageAck,
       marketBelieves,
       iBelieve,
+      ideaNotes: ideaNotes || null,
       becauseData,
       catalyst,
       catalystDate,
