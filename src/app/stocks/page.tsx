@@ -831,7 +831,7 @@ function OpenPositions({ trades, quotes, accountValue, now, maxPositionPct, onDo
     <section className="card space-y-2 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-bold text-accent">Open positions ({rows.length})</h2>
-        {rows.some((x) => x.t.mode === "dry" && x.acct !== null && x.acct > maxPositionPct) && (
+        {rows.some((x) => x.t.mode === "dry" && x.acct !== null && x.acct > maxPositionPct + 0.02) && (
           <button className="rounded-lg border border-accent px-3 py-1 text-xs font-semibold text-accent" onClick={() => void trim()}>
             Trim dry-run positions to {maxPositionPct}% of account
           </button>
