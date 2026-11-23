@@ -363,7 +363,7 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
   const ideaNotes = txt("ideaNotes", "Notes", 0, 1000, false);
   const becauseData = txt("becauseData", '"Because of this data…"', 5, 300);
   const catalyst = txt("catalyst", "Catalyst", 5, 300);
-  const catalystDate = txt("catalystDate", "Catalyst date or window", 3, 80);
+  const catalystDate = txt("catalystDate", "Catalyst date or window", 0, 80, false);
   const priceImplies = txt("priceImplies", "What the price implies", 0, 300, false);
   let crowding: Crowding | null = null;
   const cr = raw.crowding as Record<string, unknown> | string | null | undefined;

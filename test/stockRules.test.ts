@@ -84,7 +84,7 @@ describe("stock idea form", () => {
     expect(parseIdea({ ...idea }).errors).toEqual([]);
     const r = parseIdea({ ticker: "", direction: "up", thesis: "", source: "x", shares: 100 });
     expect(r.idea).toBeNull();
-    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Time frame[^]*Source[^]*Size[^]*What proves it wrong[^]*Stage[^]*Because of this data[^]*Catalyst is required[^]*Catalyst date/);
+    expect(r.errors.join(" ")).toMatch(/Ticker[^]*Direction[^]*Entry type[^]*Stop[^]*Thesis[^]*Time frame[^]*Source[^]*Size[^]*What proves it wrong[^]*Stage[^]*Because of this data[^]*Catalyst is required/);
     expect(parseIdea({ ...idea, entryType: "limit" }).errors).toContain("Limit price is required for a limit entry");
     expect(parseIdea({ ...idea, target: "" }).idea?.target).toBeNull();
     // Stage 3 long needs the late-stage tick; a short at stage 3 doesn't.

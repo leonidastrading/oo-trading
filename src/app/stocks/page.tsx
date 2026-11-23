@@ -17,7 +17,7 @@ const post = async (url: string, body: unknown) => {
 };
 const r2 = (v: number | null | undefined) => (v === null || v === undefined ? "—" : v.toFixed(2));
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${(v * 100).toFixed(0)}%`);
-const inputCls = "w-full rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-sm";
+const inputCls = "w-full rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-sm text-ink placeholder:text-muted disabled:opacity-100";
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
@@ -161,7 +161,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
       const next = { ...base, ticker: p.ticker, source: "trend scout" };
       const labels: Record<string, string> = {
         stop: "stop", days: "time frame", thesis: "thesis", stage: "stage",
-        becauseData: "because of this data", catalyst: "catalyst", catalystDate: "catalyst date", invalidation: "what proves it wrong",
+        becauseData: "because of this data", catalyst: "catalyst", invalidation: "what proves it wrong",
       };
       const empty: string[] = [];
       for (const k of ["stop", "target", "days", "thesis", "invalidation", "ideaNotes", "becauseData", "catalyst", "catalystDate", "priceImplies", "stage", "crowding", "benchmark"] as const) {
@@ -196,7 +196,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
   const cardBox = (
     <div className="space-y-1 rounded-lg bg-surface-2 p-2">
       <div className="flex flex-wrap items-end gap-2">
-        <label className="text-xs text-muted">
+        <label className="text-xs text-ink-2">
           Trend Scout card #
           <input
             className={`${inputCls} w-28`}
@@ -242,7 +242,6 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
     lateLong && !f.lateStageAck && '"I understand" (late stage)',
     !len(f.becauseData, 5) && "Because of this data… (5+ characters)",
     !len(f.catalyst, 5) && "Catalyst (5+ characters)",
-    !len(f.catalystDate, 3) && "Catalyst date (3+ characters)",
     !len(f.invalidation, 5) && "What proves it wrong (5+ characters)",
     f.planAdd && !len(f.addTrigger, 5) && "Add trigger (5+ characters)",
   ].filter((x): x is string => !!x);
@@ -308,11 +307,11 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
       )}
       {cardBox}
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-        <label className="text-xs text-muted">
+        <label className="text-xs text-ink-2">
           Ticker{card ? " (from the card)" : ""}
           <input className={inputCls} value={f.ticker} disabled onChange={(e) => setF({ ...f, ticker: e.target.value.toUpperCase() })} placeholder="AAPL" />
         </label>
-        <label className="text-xs text-muted">
+        <label className="text-xs text-ink-2">
           Direction
           <select className={inputCls} value={f.direction} disabled={!!adopt} onChange={set("direction")}>
             <option value="long">Long</option>
@@ -322,20 +321,20 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
         <QuoteLine q={quote} stop={Number(f.stop)} target={Number(f.target)} limit={f.entryType === "limit" ? Number(f.limitPrice) : 0} long={f.direction === "long"} />
         {!adopt && (
           <>
-            <label className="text-xs text-muted">
+            <label className="text-xs text-ink-2">
               Entry
               <select className={inputCls} value={f.entryType} onChange={set("entryType")}>
                 <option value="market">Market</option>
                 <option value="limit">Limit</option>
               </select>
             </label>
-            <label className="text-xs text-muted">
+            <label className="text-xs text-ink-2">
               Limit price
               <input className={inputCls} inputMode="decimal" disabled={f.entryType !== "limit"} value={f.limitPrice} onChange={set("limitPrice")} />
             </label>
           </>
         )}
-        <label className="text-xs text-muted">
+        <label className="text-xs text-ink-2">
           Stop{autoStop && f.stop ? ` (auto ${SUGGESTED_STOP_PCT}%)` : ""}
           <input
             className={inputCls}
@@ -359,15 +358,15 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
             </button>
           )}
         </label>
-        <label className="text-xs text-muted">
+        <label className="text-xs text-ink-2">
           Target (optional)
           <input className={inputCls} inputMode="decimal" value={f.target} onChange={set("target")} />
         </label>
-        <label className="text-xs text-muted">
+        <label className="text-xs text-ink-2">
           Time frame (days)
           <input className={inputCls} inputMode="numeric" value={f.days} onChange={set("days")} />
         </label>
-        <label className="text-xs text-muted">
+        <label className="text-xs text-ink-2">
           Source
           <select className={inputCls} value={f.source} disabled={!!card} onChange={set("source")}>
             <option value="">Choose…</option>
@@ -379,15 +378,15 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           </select>
         </label>
       </div>
-      <label className="block text-xs text-muted">
+      <label className="block text-xs text-ink-2">
         Benchmark ETF (optional, e.g. XBI, SMH, XLE — scored against it as well as SPY)
         <input className={inputCls} value={f.benchmark} onChange={(e) => setF({ ...f, benchmark: e.target.value.toUpperCase() })} placeholder="SPY is always used" />
       </label>
-      <label className="block text-xs text-muted">
+      <label className="block text-xs text-ink-2">
         Thesis (1–3 sentences)
         <textarea className={inputCls} rows={2} value={f.thesis} onChange={set("thesis")} />
       </label>
-      <label className="block text-xs text-muted">
+      <label className="block text-xs text-ink-2">
         Stage
         <select className={inputCls} value={f.stage} onChange={(e) => setF({ ...f, stage: e.target.value, lateStageAck: false })}>
           <option value="">Choose…</option>
@@ -405,7 +404,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
         </label>
       )}
       <div className="grid gap-2">
-        <label className="text-xs text-muted">
+        <label className="text-xs text-ink-2">
           Because of this data…
           <textarea className={inputCls} rows={2} value={f.becauseData} onChange={set("becauseData")} />
         </label>
@@ -415,12 +414,12 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           Catalyst (what forces the market to see it)
           <input className={inputCls} value={f.catalyst} onChange={set("catalyst")} placeholder="Q4 earnings, product launch, FDA decision…" />
         </label>
-        <label className="text-xs text-muted">
-          Catalyst date or window
+        <label className="text-xs text-ink-2">
+          Catalyst date or window (optional)
           <input className={inputCls} value={f.catalystDate} onChange={set("catalystDate")} placeholder="Feb 12 / mid-March" />
         </label>
       </div>
-      <label className="block text-xs text-muted">
+      <label className="block text-xs text-ink-2">
         What proves it wrong (thesis kill criteria, separate from the stop)
         <textarea className={inputCls} rows={2} value={f.invalidation} onChange={set("invalidation")} />
       </label>
@@ -429,7 +428,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           What the price implies (optional)
           <input className={inputCls} value={f.priceImplies} onChange={set("priceImplies")} placeholder="priced for 10% growth" />
         </label>
-        <label className="text-xs text-muted">
+        <label className="text-xs text-ink-2">
           Crowding at entry (optional)
           <select className={inputCls} value={f.crowding} onChange={set("crowding")}>
             <option value="">—</option>
@@ -439,7 +438,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           </select>
         </label>
       </div>
-      <label className="block text-xs text-muted">
+      <label className="block text-xs text-ink-2">
         Notes (optional)
         <textarea className={inputCls} rows={2} value={f.ideaNotes} onChange={set("ideaNotes")} />
       </label>
@@ -449,7 +448,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           Plan one add (starter = 1/3 of full shadow size, add = the other 2/3)
         </label>
         {f.planAdd && (
-          <label className="block text-xs text-muted">
+          <label className="block text-xs text-ink-2">
             Add trigger (decided now)
             <input className={inputCls} value={f.addTrigger} onChange={set("addTrigger")} placeholder="guidance raise at next earnings / close above $X after earnings" />
           </label>
@@ -681,7 +680,7 @@ function PostMortemForm({ t, onDone }: { t: Trade; onDone: () => void }) {
   const [v, setV] = useState({ thesisRight: "", catalystHappened: "", rightReason: "", learned: "" });
   const [msg, setMsg] = useState<string | null>(null);
   const sel = (k: keyof typeof PM_OPTS, label: string) => (
-    <label className="text-xs text-muted">
+    <label className="text-xs text-ink-2">
       {label}
       <select className={inputCls} value={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.value })}>
         <option value="">—</option>
@@ -700,7 +699,7 @@ function PostMortemForm({ t, onDone }: { t: Trade; onDone: () => void }) {
         <div className="text-xs text-muted">Thesis: {t.thesis}</div>
         {t.catalyst && (
           <div className="text-xs text-muted">
-            Catalyst: {t.catalyst} ({t.catalystDate})
+            Catalyst: {t.catalyst}{t.catalystDate ? ` (${t.catalystDate})` : ""}
           </div>
         )}
       </div>
