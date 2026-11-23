@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireKv } from "@/lib/apiGuard";
 import { liveTradingEnabled } from "@/lib/schwab/trading";
 import { loadSettings, updateSettings } from "@/lib/stocks/engine";
-import { effectiveSettings, riskSizingActive, type StockSettings } from "@/lib/stocks/rules";
+import { effectiveSettings, riskSizingActive, settle, type StockSettings } from "@/lib/stocks/rules";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,7 @@ export async function GET() {
   if (missing) return missing;
   const s = await loadSettings();
   const eff = effectiveSettings(s);
-  return NextResponse.json({ settings: eff, riskLive: riskSizingActive(eff, "live"), pending: (s?.pending ?? []).filter((p) => p.effectiveAt > Date.now()), liveSwitch: liveTradingEnabled() });
+  return NextResponse.json({ settings: eff, riskLive: riskSizingActive(eff, "live"), pending: settle(s).pending, liveSwitch: liveTradingEnabled() });
 }
 
 /** Loosening a limit takes effect in 24 hours; tightening at once. Going live needs { dryRun: false, confirm: "LIVE" }. */

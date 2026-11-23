@@ -161,12 +161,23 @@ describe("stops, results and settings", () => {
     expect(sizeUpEligible({ ...s, trades: 40, avgR: 0.2 }, 0)).toBe(true);
     expect(sizeUpEligible({ ...s, trades: 39, avgR: 0.2 }, 0)).toBe(false);
   });
-  it("delays loosening 24 hours and applies tightening at once", () => {
-    const r = changeSettings(null, { maxOpen: 25, maxPerWeek: 2, shares: 5 }, NOW);
+  it("live: delays loosening 24 hours and applies tightening at once", () => {
+    const live = { values: { ...DEFAULT_SETTINGS, dryRun: false }, pending: [] };
+    const r = changeSettings(live, { maxOpen: 25, maxPerWeek: 2, shares: 5 }, NOW);
     expect(r.delayed).toEqual(["maxOpen 20 → 25", "shares 1 → 5"]);
     expect(effectiveSettings(r.next, NOW)).toMatchObject({ maxOpen: 20, maxPerWeek: 2, shares: 1 });
     expect(effectiveSettings(r.next, NOW + 24 * 3600_000)).toMatchObject({ maxOpen: 25, shares: 5 });
     expect(changeSettings(null, { maxOpen: 500 }).errors.length).toBe(1);
+  });
+  it("dry run: every change applies now, but going live waits 24 hours after a raise", () => {
+    const r = changeSettings(null, { maxOpen: 50, maxGrossPct: 100 }, NOW);
+    expect(r.delayed).toEqual([]);
+    expect(effectiveSettings(r.next, NOW)).toMatchObject({ maxOpen: 50, maxGrossPct: 100 });
+    expect(changeSettings(r.next, { dryRun: false }, NOW + 3600_000).errors.join(" ")).toMatch(/live is available from/);
+    expect(effectiveSettings(changeSettings(r.next, { dryRun: false }, NOW + 24 * 3600_000).next, NOW + 24 * 3600_000).dryRun).toBe(false);
+    // Raises queued under the old rule apply at once in dry run.
+    const queued = { values: DEFAULT_SETTINGS, pending: [{ key: "maxOpen" as const, value: 50, effectiveAt: NOW + 20 * 3600_000, requestedAt: NOW - 4 * 3600_000 }] };
+    expect(effectiveSettings(queued, NOW)).toMatchObject({ maxOpen: 50, loosenedAt: NOW - 4 * 3600_000 });
   });
   it("builds a bracket: entry triggers OCO stop + target", () => {
     const o = bracketOrder(idea, 1) as { orderStrategyType: string; orderLegCollection: { instruction: string }[]; childOrderStrategies: { orderStrategyType: string; childOrderStrategies: { orderType: string }[] }[] };

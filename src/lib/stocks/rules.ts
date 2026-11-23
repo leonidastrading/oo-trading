@@ -181,6 +181,8 @@ export interface StockSettings {
    */
   sizeByRisk: boolean;
   sizeByRiskAt: number;
+  /** Last time a limit was raised (in dry run that applies at once; going live then waits 24 hours). */
+  loosenedAt: number;
 }
 
 // Open ideas / ideas per week stay at 20 (asked for on Nov 21); the rest are the spec's defaults.
@@ -196,6 +198,7 @@ export const DEFAULT_SETTINGS: StockSettings = {
   maxNetPct: 50,
   sizeByRisk: false,
   sizeByRiskAt: 0,
+  loosenedAt: 0,
 };
 
 /** Limits where a higher number is looser: raising them waits 24 hours; lowering them applies at once. */
@@ -210,13 +213,19 @@ export interface StoredSettings {
 export function effectiveSettings(s: StoredSettings | null, now = Date.now()): StockSettings {
   const known = Object.fromEntries(Object.entries(s?.values ?? {}).filter(([k]) => k in DEFAULT_SETTINGS));
   const values = { ...DEFAULT_SETTINGS, ...known } as StockSettings;
-  for (const p of s?.pending ?? []) if (p.effectiveAt <= now && p.key in DEFAULT_SETTINGS) (values as unknown as Record<string, unknown>)[p.key] = p.value;
+  // In dry run nothing waits: a queued raise applies at once (and counts as a raise made when it was asked for).
+  for (const p of s?.pending ?? []) {
+    if (!(p.key in DEFAULT_SETTINGS) || !(p.effectiveAt <= now || values.dryRun)) continue;
+    (values as unknown as Record<string, unknown>)[p.key] = p.value;
+    if (p.effectiveAt > now) values.loosenedAt = Math.max(values.loosenedAt, p.requestedAt);
+  }
   return values;
 }
 
 /** Fold pending changes whose time has come into the values (housekeeping before a write). */
 export function settle(s: StoredSettings | null, now = Date.now()): StoredSettings {
-  return { values: effectiveSettings(s, now), pending: (s?.pending ?? []).filter((p) => p.effectiveAt > now) };
+  const values = effectiveSettings(s, now);
+  return { values, pending: values.dryRun ? [] : (s?.pending ?? []).filter((p) => p.effectiveAt > now) };
 }
 
 const LIMITS: Record<keyof StockSettings, [number, number] | null> = {
@@ -231,6 +240,7 @@ const LIMITS: Record<keyof StockSettings, [number, number] | null> = {
   maxNetPct: [1, 400],
   sizeByRisk: null,
   sizeByRiskAt: null,
+  loosenedAt: null,
 };
 
 /** Is account-based order sizing in force for this mode right now? (Live waits 24 hours after switching it on.) */
@@ -257,13 +267,16 @@ export function changeSettings(
     if (!(k in DEFAULT_SETTINGS) || v === undefined) continue;
     if (k === "dryRun") {
       if (typeof v !== "boolean") errors.push("dryRun must be true or false");
-      else if (v !== next.values.dryRun) {
+      else if (v === false && next.values.dryRun && now - next.values.loosenedAt < LOOSEN_DELAY_MS) {
+        // Limits raised freely in dry run still get their 24 hours before real orders can use them.
+        errors.push(`A limit was raised less than 24 hours ago: live is available from ${new Date(next.values.loosenedAt + LOOSEN_DELAY_MS).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })} ET`);
+      } else if (v !== next.values.dryRun) {
         next.values.dryRun = v;
         applied.push(`dry run ${v ? "on" : "off"}`);
       }
       continue;
     }
-    if (k === "sizeByRiskAt") continue; // set by the server only
+    if (k === "sizeByRiskAt" || k === "loosenedAt") continue; // set by the server only
     if (k === "sizeByRisk") {
       if (typeof v !== "boolean") errors.push("sizeByRisk must be true or false");
       else if (v !== next.values.sizeByRisk) {
@@ -285,7 +298,12 @@ export function changeSettings(
     const cur = next.values[k] as number;
     next.pending = next.pending.filter((p) => p.key !== k);
     if (val === cur) continue;
-    if (LOOSEN_UP.includes(k) && val > cur) {
+    if (LOOSEN_UP.includes(k) && val > cur && next.values.dryRun) {
+      // Dry run: apply now, and remember when (going live waits 24 hours from the last raise).
+      (next.values as unknown as Record<string, number>)[k] = val;
+      next.values.loosenedAt = now;
+      applied.push(`${k} ${cur} → ${val}`);
+    } else if (LOOSEN_UP.includes(k) && val > cur) {
       next.pending.push({ key: k, value: val, effectiveAt: now + LOOSEN_DELAY_MS, requestedAt: now });
       delayed.push(`${k} ${cur} → ${val}`);
     } else {

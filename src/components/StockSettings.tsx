@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { StockSettings as S, StoredSettings } from "@/lib/stocks/rules";
 import { formatDateTimeET } from "@/lib/time";
 
-const FIELDS: { key: Exclude<keyof S, "dryRun" | "sizeByRisk" | "sizeByRiskAt">; label: string; hint: string }[] = [
+const FIELDS: { key: Exclude<keyof S, "dryRun" | "sizeByRisk" | "sizeByRiskAt" | "loosenedAt">; label: string; hint: string }[] = [
   { key: "riskPct", label: "Risk per trade, % of account", hint: "what a stop-out loses; sets the size" },
   { key: "maxPositionPct", label: "Max position, % of account", hint: "no position bigger than this, whatever the stop" },
   { key: "shares", label: "Fixed shares per order", hint: "used when account sizing is off" },
@@ -106,7 +106,12 @@ export function StockSettings() {
         </ul>
       )}
       {msg && <p className="text-xs text-ink-2">{msg}</p>}
-      <p className="text-xs text-muted">Raising a limit takes effect 24 hours later; lowering one applies now. Changes are logged on the Stocks tab.</p>
+      <p className="text-xs text-muted">
+        {dry
+          ? "Dry run: every change applies now. After raising a limit, going live waits 24 hours."
+          : "Live: raising a limit takes effect 24 hours later; lowering one applies now."}{" "}
+        Changes are logged on the Stocks tab.
+      </p>
     </div>
   );
 }
