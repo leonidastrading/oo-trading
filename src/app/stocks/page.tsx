@@ -1157,7 +1157,13 @@ export default function StocksPage() {
       <PendingOrders orders={workingOrders(open, data.quotes)} />
 
       <section className="card space-y-2 p-4">
-        <h2 className="font-bold text-accent">Open ({open.length} of {data.settings.maxOpen})</h2>
+        <h2 className="font-bold text-accent">
+          Open ideas ({open.length} of {data.settings.maxOpen})
+          {(() => {
+            const pend = open.filter((t) => t.status === "pending").length;
+            return pend ? <span className="ml-2 text-sm font-normal text-muted">{open.length - pend} filled positions + {pend} entries not filled yet</span> : null;
+          })()}
+        </h2>
         {open.map((t) => (
           <OpenTrade
             key={t.id}
