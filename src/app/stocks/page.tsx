@@ -282,7 +282,7 @@ function IdeaForm({ onDone, dry }: { onDone: () => void; dry: boolean }) {
           {res.sizing && (
             <div className="my-2 grid grid-cols-2 gap-x-4 gap-y-0.5 rounded-lg bg-surface-2 p-2 text-xs sm:grid-cols-3">
               <span>
-                Live shares: <b>{res.sizing.liveShares}</b>
+                {dry ? "Order (dry run, not sent)" : "Order to Schwab"}: <b>{res.sizing.liveShares}</b> share{res.sizing.liveShares === 1 ? "" : "s"}
               </span>
               <span>
                 Shadow shares: <b>{res.sizing.shadow.shares.toLocaleString("en-US")}</b>
