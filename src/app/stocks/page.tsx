@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { StocksData } from "@/app/api/stocks/route";
 import { money, plClass } from "@/components/format";
 import { StockPnlChart } from "@/components/StockPnlChart";
-import { StockTradeChart } from "@/components/StockTradeChart";
+import { StockTradeChart, type ChartTrade } from "@/components/StockTradeChart";
 import { usePoll } from "@/components/usePoll";
 import type { Check, StockQuote, Trade } from "@/lib/stocks/rules";
 import type { CardPrefill } from "@/lib/stocks/scoutCard";
@@ -145,6 +145,20 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
   const [cardErr, setCardErr] = useState<string | null>(null);
   const [cardBusy, setCardBusy] = useState(false);
   const [autoStop, setAutoStop] = useState(false);
+  // Live chart for the loaded ticker, with the form's stop / target / limit drawn as lines.
+  const chartTrade = useMemo<ChartTrade | null>(() => {
+    if (!/^[A-Z][A-Z0-9.\-/]{0,9}$/.test(f.ticker)) return null;
+    const stop = Number(f.stop) > 0 ? Number(f.stop) : 0;
+    return {
+      ticker: f.ticker,
+      direction: f.direction === "short" ? "short" : "long",
+      stop,
+      initialStop: stop,
+      target: Number(f.target) > 0 ? Number(f.target) : null,
+      entryType: f.entryType === "limit" ? "limit" : "market",
+      limitPrice: f.entryType === "limit" && Number(f.limitPrice) > 0 ? Number(f.limitPrice) : null,
+    };
+  }, [f.ticker, f.direction, f.stop, f.target, f.entryType, f.limitPrice]);
   // 20% stop suggestion from the entry reference (the limit price for a limit entry, else the last price).
   const stopRef = f.entryType === "limit" && Number(f.limitPrice) > 0 ? Number(f.limitPrice) : (quote?.q?.last ?? 0);
   const stop20 = stopRef > 0 ? String(suggestedStop(stopRef, f.direction === "long")) : "";
@@ -319,6 +333,11 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           </select>
         </label>
         <QuoteLine q={quote} stop={Number(f.stop)} target={Number(f.target)} limit={f.entryType === "limit" ? Number(f.limitPrice) : 0} long={f.direction === "long"} />
+        {chartTrade && (
+          <div className="col-span-2 md:col-span-4">
+            <StockTradeChart trade={chartTrade} live />
+          </div>
+        )}
         {!adopt && (
           <>
             <label className="text-xs text-ink-2">

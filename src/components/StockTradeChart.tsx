@@ -13,7 +13,11 @@ const css = (name: string, fallback: string) =>
  * TradingView-style candles for one trade: entry (and exit) markers, and lines at the entry price, the
  * current stop and the target. Daily or 5-minute bars (the 5-minute axis reads New York time).
  */
-export function StockTradeChart({ trade }: { trade: Trade }) {
+export type ChartTrade = Pick<Trade, "ticker" | "direction" | "stop" | "initialStop"> &
+  Partial<Pick<Trade, "entryPrice" | "limitPrice" | "target" | "exitPrice" | "entryType" | "entryTime" | "exitTime" | "pl" | "exitReason">>;
+
+/** `live` re-reads the bars every 30 s (used on the entry form, before there is a trade). */
+export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const [tf, setTf] = useState<"D" | "5m">("D");
   const [bars, setBars] = useState<Bar[] | null>(null);
@@ -21,18 +25,22 @@ export function StockTradeChart({ trade }: { trade: Trade }) {
 
   useEffect(() => {
     let off = false;
-    fetch(`/api/stocks/bars?symbol=${encodeURIComponent(trade.ticker)}&tf=${tf}`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((j: { bars?: Bar[]; error?: string }) => {
-        if (off) return;
-        setBars(j.bars ?? []);
-        setErr(j.error ?? null);
-      })
-      .catch(() => !off && setErr("Couldn't load bars"));
+    const load = () =>
+      fetch(`/api/stocks/bars?symbol=${encodeURIComponent(trade.ticker)}&tf=${tf}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((j: { bars?: Bar[]; error?: string }) => {
+          if (off) return;
+          setBars(j.bars ?? []);
+          setErr(j.error ?? null);
+        })
+        .catch(() => !off && setErr("Couldn't load bars"));
+    load();
+    const every = live ? setInterval(load, 30_000) : null;
     return () => {
       off = true;
+      if (every) clearInterval(every);
     };
-  }, [trade.ticker, tf]);
+  }, [trade.ticker, tf, live]);
 
   useEffect(() => {
     if (!box.current || !bars?.length) return;
