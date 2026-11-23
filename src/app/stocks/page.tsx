@@ -732,6 +732,77 @@ function workingOrders(trades: Trade[], quotes: Record<string, number | null>): 
   return out;
 }
 
+/** One row per filled open position, with its unrealized P/L on the actual shares (incl. a filled add). */
+function OpenPositions({ trades, quotes }: { trades: Trade[]; quotes: Record<string, number | null> }) {
+  const rows = trades
+    .filter((t) => (t.status === "open" || t.status === "closing") && t.entryPrice != null)
+    .map((t) => {
+      const last = quotes[t.ticker] ?? null;
+      const dir = t.direction === "long" ? 1 : -1;
+      const legs = [{ sh: t.shares, px: t.entryPrice! }, ...(t.add?.status === "filled" && t.add.price ? [{ sh: t.add.liveShares, px: t.add.price }] : [])];
+      const shares = legs.reduce((a, l) => a + l.sh, 0);
+      const cost = legs.reduce((a, l) => a + l.sh * l.px, 0);
+      const pl = last === null ? null : legs.reduce((a, l) => a + (last - l.px) * dir * l.sh, 0);
+      const r = last !== null && t.riskPerShare ? ((last - t.entryPrice!) * dir) / t.riskPerShare : null;
+      return { t, last, shares, cost, avg: shares ? cost / shares : 0, pl, pct: pl === null || !cost ? null : (pl / cost) * 100, r };
+    });
+  if (!rows.length) return null;
+  const priced = rows.filter((x) => x.pl !== null);
+  const totPl = priced.reduce((a, x) => a + x.pl!, 0);
+  const totCost = priced.reduce((a, x) => a + x.cost, 0);
+  const dp = (v: number) => (v < 1 ? 4 : 2);
+  const pct = (v: number | null) => (v === null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`);
+  return (
+    <section className="card space-y-2 p-4">
+      <h2 className="font-bold text-accent">Open positions ({rows.length})</h2>
+      <div className="overflow-x-auto">
+        <table className="data w-full text-sm">
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Side</th>
+              <th>Shares</th>
+              <th>Entry</th>
+              <th>Last</th>
+              <th>Open P/L</th>
+              <th>%</th>
+              <th>R</th>
+              <th>Stop</th>
+              <th>Target</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ t, last, shares, avg, pl, pct: p, r }) => (
+              <tr key={t.id}>
+                <td className="font-semibold">{t.ticker}</td>
+                <td className={t.direction === "long" ? "text-gain" : "text-loss"}>{t.direction}</td>
+                <td className="num">{shares}</td>
+                <td className="num">{avg.toFixed(dp(avg))}</td>
+                <td className="num">{last === null ? "—" : last.toFixed(dp(last))}</td>
+                <td className={`num font-semibold ${plClass(pl ?? 0)}`}>{pl === null ? "—" : money(pl, { sign: true, cents: true })}</td>
+                <td className={`num ${plClass(pl ?? 0)}`}>{pct(p)}</td>
+                <td className={`num ${plClass(r ?? 0)}`}>{r === null ? "—" : `${r >= 0 ? "+" : ""}${r.toFixed(2)}R`}</td>
+                <td className="num">{t.stop}</td>
+                <td className="num">{t.target ?? "—"}</td>
+                <td className="text-xs text-muted">{t.mode === "dry" ? "dry run" : t.status === "closing" ? "closing" : ""}</td>
+              </tr>
+            ))}
+            {rows.length > 1 && (
+              <tr className="border-t border-border font-semibold">
+                <td colSpan={5}>Total</td>
+                <td className={`num ${plClass(totPl)}`}>{money(totPl, { sign: true, cents: true })}</td>
+                <td className={`num ${plClass(totPl)}`}>{pct(totCost ? (totPl / totCost) * 100 : null)}</td>
+                <td colSpan={4}></td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function PendingOrders({ orders }: { orders: WorkingOrder[] }) {
   return (
     <section className="card space-y-2 p-4">
@@ -927,6 +998,8 @@ export default function StocksPage() {
         {flatMsg && <div className="w-full text-sm">{flatMsg}</div>}
         {data.meta.errors.length > 0 && <div className="w-full text-xs text-loss">{data.meta.errors.join(" · ")}</div>}
       </section>
+
+      <OpenPositions trades={open} quotes={data.quotes} />
 
       {data.alerts.map((a) => (
         <div key={a.id} className="card flex items-start justify-between gap-3 border-loss/60 p-3 text-sm text-loss">
