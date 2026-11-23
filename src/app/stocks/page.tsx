@@ -766,10 +766,10 @@ function positionLegs(t: Trade): { sh: number; px: number }[] {
 function OpenPositions({ trades, quotes, accountValue, now, maxPositionPct, onDone }: { trades: Trade[]; quotes: Record<string, number | null>; accountValue: number | null; now: number; maxPositionPct: number; onDone: () => void }) {
   const [trimMsg, setTrimMsg] = useState<string | null>(null);
   const trim = async () => {
-    if (!confirm(`Trim every dry-run position that is over ${maxPositionPct}% of the account down to ${maxPositionPct}%? Paper only: nothing is sent to Schwab.`)) return;
+    if (!confirm(`Resize every dry-run position to ${maxPositionPct}% of the account? Bigger ones are cut and smaller ones are raised. Raising a wide-stop trade can make its stop-out risk more than your risk-per-trade setting. Paper only: nothing is sent to Schwab.`)) return;
     const { json } = await post("/api/stocks/trim", {});
     const t = (json.trimmed as string[] | undefined) ?? [];
-    setTrimMsg(json.ok ? (t.length ? `Trimmed: ${t.join(", ")}` : "Nothing is over the limit") : String(json.error ?? "Failed"));
+    setTrimMsg(json.ok ? (t.length ? `Resized: ${t.join(", ")}` : "Every position is already at the limit") : String(json.error ?? "Failed"));
     onDone();
   };
   type Key = "ticker" | "side" | "shares" | "avg" | "last" | "pl" | "pct" | "acct" | "r" | "days" | "stop" | "target";
@@ -831,9 +831,9 @@ function OpenPositions({ trades, quotes, accountValue, now, maxPositionPct, onDo
     <section className="card space-y-2 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-bold text-accent">Open positions ({rows.length})</h2>
-        {rows.some((x) => x.t.mode === "dry" && x.acct !== null && x.acct > maxPositionPct + 0.02) && (
+        {rows.some((x) => x.t.mode === "dry" && x.acct !== null && Math.abs(x.acct - maxPositionPct) > 0.02) && (
           <button className="rounded-lg border border-accent px-3 py-1 text-xs font-semibold text-accent" onClick={() => void trim()}>
-            Trim dry-run positions to {maxPositionPct}% of account
+            Resize dry-run positions to {maxPositionPct}% of account
           </button>
         )}
       </div>

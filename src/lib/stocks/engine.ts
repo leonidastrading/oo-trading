@@ -1109,8 +1109,8 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
 }
 
 /**
- * Trim open dry-run positions that are bigger than the current "max position" % of the account down to it
- * (at the last price). Paper only: nothing is sent to Schwab, and live positions are left alone.
+ * Resize every open dry-run position to the current "max position" % of the account (at the last price):
+ * bigger ones are cut, smaller ones are raised — which can put a wide-stop trade over the risk-per-trade %. Paper only: nothing is sent to Schwab, and live positions are left alone.
  */
 export async function trimDryToCap(): Promise<{ ok: boolean; error?: string; trimmed: string[] }> {
   return withLock(async () => {
@@ -1128,7 +1128,7 @@ export async function trimDryToCap(): Promise<{ ok: boolean; error?: string; tri
       const addOn = t.add?.status === "filled" ? t.add.shadowShares : 0;
       const total = t.shadowShares + addOn;
       const want = Math.floor(cap / px);
-      if (!(px > 0) || total <= want || want < 1) continue;
+      if (!(px > 0) || total === want || want < 1) continue;
       const k = want / total;
       const starter = addOn ? Math.max(1, Math.floor(t.shadowShares * k)) : want;
       const risk = Math.abs(t.entryPrice! - t.initialStop);
@@ -1147,8 +1147,11 @@ export async function trimDryToCap(): Promise<{ ok: boolean; error?: string; tri
         shadowCapped: true,
       });
       await saveTrade(t);
-      await log({ kind: "change", mode: "dry", ticker: t.ticker, tradeId: t.id, text: `DRY RUN — size trimmed ${total} → ${want} sh to fit max position ${settings.maxPositionPct}% of the account` });
-      trimmed.push(`${t.ticker} ${total} → ${want}`);
+      // Sizing up past the risk-based size means a stop-out loses more than the risk-per-trade %: say so.
+      const riskPct = (want * risk) / value * 100;
+      const over = riskPct > settings.riskPct * 1.02 ? ` (stop-out risk now ${riskPct.toFixed(2)}% of the account, over the ${settings.riskPct}% setting)` : "";
+      await log({ kind: "change", mode: "dry", ticker: t.ticker, tradeId: t.id, text: `DRY RUN — size ${total} → ${want} sh to make it ${settings.maxPositionPct}% of the account${over}` });
+      trimmed.push(`${t.ticker} ${total} → ${want}${over}`);
     }
     return { ok: true, trimmed };
   });
