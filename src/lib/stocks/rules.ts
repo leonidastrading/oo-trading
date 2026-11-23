@@ -510,17 +510,19 @@ export function preTradeChecks(c: CheckContext): Check[] {
     }
   }
   if (idea.direction === "short") {
-    const ok = quote?.shortable === true && quote?.hardToBorrow === false;
+    // Only a flat "not shortable" blocks. Hard-to-borrow (or unknown) is allowed with a warning: Schwab
+    // decides when the order arrives, and may charge a borrow fee.
+    const ok = quote?.shortable !== false;
     add(
       "Shortable",
       ok,
-      ok
-        ? "Schwab: shortable, not hard-to-borrow"
-        : quote?.shortable === false
-          ? "Schwab says it isn't shortable"
-          : quote?.hardToBorrow
-            ? "Schwab lists it as hard-to-borrow"
-            : "Couldn't confirm it's shortable and easy to borrow",
+      !ok
+        ? "Schwab says it isn't shortable"
+        : quote?.hardToBorrow
+          ? "Warning: Schwab lists it as hard-to-borrow — allowed, but Schwab may reject the order or charge a borrow fee"
+          : quote?.shortable === true
+            ? "Schwab: shortable, not hard-to-borrow"
+            : "Warning: couldn't confirm it's shortable — Schwab may reject the order",
     );
   }
 

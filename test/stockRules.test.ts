@@ -106,8 +106,8 @@ describe("pre-trade checks", () => {
     expect(failed(preTradeChecks(ctx({ idea: { ...idea, stop: 140 } })))).not.toContain("Risk to stop"); // 30%
     const short = { ...idea, direction: "short" as const, stop: 210, target: 180 };
     expect(failed(preTradeChecks(ctx({ idea: short })))).toEqual([]);
-    expect(failed(preTradeChecks(ctx({ idea: short, quote: { ...quote, hardToBorrow: true } })))).toContain("Shortable");
-    expect(failed(preTradeChecks(ctx({ idea: short, quote: { ...quote, shortable: null } })))).toContain("Shortable");
+    expect(failed(preTradeChecks(ctx({ idea: short, quote: { ...quote, hardToBorrow: true } })))).not.toContain("Shortable"); // warning only
+    expect(failed(preTradeChecks(ctx({ idea: short, quote: { ...quote, shortable: false } })))).toContain("Shortable");
   });
   it("takes entries any time: market in the regular session, limit only outside it", () => {
     const lim = { ...idea, entryType: "limit" as const, limitPrice: 199 };

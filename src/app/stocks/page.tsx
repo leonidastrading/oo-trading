@@ -538,8 +538,8 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           {res.checks && (
             <ul className="mt-1 space-y-0.5">
               {res.checks.map((c) => (
-                <li key={c.name} className={c.ok ? "text-ink-2" : "text-loss"}>
-                  {c.ok ? "✓" : "✗"} <span className="font-medium">{c.name}</span> — {c.detail}
+                <li key={c.name} className={!c.ok ? "text-loss" : c.detail.startsWith("Warning") ? "text-warn" : "text-ink-2"}>
+                  {!c.ok ? "✗" : c.detail.startsWith("Warning") ? "!" : "✓"} <span className="font-medium">{c.name}</span> — {c.detail}
                 </li>
               ))}
             </ul>
