@@ -32,6 +32,8 @@ export interface IdeaInput {
   /** Variant perception. */
   marketBelieves?: string;
   iBelieve?: string;
+  /** This trade's own position cap, % of the account (1 … the max-position setting), set by confidence. */
+  positionPct?: number | null;
   /** Optional free-form notes. */
   ideaNotes?: string | null;
   becauseData?: string;
@@ -243,6 +245,11 @@ const LIMITS: Record<keyof StockSettings, [number, number] | null> = {
   loosenedAt: null,
 };
 
+/** The position cap for one trade: its own % (from the confidence slider) but never above the setting. */
+export function tradeCapPct(s: Pick<StockSettings, "maxPositionPct">, positionPct: number | null | undefined): number {
+  return positionPct && positionPct > 0 ? Math.min(positionPct, s.maxPositionPct) : s.maxPositionPct;
+}
+
 /** Is account-based order sizing in force for this mode right now? (Live waits 24 hours after switching it on.) */
 export function riskSizingActive(s: StockSettings, mode: Mode, now = Date.now()): boolean {
   return s.sizeByRisk && (mode === "dry" || now - s.sizeByRiskAt >= LOOSEN_DELAY_MS);
@@ -425,6 +432,9 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
   const marketBelieves = txt("marketBelieves", '"Market believes…"', 0, 300, false);
   const iBelieve = txt("iBelieve", '"I believe…"', 0, 300, false);
   const ideaNotes = txt("ideaNotes", "Notes", 0, 1000, false);
+  const posGiven = raw.positionPct !== undefined && raw.positionPct !== null && raw.positionPct !== "";
+  const positionPct = posGiven ? num(raw.positionPct) : null;
+  if (positionPct !== null && !(positionPct > 0 && positionPct <= 100)) errors.push("Position size must be a % of the account");
   const becauseData = txt("becauseData", '"Because of this data…"', 5, 300);
   const catalyst = txt("catalyst", "Catalyst", 5, 300);
   const catalystDate = txt("catalystDate", "Catalyst date or window", 0, 80, false);
@@ -457,6 +467,7 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
       marketBelieves,
       iBelieve,
       ideaNotes: ideaNotes || null,
+      positionPct,
       becauseData,
       catalyst,
       catalystDate,

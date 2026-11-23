@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cardToPrefill } from "../src/lib/stocks/scoutCard";
 import {
   adoptChecks,
+  tradeCapPct,
   orderShares,
   riskSizingActive,
   suggestedStop,
@@ -349,5 +350,17 @@ describe("account-based order sizing", () => {
     expect(orderShares(on, "dry", 300, true, t0)).toBe(100);
     expect(orderShares(on, "live", 300, false, t0)).toBe(1);
     expect(orderShares(DEFAULT_SETTINGS, "dry", 300, false, t0)).toBe(1);
+  });
+});
+
+describe("per-trade position cap (confidence slider)", () => {
+  it("uses the trade's own % but never more than the setting", () => {
+    expect(tradeCapPct({ maxPositionPct: 5 }, 2)).toBe(2);
+    expect(tradeCapPct({ maxPositionPct: 5 }, 9)).toBe(5);
+    expect(tradeCapPct({ maxPositionPct: 5 }, null)).toBe(5);
+    // 100k account, entry 200, stop 190: risk sizing wants 100 sh ($20k); a 2% cap allows $2k = 10 sh.
+    expect(shadowSize(100_000, { riskPct: 1, maxPositionPct: tradeCapPct({ maxPositionPct: 15 }, 2) }, 200, 190).shares).toBe(10);
+    expect(parseIdea({ ...idea, positionPct: 2 }).idea!.positionPct).toBe(2);
+    expect(parseIdea({ ...idea, positionPct: -1 }).errors.join(" ")).toMatch(/Position size/);
   });
 });

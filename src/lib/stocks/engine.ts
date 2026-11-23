@@ -27,6 +27,7 @@ import {
   shadowSize,
   starterShares,
   orderShares,
+  tradeCapPct,
   riskSizingActive,
   checkAdd,
   parsePostMortem,
@@ -280,19 +281,21 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
     const [acct, quotes, trades, kill] = await Promise.all([tradingAccount(), stockQuotes([idea.ticker]).catch(() => ({}) as Record<string, StockQuote>), loadTrades(), killSwitchOn()]);
     const acctValue = await accountValue(acct).catch(() => null);
     const quote = quotes[idea.ticker] ?? null;
-    const checks = preTradeChecks({ idea, quote, trades, settings, killSwitch: kill, accountValue: acctValue, now });
+    // This trade's own position cap (confidence slider), never above the setting.
+    const sized = { ...settings, maxPositionPct: tradeCapPct(settings, idea.positionPct) };
+    const checks = preTradeChecks({ idea, quote, trades, settings: sized, killSwitch: kill, accountValue: acctValue, now });
     if (mode === "live") {
       const on = liveTradingEnabled();
       checks.push({ name: "Server live switch", ok: on, detail: on ? "On" : "STOCK_LIVE_TRADING is off on the server: live orders can't be sent" });
     }
     const lastPx = quote?.last ?? null;
     const entryRef = idea.entryType !== "market" && idea.limitPrice ? idea.limitPrice : (lastPx ?? 0);
-    const full = shadowSize(acctValue, settings, entryRef, idea.stop);
+    const full = shadowSize(acctValue, sized, entryRef, idea.stop);
     const starterN = starterShares(full.shares, idea.planAdd);
     // Order size: from the account (risk % to the stop, capped per position) when that's in force, else fixed.
     const byRisk = riskSizingActive(settings, mode, now);
     const liveN = orderShares(settings, mode, full.shares, idea.planAdd, now);
-    if (byRisk) checks.push({ name: "Order size", ok: liveN >= 1, detail: liveN >= 1 ? `${liveN} sh: ${settings.riskPct}% risk to the stop, max ${settings.maxPositionPct}% of the account` : "Sizes to 0 shares (account value unknown, or one share is over the limits)" });
+    if (byRisk) checks.push({ name: "Order size", ok: liveN >= 1, detail: liveN >= 1 ? `${liveN} sh: ${settings.riskPct}% risk to the stop, max ${sized.maxPositionPct}% of the account` : "Sizes to 0 shares (account value unknown, or one share is over the limits)" });
     else if (settings.sizeByRisk) checks.push({ name: "Order size", ok: true, detail: `Warning: account sizing isn't live yet (24 hours after switching it on) — using the fixed ${settings.shares} share(s)` });
     const failed = checks.filter((c) => !c.ok);
     const sizing = {
@@ -316,7 +319,7 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
     const last = quote!.last!;
     const ref = idea.entryType !== "market" ? idea.limitPrice! : last;
     const risk = Math.abs(ref - idea.stop);
-    const size = shadowSize(acctValue, settings, ref, idea.stop);
+    const size = shadowSize(acctValue, sized, ref, idea.stop);
     const session = entrySession(idea.entryType, now).session;
     const order = bracketOrder(idea, liveN, session);
     const trade: Trade = {
@@ -947,7 +950,7 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
               riskPerShare: Math.round(risk * 100) / 100,
               ...(() => {
                 // Re-size the shadow at the actual fill (same risk %, same cap).
-                const z = shadowSize(t.accountValue, { riskPct: t.shadowRiskPct, maxPositionPct: settingsCap }, f.price, t.initialStop);
+                const z = shadowSize(t.accountValue, { riskPct: t.shadowRiskPct, maxPositionPct: tradeCapPct({ maxPositionPct: settingsCap }, t.positionPct) }, f.price, t.initialStop);
                 const st = starterShares(z.shares, t.planAdd);
                 return {
                   shadowShares: st,

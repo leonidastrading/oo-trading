@@ -89,7 +89,11 @@ interface Held {
 }
 
 /** New idea — or, with `adopt`, the same form for a position already opened outside the app. */
-function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: boolean; adopt?: Held; onCancel?: () => void }) {
+function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct }: { onDone: () => void; dry: boolean; adopt?: Held; onCancel?: () => void; maxPositionPct: number }) {
+  // Confidence slider: this trade's position cap, from 1% (or the max, if lower) up to the max-position setting.
+  const [posPct, setPosPct] = useState<number | null>(null);
+  const posMin = Math.min(1, maxPositionPct);
+  const pos = Math.min(posPct ?? maxPositionPct, maxPositionPct);
   const blank = {
     ticker: "",
     direction: "long",
@@ -262,6 +266,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
   const payload = () => ({
     ...f,
     cardId: card?.cardId ?? null,
+    positionPct: adopt ? null : pos,
     limitPrice: f.entryType !== "market" ? Number(f.limitPrice) : null,
     stop: Number(f.stop),
     target: f.target ? Number(f.target) : null,
@@ -269,7 +274,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
     crowding: f.crowding || null,
     addTrigger: f.planAdd ? f.addTrigger : null,
   });
-  const key = JSON.stringify(f);
+  const key = JSON.stringify([f, pos]);
   // Step 1: check and size (nothing logged or sent). Step 2: confirm — the server re-runs every check.
   async function check() {
     setBusy(true);
@@ -452,6 +457,17 @@ function IdeaForm({ onDone, dry, adopt, onCancel }: { onDone: () => void; dry: b
           </select>
         </label>
       </div>
+      {!adopt && maxPositionPct > posMin && (
+        <label className="block rounded-lg bg-surface-2 p-2 text-xs text-ink-2">
+          Position size by confidence: up to <b className="text-sm text-ink">{pos}%</b> of the account
+          <input type="range" className="mt-1 block w-full accent-[var(--accent)]" min={posMin} max={maxPositionPct} step={0.25} value={pos} onChange={(e) => setPosPct(Number(e.target.value))} />
+          <span className="flex justify-between text-muted">
+            <span>{posMin}%</span>
+            <span>The {"risk per trade"} limit still applies: a wide stop can make the size smaller than this.</span>
+            <span>{maxPositionPct}% (max in Settings)</span>
+          </span>
+        </label>
+      )}
       <label className="block text-xs text-ink-2">
         Notes (optional)
         <textarea className={inputCls} rows={2} value={f.ideaNotes} onChange={set("ideaNotes")} />
@@ -1231,9 +1247,9 @@ export default function StocksPage() {
           ))}
         </section>
       )}
-      {adopting && <IdeaForm key={adopting.symbol} dry={dry} adopt={adopting} onCancel={() => setAdopting(null)} onDone={refresh} />}
+      {adopting && <IdeaForm key={adopting.symbol} dry={dry} adopt={adopting} onCancel={() => setAdopting(null)} onDone={refresh} maxPositionPct={data.settings.maxPositionPct} />}
 
-      <IdeaForm dry={dry} onDone={refresh} />
+      <IdeaForm dry={dry} onDone={refresh} maxPositionPct={data.settings.maxPositionPct} />
 
       <PendingOrders orders={workingOrders(open, data.quotes)} />
 
