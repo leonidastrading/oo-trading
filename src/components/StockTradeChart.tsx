@@ -123,7 +123,7 @@ export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boo
         <span ref={legend} className="num ml-2 whitespace-pre" />
         {err && <span className="text-loss">{err}</span>}
       </div>
-      <div ref={box} className="h-64 w-full" />
+      <div ref={box} className="h-[32rem] w-full" />
     </div>
   );
 }
