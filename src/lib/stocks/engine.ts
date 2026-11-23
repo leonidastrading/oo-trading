@@ -1105,6 +1105,52 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
   });
 }
 
+/**
+ * Trim open dry-run positions that are bigger than the current "max position" % of the account down to it
+ * (at the last price). Paper only: nothing is sent to Schwab, and live positions are left alone.
+ */
+export async function trimDryToCap(): Promise<{ ok: boolean; error?: string; trimmed: string[] }> {
+  return withLock(async () => {
+    const settings = await settingsNow();
+    const acct = await tradingAccount();
+    const value = await accountValue(acct).catch(() => null);
+    if (!value) return { ok: false, error: "Couldn't read the account value", trimmed: [] };
+    const all = await loadTrades();
+    const open = all.filter((t) => t.mode === "dry" && t.status === "open" && t.entryPrice);
+    const quotes = await stockQuotes([...new Set(open.map((t) => t.ticker))]).catch(() => ({}) as Record<string, StockQuote>);
+    const cap = (settings.maxPositionPct / 100) * value;
+    const trimmed: string[] = [];
+    for (const t of open) {
+      const px = quotes[t.ticker]?.last ?? t.entryPrice!;
+      const addOn = t.add?.status === "filled" ? t.add.shadowShares : 0;
+      const total = t.shadowShares + addOn;
+      const want = Math.floor(cap / px);
+      if (!(px > 0) || total <= want || want < 1) continue;
+      const k = want / total;
+      const starter = addOn ? Math.max(1, Math.floor(t.shadowShares * k)) : want;
+      const risk = Math.abs(t.entryPrice! - t.initialStop);
+      const full = Math.max(starter, Math.floor((t.fullShadowShares ?? t.shadowShares) * k));
+      if (t.add && addOn) t.add.shadowShares = Math.max(0, want - starter);
+      if (t.sizedByRisk) {
+        t.shares = starter;
+        if (t.add && addOn) t.add.liveShares = t.add.shadowShares;
+      }
+      Object.assign(t, {
+        shadowShares: starter,
+        fullShadowShares: full,
+        plannedRisk: Math.round(full * risk * 100) / 100,
+        shadowPosition: Math.round(starter * t.entryPrice! * 100) / 100,
+        shadowRisk: Math.round(starter * risk * 100) / 100,
+        shadowCapped: true,
+      });
+      await saveTrade(t);
+      await log({ kind: "change", mode: "dry", ticker: t.ticker, tradeId: t.id, text: `DRY RUN — size trimmed ${total} → ${want} sh to fit max position ${settings.maxPositionPct}% of the account` });
+      trimmed.push(`${t.ticker} ${total} → ${want}`);
+    }
+    return { ok: true, trimmed };
+  });
+}
+
 // ---- Settings ----
 
 export async function updateSettings(patch: Partial<StockSettings>) {

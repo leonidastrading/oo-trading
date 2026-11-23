@@ -747,7 +747,15 @@ function positionLegs(t: Trade): { sh: number; px: number }[] {
 }
 
 /** One row per filled open position, with its unrealized P/L on the actual shares (incl. a filled add). */
-function OpenPositions({ trades, quotes, accountValue, now }: { trades: Trade[]; quotes: Record<string, number | null>; accountValue: number | null; now: number }) {
+function OpenPositions({ trades, quotes, accountValue, now, maxPositionPct, onDone }: { trades: Trade[]; quotes: Record<string, number | null>; accountValue: number | null; now: number; maxPositionPct: number; onDone: () => void }) {
+  const [trimMsg, setTrimMsg] = useState<string | null>(null);
+  const trim = async () => {
+    if (!confirm(`Trim every dry-run position that is over ${maxPositionPct}% of the account down to ${maxPositionPct}%? Paper only: nothing is sent to Schwab.`)) return;
+    const { json } = await post("/api/stocks/trim", {});
+    const t = (json.trimmed as string[] | undefined) ?? [];
+    setTrimMsg(json.ok ? (t.length ? `Trimmed: ${t.join(", ")}` : "Nothing is over the limit") : String(json.error ?? "Failed"));
+    onDone();
+  };
   type Key = "ticker" | "side" | "shares" | "avg" | "last" | "pl" | "pct" | "acct" | "r" | "days" | "stop" | "target";
   const [sort, setSort] = useState<{ key: Key; desc: boolean }>({ key: "days", desc: false });
   const rows = trades
@@ -805,7 +813,15 @@ function OpenPositions({ trades, quotes, accountValue, now }: { trades: Trade[];
   );
   return (
     <section className="card space-y-2 p-4">
-      <h2 className="font-bold text-accent">Open positions ({rows.length})</h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-bold text-accent">Open positions ({rows.length})</h2>
+        {rows.some((x) => x.t.mode === "dry" && x.acct !== null && x.acct > maxPositionPct) && (
+          <button className="rounded-lg border border-accent px-3 py-1 text-xs font-semibold text-accent" onClick={() => void trim()}>
+            Trim dry-run positions to {maxPositionPct}% of account
+          </button>
+        )}
+      </div>
+      {trimMsg && <div className="text-xs text-ink-2">{trimMsg}</div>}
       <div className="overflow-x-auto">
         <table className="data w-full text-sm">
           <thead>
@@ -1066,7 +1082,7 @@ export default function StocksPage() {
         {data.meta.errors.length > 0 && <div className="w-full text-xs text-loss">{data.meta.errors.join(" · ")}</div>}
       </section>
 
-      <OpenPositions trades={open} quotes={data.quotes} accountValue={data.accountValue} now={data.now} />
+      <OpenPositions trades={open} quotes={data.quotes} accountValue={data.accountValue} now={data.now} maxPositionPct={data.settings.maxPositionPct} onDone={refresh} />
 
       {data.alerts.map((a) => (
         <div key={a.id} className="card flex items-start justify-between gap-3 border-loss/60 p-3 text-sm text-loss">
