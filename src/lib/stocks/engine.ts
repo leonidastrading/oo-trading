@@ -765,6 +765,22 @@ export async function savePostMortem(id: string, raw: Record<string, unknown>) {
   });
 }
 
+/** Attach a Trend Scout card to a trade that has none (or fix a wrong one). The card must be for the same ticker. */
+export async function setTradeCard(id: string, cardNo: unknown) {
+  return withLock(async () => {
+    const t = (await store().hgetall<Trade>(KEYS.stockTrades))[id];
+    if (!t) return { ok: false, error: "No trade with that id" };
+    const card = await fetchCard(cardNo);
+    if (!card.ok) return { ok: false, error: card.error };
+    if (card.prefill.ticker !== t.ticker) return { ok: false, error: `Card ${card.prefill.cardId} is for ${card.prefill.ticker}, not ${t.ticker}` };
+    t.cardId = card.prefill.cardId;
+    t.cardUrl = card.prefill.cardUrl;
+    await saveTrade(t);
+    await log({ kind: "change", mode: t.mode, ticker: t.ticker, tradeId: id, text: `Linked to Trend Scout card ${t.cardId}` });
+    return { ok: true };
+  });
+}
+
 // ---- Exits ----
 
 /** Close one trade at market (or cancel its entry if it hasn't filled). Callers hold the lock. */

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireKv } from "@/lib/apiGuard";
-import { changeStop, changeTarget, closeTrade, savePostMortem, triggerAdd } from "@/lib/stocks/engine";
+import { changeStop, changeTarget, closeTrade, savePostMortem, setTradeCard, triggerAdd } from "@/lib/stocks/engine";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +23,9 @@ export async function POST(req: NextRequest) {
               ? await triggerAdd(b.id, v, String(b.note ?? ""))
               : b.action === "postmortem"
                 ? await savePostMortem(b.id, b.postMortem ?? {})
-                : { ok: false, error: "Unknown action" };
+                : b.action === "card"
+                  ? await setTradeCard(b.id, b.value)
+                  : { ok: false, error: "Unknown action" };
     return NextResponse.json(r, { status: r.ok ? 200 : 422 });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 502 });

@@ -2,6 +2,7 @@
 
 import { CandlestickSeries, ColorType, createChart, createSeriesMarkers, LineStyle, type AutoscaleInfo, type UTCTimestamp } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
+import { usePref } from "@/components/usePref";
 import type { Bar } from "@/lib/schwab/data";
 import type { Trade } from "@/lib/stocks/rules";
 import { etOffsetMinutes } from "@/lib/time";
@@ -31,22 +32,43 @@ export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boo
       void Promise.resolve().then(() => setSeen(true));
       return;
     }
-    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setSeen(true), { rootMargin: "200px" });
+    // It must stay on screen for a moment: a smooth scroll past 40 charts (a ticker link, "Top") loads none.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const io = new IntersectionObserver((es) => {
+      const on = es.some((e) => e.isIntersecting);
+      if (on && !timer) timer = setTimeout(() => setSeen(true), 700);
+      if (!on && timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    });
     io.observe(el);
-    return () => io.disconnect();
+    return () => {
+      io.disconnect();
+      if (timer) clearTimeout(timer);
+    };
   }, [seen]);
-  const [tf, setTf] = useState<"D" | "5m">("D");
+  // Daily / 5 min is one choice for every stock chart, remembered across reloads.
+  const [tf, setTf] = usePref<"D" | "5m">("stocks.chart.tf", "D", (v) => v === "D" || v === "5m");
   const [bars, setBars] = useState<Bar[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!seen) return;
     let off = false;
+    let tries = 0;
+    let retry: ReturnType<typeof setTimeout> | null = null;
     const load = () =>
       fetch(`/api/stocks/bars?symbol=${encodeURIComponent(trade.ticker)}&tf=${tf}`, { cache: "no-store" })
         .then((r) => r.json())
-        .then((j: { bars?: Bar[]; error?: string }) => {
+        .then((j: { bars?: Bar[]; error?: string; busy?: boolean }) => {
           if (off) return;
+          // The server holds chart requests back when Schwab's request budget is nearly used: try again shortly.
+          if (j.busy && !j.bars?.length && tries++ < 6) {
+            setErr("Waiting for a free data slot…");
+            retry = setTimeout(load, 20_000);
+            return;
+          }
           setBars(j.bars ?? []);
           setErr(j.error ?? null);
         })
@@ -56,6 +78,7 @@ export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boo
     return () => {
       off = true;
       if (every) clearInterval(every);
+      if (retry) clearTimeout(retry);
     };
   }, [trade.ticker, tf, live, seen]);
 

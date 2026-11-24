@@ -2,7 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireKv } from "@/lib/apiGuard";
 import { cached } from "@/lib/cache";
 import { cachedDailyBars, cachedFiveMinuteBars, type Bar } from "@/lib/schwab/data";
-import { schwabGet } from "@/lib/schwab/client";
+import { rateUsage, schwabGet } from "@/lib/schwab/client";
+import { loadTrades } from "@/lib/stocks/engine";
+
+const CHART_BUDGET = 35; // of the 60 requests a minute
 import { regularSession } from "@/lib/stocks/rules";
 import { etParts, isTradingDay } from "@/lib/time";
 
@@ -11,7 +14,11 @@ async function todayBar(symbol: string): Promise<Bar | null> {
   const p = etParts();
   if (!isTradingDay(p.date) || p.minutesOfDay < 9 * 60 + 30) return null;
   type Raw = Record<string, { quote?: { openPrice?: number; highPrice?: number; lowPrice?: number; lastPrice?: number } }>;
-  const r = await cached(`stocks:daybar:${symbol}`, 60_000, () => schwabGet<Raw>("/marketdata/v1/quotes", { symbols: symbol, fields: "quote" }));
+  // One Schwab call a minute covers every open trade's ticker; only a ticker with no trade yet gets its own.
+  const open = [...new Set((await loadTrades()).filter((t) => ["pending", "open", "closing"].includes(t.status)).map((t) => t.ticker))].sort();
+  const r = open.includes(symbol)
+    ? await cached(`stocks:daybars:${open.length}`, 60_000, () => schwabGet<Raw>("/marketdata/v1/quotes", { symbols: open.join(","), fields: "quote" }))
+    : await cached(`stocks:daybar:${symbol}`, 60_000, () => schwabGet<Raw>("/marketdata/v1/quotes", { symbols: symbol, fields: "quote" }));
   const q = r.data?.[symbol]?.quote;
   if (!q?.openPrice || !q.lastPrice) return null;
   return {
@@ -32,6 +39,9 @@ export async function GET(req: NextRequest) {
   const symbol = (req.nextUrl.searchParams.get("symbol") ?? "").toUpperCase();
   const tf = req.nextUrl.searchParams.get("tf") === "5m" ? "5m" : "D";
   if (!/^[A-Z][A-Z0-9.\-/]{0,9}$/.test(symbol)) return NextResponse.json({ error: "Bad symbol" }, { status: 400 });
+  // Charts are the lowest priority: when most of this minute's Schwab budget is used, leave the rest for
+  // the Live page and order sync, and let the chart ask again.
+  if ((await rateUsage().catch(() => 0)) >= CHART_BUDGET) return NextResponse.json({ symbol, tf, bars: [], busy: true }, { headers: { "Cache-Control": "no-store" } });
   const live = regularSession();
   const r = tf === "5m" ? await cachedFiveMinuteBars(symbol, 5, live ? 60_000 : 30 * 60_000) : await cachedDailyBars(symbol, live ? 30 * 60_000 : 6 * 3600_000);
   let bars = r.data ?? [];

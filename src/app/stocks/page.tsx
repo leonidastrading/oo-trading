@@ -6,6 +6,7 @@ import { money, plClass } from "@/components/format";
 import { StockPnlChart } from "@/components/StockPnlChart";
 import { StockTradeChart, type ChartTrade } from "@/components/StockTradeChart";
 import { usePoll } from "@/components/usePoll";
+import { usePref } from "@/components/usePref";
 import type { Check, StockQuote, Trade } from "@/lib/stocks/rules";
 import type { CardPrefill } from "@/lib/stocks/scoutCard";
 import { excessReturn, SOURCES, STAGES, SUGGESTED_STOP_PCT, suggestedStop } from "@/lib/stocks/rules";
@@ -80,6 +81,26 @@ function QuoteLine({ q, stop, target, limit, long }: { q: LiveQuote; stop: numbe
     </div>
   );
 }
+
+/** Collapse / expand a section; the choice is remembered in this browser. */
+function useCollapsed(id: string): [boolean, React.ReactNode] {
+  const [c, setC] = usePref<boolean>(`stocks.collapsed.${id}`, false, (v) => typeof v === "boolean");
+  return [
+    c,
+    <button
+      key="collapse"
+      type="button"
+      onClick={() => setC(!c)}
+      aria-expanded={!c}
+      title={c ? "Expand" : "Collapse"}
+      className="ml-2 rounded-md border border-border px-2 py-0.5 align-middle text-xs font-normal text-ink-2"
+    >
+      {c ? "▸ Show" : "▾ Hide"}
+    </button>,
+  ];
+}
+/** Hides everything in a section but its first child (the heading row). */
+const collapsedCls = (c: boolean) => (c ? " [&>*:not(:first-child)]:hidden" : "");
 
 interface Held {
   symbol: string;
@@ -602,13 +623,25 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
           <span className="font-bold">{t.ticker}</span> <span className={t.direction === "long" ? "text-gain" : "text-loss"}>{t.direction}</span>{" "}
           <span className="text-muted">
             · {t.shares} sh · {t.status} · {t.source}
-            {t.cardId && (
-              <>
-                {" "}
-                <a className="text-accent underline" href={t.cardUrl ?? "#"} target="_blank" rel="noreferrer">
-                  card {t.cardId}
-                </a>
-              </>
+            {" "}
+            {t.cardId ? (
+              <a className="text-accent underline" href={t.cardUrl ?? "#"} target="_blank" rel="noreferrer">
+                card {t.cardId}
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="text-accent underline"
+                onClick={async () => {
+                  const n = prompt(`Trend Scout card number for ${t.ticker}?`);
+                  if (!n) return;
+                  const { json } = await post("/api/stocks/trade", { id: t.id, action: "card", value: n.trim().replace(/^#/, "") });
+                  setMsg(json.ok ? "Card linked" : String(json.error ?? "Failed"));
+                  onDone();
+                }}
+              >
+                add card #
+              </button>
             )}{" "}
             {t.exitBy ? `· exit by ${t.exitBy}` : ""}
             {t.mode === "dry" ? " · DRY RUN" : ""}
@@ -773,7 +806,8 @@ function OpenPositions({ trades, quotes, accountValue, now, maxPositionPct, onDo
     onDone();
   };
   type Key = "ticker" | "side" | "shares" | "avg" | "last" | "pl" | "pct" | "acct" | "r" | "days" | "stop" | "target";
-  const [sort, setSort] = useState<{ key: Key; desc: boolean }>({ key: "days", desc: false });
+  const [sort, setSort] = usePref<{ key: Key; desc: boolean }>("stocks.positions.sort", { key: "days", desc: false }, (v) => !!v && typeof v === "object" && "key" in v && "desc" in v);
+  const [posC, posBtn] = useCollapsed("positions");
   const rows = trades
     .filter((t) => (t.status === "open" || t.status === "closing") && t.entryPrice != null)
     .map((t) => {
@@ -828,9 +862,11 @@ function OpenPositions({ trades, quotes, accountValue, now, maxPositionPct, onDo
     </th>
   );
   return (
-    <section className="card space-y-2 p-4">
+    <section className={`card space-y-2 p-4${collapsedCls(posC)}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-bold text-accent">Open positions ({rows.length})</h2>
+        <h2 className="font-bold text-accent">
+          Open positions ({rows.length}){posBtn}
+        </h2>
         {rows.some((x) => x.t.mode === "dry" && x.acct !== null && Math.abs(x.acct - maxPositionPct) > 0.02) && (
           <button className="rounded-lg border border-accent px-3 py-1 text-xs font-semibold text-accent" onClick={() => void trim()}>
             Resize dry-run positions to {maxPositionPct}% of account
@@ -903,9 +939,12 @@ function OpenPositions({ trades, quotes, accountValue, now, maxPositionPct, onDo
 }
 
 function PendingOrders({ orders }: { orders: WorkingOrder[] }) {
+  const [c, btn] = useCollapsed("pending");
   return (
-    <section className="card space-y-2 p-4">
-      <h2 className="font-bold text-accent">Pending orders ({orders.length})</h2>
+    <section className={`card space-y-2 p-4${collapsedCls(c)}`}>
+      <h2 className="font-bold text-accent">
+        Pending orders ({orders.length}){btn}
+      </h2>
       {orders.length === 0 ? (
         <p className="text-sm text-muted">No working orders.</p>
       ) : (
@@ -1032,6 +1071,10 @@ export default function StocksPage() {
   const [flatMsg, setFlatMsg] = useState<string | null>(null);
   const [shownChart, setShownChart] = useState<string | null>(null);
   const [adopting, setAdopting] = useState<Held | null>(null);
+  const [scoreC, scoreBtn] = useCollapsed("scorecard");
+  const [ideasC, ideasBtn] = useCollapsed("ideas");
+  const [closedC, closedBtn] = useCollapsed("closed");
+  const [logC, logBtn] = useCollapsed("log");
   if (!data) return <div className="text-sm text-muted">{error ?? "Loading…"}</div>;
   const dry = data.mode === "dry";
   // Every open trade, dry and live (an adopted position is live even while new ideas are dry runs).
@@ -1154,9 +1197,12 @@ export default function StocksPage() {
       ))}
       {data.sizeUp && <div className="card border-gain/60 p-3 text-sm font-semibold text-gain">{data.sizeUp} (Change the live size in Settings; it takes effect 24 hours later.)</div>}
 
-      <section className="card space-y-3 p-4">
+      <section className={`card space-y-3 p-4${collapsedCls(scoreC)}`}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="font-bold text-accent">Scorecard {dry ? "(dry run)" : "(live)"}</h2>
+          <h2 className="font-bold text-accent">
+            Scorecard {dry ? "(dry run)" : "(live)"}
+            {scoreBtn}
+          </h2>
           <span className="text-xs text-muted">
             this week shadow P/L {money(data.lockouts.weekShadowPl, { sign: true })}
             {data.lockouts.streakUntil ? ` · losing-streak lock until ${data.lockouts.streakUntil}` : ""}
@@ -1295,9 +1341,9 @@ export default function StocksPage() {
 
       <PendingOrders orders={workingOrders(open, data.quotes)} />
 
-      <section className="card space-y-2 p-4">
+      <section className={`card space-y-2 p-4${collapsedCls(ideasC)}`}>
         <h2 className="font-bold text-accent">
-          Open ideas ({open.length} of {data.settings.maxOpen})
+          Open ideas ({open.length} of {data.settings.maxOpen}){ideasBtn}
           {(() => {
             const pend = open.filter((t) => t.status === "pending").length;
             return pend ? <span className="ml-2 text-sm font-normal text-muted">{open.length - pend} filled positions + {pend} entries not filled yet</span> : null;
@@ -1316,8 +1362,8 @@ export default function StocksPage() {
         {!open.length && <p className="text-sm text-muted">No open ideas.</p>}
       </section>
 
-      <section className="card space-y-2 overflow-x-auto p-4">
-        <h2 className="font-bold text-accent">Closed</h2>
+      <section className={`card space-y-2 overflow-x-auto p-4${collapsedCls(closedC)}`}>
+        <h2 className="font-bold text-accent">Closed{closedBtn}</h2>
         <table className="data w-full text-xs">
           <thead>
             <tr>
@@ -1385,8 +1431,8 @@ export default function StocksPage() {
         {closed.length > 0 && <p className="text-xs text-muted">Tap a row for its chart.</p>}
       </section>
 
-      <section className="card space-y-2 p-4">
-        <h2 className="font-bold text-accent">Order &amp; block log</h2>
+      <section className={`card space-y-2 p-4${collapsedCls(logC)}`}>
+        <h2 className="font-bold text-accent">Order &amp; block log{logBtn}</h2>
         <ul className="max-h-96 space-y-1 overflow-y-auto text-xs">
           {data.log.map((l) => (
             <li key={l.id}>
