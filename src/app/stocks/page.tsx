@@ -1047,13 +1047,15 @@ export default function StocksPage() {
       for (const l of legs) {
         a.pl += (last - l.px) * dir * l.sh;
         a.cost += l.px * l.sh;
+        if (dir > 0) a.long += l.px * l.sh;
+        else a.short += l.px * l.sh;
       }
       a.n += 1;
       if (t.mode === "dry") a.dryN += 1;
       a.pct = a.cost > 0 ? (a.pl / a.cost) * 100 : 0;
       return a;
     },
-    { pl: 0, cost: 0, pct: 0, n: 0, dryN: 0 },
+    { pl: 0, cost: 0, long: 0, short: 0, pct: 0, n: 0, dryN: 0 },
   );
   const s = data.summary;
   const chartTrade = closed.find((t) => t.id === shownChart) ?? null;
@@ -1092,13 +1094,31 @@ export default function StocksPage() {
                 {money(openPl.pl, { sign: true, cents: true })}{" "}
                 <span className="text-sm">
                   ({openPl.pct >= 0 ? "+" : ""}
-                  {openPl.pct.toFixed(2)}%)
+                  {openPl.pct.toFixed(2)}% on the money invested)
                 </span>
               </>
             ) : (
               "—"
             )}
           </div>
+          {openPl.n > 0 && (
+            <div className="space-y-0.5 text-xs text-ink-2">
+              <div>
+                Invested: <b>{money(openPl.cost)}</b>
+                {data.accountValue ? ` (${((openPl.cost / data.accountValue) * 100).toFixed(1)}% of the account)` : ""} · long {money(openPl.long)} · short {money(openPl.short)}
+              </div>
+              {data.accountValue && (
+                <div>
+                  Account {money(data.accountValue)} · open P/L is{" "}
+                  <b className={plClass(openPl.pl)}>
+                    {openPl.pl >= 0 ? "+" : ""}
+                    {((openPl.pl / data.accountValue) * 100).toFixed(2)}%
+                  </b>{" "}
+                  of the account
+                </div>
+              )}
+            </div>
+          )}
           {openPl.dryN > 0 && <div className="text-xs text-muted">{openPl.dryN === openPl.n ? "dry-run positions, at shadow size" : `includes ${openPl.dryN} dry-run at shadow size`}</div>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
