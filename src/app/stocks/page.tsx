@@ -30,7 +30,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 
 type LiveQuote = { symbol: string; q: StockQuote | null; error?: string; at: number } | null;
 
-/** Quote for the ticker being typed: fetched 400 ms after typing stops, then refreshed every 10 s. */
+/** Quote for the ticker being typed: fetched 400 ms after typing stops, then refreshed every 15 s. */
 function useLiveQuote(ticker: string): LiveQuote {
   const [lq, setLq] = useState<LiveQuote>(null);
   const sym = ticker.trim().toUpperCase();
@@ -43,7 +43,7 @@ function useLiveQuote(ticker: string): LiveQuote {
         .then((j: { quote?: StockQuote | null; error?: string }) => !off && setLq({ symbol: sym, q: j.quote ?? null, error: j.error, at: Date.now() }))
         .catch(() => !off && setLq({ symbol: sym, q: null, error: "Quote failed", at: Date.now() }));
     const first = setTimeout(load, 400);
-    const every = setInterval(load, 10_000);
+    const every = setInterval(load, 15_000);
     return () => {
       off = true;
       clearTimeout(first);

@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   const tf = req.nextUrl.searchParams.get("tf") === "5m" ? "5m" : "D";
   if (!/^[A-Z][A-Z0-9.\-/]{0,9}$/.test(symbol)) return NextResponse.json({ error: "Bad symbol" }, { status: 400 });
   const live = regularSession();
-  const r = tf === "5m" ? await cachedFiveMinuteBars(symbol, 5, live ? 60_000 : 30 * 60_000) : await cachedDailyBars(symbol, live ? 5 * 60_000 : 6 * 3600_000);
+  const r = tf === "5m" ? await cachedFiveMinuteBars(symbol, 5, live ? 60_000 : 30 * 60_000) : await cachedDailyBars(symbol, live ? 30 * 60_000 : 6 * 3600_000);
   let bars = r.data ?? [];
   if (tf === "D" && bars.length) {
     const t = await todayBar(symbol).catch(() => null);

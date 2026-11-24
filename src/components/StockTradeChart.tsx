@@ -20,11 +20,27 @@ export type ChartTrade = Pick<Trade, "ticker" | "direction" | "stop" | "initialS
 export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const legend = useRef<HTMLSpanElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  // Load the bars only once the chart scrolls into view: a page with many open trades would otherwise
+  // ask Schwab for every ticker at once and trip the request limit.
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el || seen) return;
+    if (typeof IntersectionObserver === "undefined") {
+      void Promise.resolve().then(() => setSeen(true));
+      return;
+    }
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setSeen(true), { rootMargin: "200px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [seen]);
   const [tf, setTf] = useState<"D" | "5m">("D");
   const [bars, setBars] = useState<Bar[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!seen) return;
     let off = false;
     const load = () =>
       fetch(`/api/stocks/bars?symbol=${encodeURIComponent(trade.ticker)}&tf=${tf}`, { cache: "no-store" })
@@ -41,7 +57,7 @@ export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boo
       off = true;
       if (every) clearInterval(every);
     };
-  }, [trade.ticker, tf, live]);
+  }, [trade.ticker, tf, live, seen]);
 
   useEffect(() => {
     if (!box.current || !bars?.length) return;
@@ -113,7 +129,7 @@ export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boo
   }, [bars, tf, trade]);
 
   return (
-    <div className="mt-2">
+    <div className="mt-2" ref={wrap}>
       <div className="mb-1 flex items-center gap-1 text-xs">
         {(["D", "5m"] as const).map((k) => (
           <button key={k} onClick={() => setTf(k)} className={`rounded px-2 py-0.5 ${tf === k ? "bg-surface text-ink" : "text-muted"}`}>
