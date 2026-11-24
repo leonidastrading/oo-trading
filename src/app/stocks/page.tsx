@@ -90,9 +90,9 @@ interface Held {
 
 /** New idea — or, with `adopt`, the same form for a position already opened outside the app. */
 function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct }: { onDone: () => void; dry: boolean; adopt?: Held; onCancel?: () => void; maxPositionPct: number }) {
-  // Confidence slider: this trade's position cap, from 1% (or the max, if lower) up to the max-position setting.
+  // Confidence slider: this trade's position cap, from 0.5% (or the max, if lower) up to the max-position setting.
   const [posPct, setPosPct] = useState<number | null>(null);
-  const posMin = Math.min(1, maxPositionPct);
+  const posMin = Math.min(0.5, maxPositionPct);
   const pos = Math.min(posPct ?? maxPositionPct, maxPositionPct);
   const blank = {
     ticker: "",
