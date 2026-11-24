@@ -953,6 +953,27 @@ function PendingOrders({ orders }: { orders: WorkingOrder[] }) {
   );
 }
 
+/** Floating "Top" button, shown once the page is scrolled down. */
+function BackToTop() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const on = () => setShow(window.scrollY > 600);
+    on();
+    window.addEventListener("scroll", on, { passive: true });
+    return () => window.removeEventListener("scroll", on);
+  }, []);
+  if (!show) return null;
+  return (
+    <button
+      aria-label="Back to top"
+      onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+      className="fixed bottom-20 right-4 z-40 rounded-full border border-accent bg-surface px-4 py-2 text-sm font-semibold text-accent shadow-lg md:bottom-6"
+    >
+      ↑ Top
+    </button>
+  );
+}
+
 /** Post-mortem for a closed trade (more than 2 left open for 3 trading days blocks new entries). */
 function PostMortemForm({ t, onDone }: { t: Trade; onDone: () => void }) {
   const [v, setV] = useState({ thesisRight: "", catalystHappened: "", rightReason: "", learned: "" });
@@ -1098,6 +1119,7 @@ export default function StocksPage() {
         {data.meta.errors.length > 0 && <div className="w-full text-xs text-loss">{data.meta.errors.join(" · ")}</div>}
       </section>
 
+      <BackToTop />
       <OpenPositions trades={open} quotes={data.quotes} accountValue={data.accountValue} now={data.now} maxPositionPct={data.settings.maxPositionPct} onDone={refresh} />
 
       {data.alerts.map((a) => (
