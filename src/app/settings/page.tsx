@@ -4,6 +4,7 @@ import { signOut } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { ChangePassword } from "@/components/ChangePassword";
+import { ChartSmaSetting } from "@/components/ChartSmaSetting";
 import { Banner } from "@/components/StatusBar";
 import { OptionsOnlySetting } from "@/components/OptionsOnlySetting";
 import { StockSettings } from "@/components/StockSettings";
@@ -139,6 +140,11 @@ function SettingsInner() {
       <section className="card space-y-3 p-4">
         <h2 className="text-lg font-bold text-accent">Stock Trades guardrails</h2>
         <StockSettings />
+      </section>
+
+      <section className="card space-y-3 p-4">
+        <h2 className="text-lg font-bold text-accent">Main chart: SMA lines</h2>
+        <ChartSmaSetting />
       </section>
 
       <section className="card space-y-3 p-4">

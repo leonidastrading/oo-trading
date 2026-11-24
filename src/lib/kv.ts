@@ -187,6 +187,7 @@ export const KEYS = {
   strategyNames: "settings:strategy-names",
   /** Live/Today show option positions only (hides cash-like holdings such as money-market ETFs). "0" = show all. */
   optionsOnly: "settings:options-only",
+  chartSmas: "settings:chart-smas",
   /** 0DTE premium gauge: one row per trading day (date → GaugeRow). */
   gaugeDays: "gauge:days",
   dayCurve: (date: string) => `daypl:${date}`,

@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_SMAS, smaColors } from "@/lib/chartSmas";
 import {
   BarSeries,
   CandlestickSeries,
@@ -64,14 +65,6 @@ const TIMEFRAMES = [
 ] as const;
 type Timeframe = (typeof TIMEFRAMES)[number]["key"];
 type Style = "bars" | "candles" | "line";
-/** Daily-close SMAs drawn as faint lines (the 5/8/10-day ones match the strategies' SMA filters). */
-const SMAS = [
-  { n: 4, color: "rgba(224, 183, 59, 0.45)" },
-  { n: 5, color: "rgba(57, 135, 229, 0.5)" },
-  { n: 8, color: "rgba(176, 132, 232, 0.5)" },
-  { n: 10, color: "rgba(200, 200, 195, 0.4)" },
-];
-
 const STYLES: { key: Style; icon: string; title: string }[] = [
   { key: "bars", icon: "┤├", title: "Bars" },
   { key: "candles", icon: "▮▯", title: "Candles" },
@@ -151,6 +144,14 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
   const [style, setStyle] = useState<Style>("candles");
   const [daily, setDaily] = useState<SpxDailyData | null>(null);
   const [showSma, setShowSma] = useState(true);
+  // Which SMA periods to draw: chosen in Settings (saved on the server, so every device matches).
+  const [smaPeriods, setSmaPeriods] = useState<number[]>(DEFAULT_SMAS);
+  useEffect(() => {
+    fetch("/api/settings/chart-smas", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j: { smas?: number[] }) => Array.isArray(j.smas) && setSmaPeriods(j.smas))
+      .catch(() => {});
+  }, []);
   // Keep the viewer's zoom/scroll across data refreshes (reset when the timeframe changes).
   const viewRef = useRef<{ tf: Timeframe; range: { from: number; to: number } | null } | null>(null);
   const bestPrice = best && best.pnl > 0 ? best.price : null;
@@ -239,7 +240,7 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
     // the SMA as it stands at that bar: the prior N−1 daily closes plus the bar's own price as today's close.
     if (showSma && daily?.bars.length) {
       const prior = daily.bars.filter((b) => b.time < dayStart).map((b) => b.close);
-      for (const { n, color } of SMAS) {
+      for (const { n, color } of smaColors(smaPeriods)) {
         const pts: { time: UTCTimestamp; value: number }[] = [];
         if (isDaily) {
           for (let i = n - 1; i < bars.length; i++) {
@@ -559,7 +560,7 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, daily, tf, style, bestPrice, bestHigh, bestPnl, names, showSma]);
+  }, [data, daily, tf, style, bestPrice, bestHigh, bestPnl, names, showSma, smaPeriods]);
 
   // Between candle fetches (every minute), move the last candle with the live SPX quote (every 15 s on Live).
   const spotLast = spot?.last ?? null;
@@ -634,14 +635,14 @@ export function SpxDayChart({ best, spot }: { best?: BestCloseLine | null; spot?
             store("spxChart.sma", showSma ? "off" : "on");
           }}
           aria-pressed={showSma}
-          title="Show or hide the 4 / 5 / 8 / 10-day SMA lines"
+          title={`Show or hide the ${smaPeriods.join(" / ")}-day SMA lines (choose which in Settings)`}
           className={`shrink-0 rounded-md px-2 py-1 ${showSma ? "bg-surface-2 text-ink" : "text-ink-2 hover:text-ink"}`}
         >
           SMA
         </button>
         {showSma && (
           <span className="flex shrink-0 gap-1.5 pl-1 text-xs" aria-label="SMA colors">
-            {SMAS.map((m) => (
+            {smaColors(smaPeriods).map((m) => (
               <span key={m.n} style={{ color: m.color }}>
                 {m.n}
               </span>
