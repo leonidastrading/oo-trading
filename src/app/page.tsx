@@ -92,6 +92,7 @@ export default function LivePage() {
             <>
               {`${data.pl.closedPositions} position${data.pl.closedPositions === 1 ? "" : "s"} · ${data.pl.closedLegs} leg${data.pl.closedLegs === 1 ? "" : "s"}`}
               {data.pl.unknownBasis ? ` · ${data.pl.unknownBasis} w/o basis excluded` : ""}
+              {data.pl.fees ? ` · fees ${money(-data.pl.fees, { cents: true })}` : ""}
             </>
           ) : undefined
         }
@@ -108,10 +109,16 @@ export default function LivePage() {
         }
       />
       <Tile
-        label="Fees"
-        value={data?.pl ? money(-data.pl.fees, { cents: true }) : "—"}
-        tone={data?.pl?.fees ? "loss" : null}
-        sub={data?.pl ? `${data.pl.contracts.toLocaleString("en-US")} contracts × $${data.pl.feeRate.toFixed(2)}` : undefined}
+        label="VIX"
+        value={num(data?.vix?.last)}
+        sub={
+          data?.vix ? (
+            // VIX up is the bad direction for a premium seller, so a rise is red.
+            <span className={data.vix.change && data.vix.change > 0 ? "text-loss" : "text-gain"}>
+              {signed(data.vix.change)} ({signed(data.vix.changePct)}%)
+            </span>
+          ) : undefined
+        }
       />
     </section>
   );
@@ -187,7 +194,7 @@ export default function LivePage() {
         storageKey="live.layout.v1"
         editing={arranging}
         panels={[
-          { id: "tiles", label: "P/L, SPX & fees", node: tilesPanel },
+          { id: "tiles", label: "P/L, SPX & VIX", node: tilesPanel },
           { id: "expiry", label: "Best SPX close / expiry chart", node: expiryPanel },
           { id: "day", label: "Day P/L", node: <DayPnlChart curve={data?.dayCurve} /> },
           { id: "closed", label: "Closed P/L today", node: <ClosedPnlChart points={data?.closedCurve ?? []} /> },

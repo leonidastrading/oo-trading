@@ -72,6 +72,7 @@ export interface LiveData {
   fetchedAt: number | null;
   account: (Balances & { last4: string; dayPl: number | null; marginEst: number | null }) | null;
   spx: Quote | null;
+  vix: Quote | null;
   /** Session P/L: open (all positions), closed (realized today, net of fees), fees today. */
   pl: {
     open: number;
@@ -257,7 +258,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
   };
   if (!token.connected) {
     meta.errors.push(token.lastError ?? "Schwab is not connected — connect it in Settings.");
-    return { meta, fetchedAt: null, account: null, spx: null, pl: null, groups: [], expiring: [], expiryDate: expiryFocusDate(now), closedCurve: [], dayCurve: { base: null, baseKind: null, from: 0, to: 0, samples: [] } };
+    return { meta, fetchedAt: null, account: null, spx: null, vix: null, pl: null, groups: [], expiring: [], expiryDate: expiryFocusDate(now), closedCurve: [], dayCurve: { base: null, baseKind: null, from: 0, to: 0, samples: [] } };
   }
 
   const sessionDate = lastSessionDate(now);
@@ -272,10 +273,11 @@ export async function getLiveData(force = false): Promise<LiveData> {
   const expiryDate = expiryFocusDate(now);
   const todays = groups.filter((g) => g.expiration === expiryDate);
 
-  const symbols = new Set(["$SPX", ...todays.map((g) => quoteSymbol(g.underlying)), ...settlementSymbols(positions, sessionDate, fills.data ?? [])]);
+  const symbols = new Set(["$SPX", "$VIX", ...todays.map((g) => quoteSymbol(g.underlying)), ...settlementSymbols(positions, sessionDate, fills.data ?? [])]);
   const quotes = await cachedQuotes([...symbols], maxAge(policy.positionsMs), allowForce);
   if (quotes.error && quotes.error !== acct.error) meta.errors.push(quotes.error);
   const spx = quotes.data?.["$SPX"] ?? null;
+  const vix = quotes.data?.["$VIX"] ?? null;
 
   // One expiry curve per underlying, using only legs of the focused expiration.
   const byUnderlying = new Map<string, SpreadGroup[]>();
@@ -360,6 +362,7 @@ export async function getLiveData(force = false): Promise<LiveData> {
         }
       : null,
     spx,
+    vix,
     pl,
     groups: openGroups,
     expiring,
