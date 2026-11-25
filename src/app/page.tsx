@@ -113,8 +113,7 @@ export default function LivePage() {
         value={num(data?.vix?.last)}
         sub={
           data?.vix ? (
-            // VIX up is the bad direction for a premium seller, so a rise is red.
-            <span className={data.vix.change && data.vix.change > 0 ? "text-loss" : "text-gain"}>
+            <span className={data.vix.change && data.vix.change < 0 ? "text-loss" : "text-gain"}>
               {signed(data.vix.change)} ({signed(data.vix.changePct)}%)
             </span>
           ) : undefined
