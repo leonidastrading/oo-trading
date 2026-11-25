@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { StocksData } from "@/app/api/stocks/route";
 import { money, plClass } from "@/components/format";
 import { StockPnlChart } from "@/components/StockPnlChart";
-import { StockTradeChart, type ChartTrade } from "@/components/StockTradeChart";
+import { StockTradeChart, type ChartTrade, type HeldMark } from "@/components/StockTradeChart";
 import { usePoll } from "@/components/usePoll";
 import { usePref } from "@/components/usePref";
 import type { Check, StockQuote, Trade } from "@/lib/stocks/rules";
@@ -110,7 +110,7 @@ interface Held {
 }
 
 /** New idea — or, with `adopt`, the same form for a position already opened outside the app. */
-function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct }: { onDone: () => void; dry: boolean; adopt?: Held; onCancel?: () => void; maxPositionPct: number }) {
+function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct, openTrades = [], unmanaged = [] }: { onDone: () => void; dry: boolean; adopt?: Held; onCancel?: () => void; maxPositionPct: number; openTrades?: Trade[]; unmanaged?: Held[] }) {
   // Confidence slider: this trade's position cap, from 0.5% (or the max, if lower) up to the max-position setting.
   const [posPct, setPosPct] = useState<number | null>(null);
   const posMin = Math.min(0.5, maxPositionPct);
@@ -184,6 +184,21 @@ function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct }: { onDone: ()
       limitPrice: f.entryType !== "market" && Number(f.limitPrice) > 0 ? Number(f.limitPrice) : null,
     };
   }, [f.ticker, f.direction, f.stop, f.target, f.entryType, f.limitPrice]);
+  // What is already on in this ticker: an open or pending idea here, or shares at Schwab the tab doesn't manage.
+  const mine = adopt ? null : (openTrades.find((t) => t.ticker === f.ticker) ?? null);
+  const atSchwab = adopt || mine ? null : (unmanaged.find((h) => h.symbol === f.ticker) ?? null);
+  const mineKey = mine ? [mine.id, mine.status, mine.entryPrice, mine.limitPrice, mine.stop, mine.target, mine.shares, mine.shadowShares].join("|") : atSchwab ? `${atSchwab.symbol}|${atSchwab.qty}|${atSchwab.avgPrice}` : "";
+  const heldMark = useMemo<HeldMark | null>(() => {
+    if (mine) {
+      const sh = (mine.mode === "dry" ? mine.shadowShares : mine.shares).toLocaleString("en-US");
+      const px = mine.entryPrice ?? mine.limitPrice ?? null;
+      if (!px) return null;
+      return { long: mine.direction === "long", entry: px, stop: mine.stop, target: mine.target, time: mine.entryTime, label: mine.status === "pending" ? `your pending ${mine.direction} entry` : `your ${mine.direction} ${sh} sh` };
+    }
+    if (atSchwab) return { long: atSchwab.qty > 0, entry: atSchwab.avgPrice, stop: 0, label: `at Schwab: ${atSchwab.qty > 0 ? "long" : "short"} ${Math.abs(atSchwab.qty)} sh` };
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mineKey covers every field read from mine / atSchwab
+  }, [mineKey]);
   // 20% stop suggestion from the entry reference (the limit price for a limit entry, else the last price).
   const stopRef = f.entryType !== "market" && Number(f.limitPrice) > 0 ? Number(f.limitPrice) : (quote?.q?.last ?? 0);
   const stop20 = stopRef > 0 ? String(suggestedStop(stopRef, f.direction === "long")) : "";
@@ -359,7 +374,25 @@ function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct }: { onDone: ()
         <QuoteLine q={quote} stop={Number(f.stop)} target={Number(f.target)} limit={f.entryType !== "market" ? Number(f.limitPrice) : 0} long={f.direction === "long"} />
         {chartTrade && (
           <div className="col-span-2 md:col-span-4">
-            <StockTradeChart trade={chartTrade} live last={quote?.q?.last ?? null} />
+            {mine && (
+              <div className="mb-1 rounded-lg border border-warn/60 bg-warn/10 p-2 text-xs text-warn">
+                You already have {mine.status === "pending" ? "a pending entry" : "a position"} in {mine.ticker}: <b>{mine.direction}</b>{" "}
+                {(mine.mode === "dry" ? mine.shadowShares : mine.shares).toLocaleString("en-US")} sh
+                {mine.entryPrice ? ` @ ${mine.entryPrice}` : mine.limitPrice ? ` (${mine.entryType} ${mine.limitPrice}, not filled)` : ""} · stop {mine.stop}
+                {mine.target ? ` · target ${mine.target}` : ""}
+                {mine.entryPrice && quote?.q?.last
+                  ? ` · open P/L ${(((quote.q.last - mine.entryPrice) / mine.entryPrice) * 100 * (mine.direction === "long" ? 1 : -1)).toFixed(2)}%`
+                  : ""}
+                {mine.mode === "dry" ? " · dry run" : ""}. It&apos;s drawn on the chart in yellow. A second idea in the same ticker is blocked (one position per ticker).
+              </div>
+            )}
+            {atSchwab && (
+              <div className="mb-1 rounded-lg border border-warn/60 bg-warn/10 p-2 text-xs text-warn">
+                You hold {atSchwab.symbol} at Schwab outside this tab: {atSchwab.qty > 0 ? "long" : "short"} {Math.abs(atSchwab.qty)} sh @ {atSchwab.avgPrice} (drawn in yellow). Use
+                &quot;Manage this position&quot; above to bring it in.
+              </div>
+            )}
+            <StockTradeChart trade={chartTrade} live last={quote?.q?.last ?? null} held={heldMark} />
           </div>
         )}
         {!adopt && (
@@ -1337,7 +1370,7 @@ export default function StocksPage() {
       )}
       {adopting && <IdeaForm key={adopting.symbol} dry={dry} adopt={adopting} onCancel={() => setAdopting(null)} onDone={refresh} maxPositionPct={data.settings.maxPositionPct} />}
 
-      <IdeaForm dry={dry} onDone={refresh} maxPositionPct={data.settings.maxPositionPct} />
+      <IdeaForm dry={dry} onDone={refresh} maxPositionPct={data.settings.maxPositionPct} openTrades={open} unmanaged={data.unmanaged} />
 
       <PendingOrders orders={workingOrders(open, data.quotes)} />
 

@@ -18,10 +18,20 @@ export type ChartTrade = Pick<Trade, "ticker" | "direction" | "stop" | "initialS
   Partial<Pick<Trade, "entryPrice" | "limitPrice" | "target" | "exitPrice" | "entryType" | "entryTime" | "exitTime" | "pl" | "exitReason">>;
 
 /** `live` re-reads the bars every 30 s (used on the entry form, before there is a trade). */
+/** A position already held in this ticker, drawn on the entry form's chart. */
+export interface HeldMark {
+  long: boolean;
+  entry: number;
+  stop: number;
+  target?: number | null;
+  time?: number | null;
+  label: string;
+}
+
 type Ohlc = { time: UTCTimestamp; open: number; high: number; low: number; close: number };
 
 /** `last` (the live quote) keeps the newest candle moving between bar refreshes. */
-export function StockTradeChart({ trade, live, last }: { trade: ChartTrade; live?: boolean; last?: number | null }) {
+export function StockTradeChart({ trade, live, last, held }: { trade: ChartTrade; live?: boolean; last?: number | null; held?: HeldMark | null }) {
   const cur = useRef<{ update: (b: Ohlc) => void; lastBar: Ohlc; tf: "D" | "5m"; shift: number } | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const legend = useRef<HTMLSpanElement>(null);
@@ -106,7 +116,7 @@ export function StockTradeChart({ trade, live, last }: { trade: ChartTrade; live
     series.setData(data);
 
     // Keep the entry, stop and target on screen even when price is far from them.
-    const levels = [trade.entryPrice, trade.limitPrice, trade.stop, trade.initialStop, trade.target, trade.exitPrice].filter((v): v is number => typeof v === "number" && v > 0);
+    const levels = [trade.entryPrice, trade.limitPrice, trade.stop, trade.initialStop, trade.target, trade.exitPrice, held?.entry, held?.stop, held?.target].filter((v): v is number => typeof v === "number" && v > 0);
     series.applyOptions({
       autoscaleInfoProvider: (orig: () => AutoscaleInfo | null) => {
         const r = orig();
@@ -122,6 +132,12 @@ export function StockTradeChart({ trade, live, last }: { trade: ChartTrade; live
     line(trade.stop, loss, "stop");
     if (trade.initialStop !== trade.stop) line(trade.initialStop, loss, "initial stop", LineStyle.Dotted);
     line(trade.target, gain, "target", LineStyle.Dashed);
+    if (held) {
+      const c = css("--accent", "#e0b73b");
+      line(held.entry, c, held.label);
+      line(held.stop, c, "your stop", LineStyle.Dotted);
+      line(held.target, c, "your target", LineStyle.Dotted);
+    }
     if (trade.exitPrice) line(trade.exitPrice, css("--muted", "#898781"), `exit (${trade.exitReason})`, LineStyle.Dotted);
 
     // Markers sit on the bar that holds the entry / exit time.
@@ -135,6 +151,8 @@ export function StockTradeChart({ trade, live, last }: { trade: ChartTrade; live
     const markers = [];
     const et = barAt(trade.entryTime);
     if (et) markers.push({ time: et, position: long ? ("belowBar" as const) : ("aboveBar" as const), shape: long ? ("arrowUp" as const) : ("arrowDown" as const), color: css("--spot", "#3987e5"), text: `${long ? "Buy" : "Short"} ${trade.entryPrice}` });
+    const ht = held ? barAt(held.time) : null;
+    if (held && ht) markers.push({ time: ht, position: held.long ? ("belowBar" as const) : ("aboveBar" as const), shape: held.long ? ("arrowUp" as const) : ("arrowDown" as const), color: css("--accent", "#e0b73b"), text: `${held.long ? "Bought" : "Shorted"} ${held.entry}` });
     const xt = barAt(trade.exitTime);
     if (xt) markers.push({ time: xt, position: long ? ("aboveBar" as const) : ("belowBar" as const), shape: long ? ("arrowDown" as const) : ("arrowUp" as const), color: (trade.pl ?? 0) >= 0 ? gain : loss, text: `${trade.exitReason} ${trade.exitPrice}` });
     markers.sort((a, b) => a.time - b.time);
@@ -165,7 +183,7 @@ export function StockTradeChart({ trade, live, last }: { trade: ChartTrade; live
       cur.current = null;
       chart.remove();
     };
-  }, [bars, tf, trade]);
+  }, [bars, tf, trade, held]);
 
   // Move the newest candle with the live quote (regular session only), starting a new candle when its time comes.
   useEffect(() => {
@@ -180,7 +198,7 @@ export function StockTradeChart({ trade, live, last }: { trade: ChartTrade; live
         : { ...c.lastBar, high: Math.max(c.lastBar.high, last), low: Math.min(c.lastBar.low, last), close: last };
     c.lastBar = b;
     c.update(b);
-  }, [last, bars, tf, trade]);
+  }, [last, bars, tf, trade, held]);
 
   return (
     <div className="mt-2" ref={wrap}>
