@@ -635,7 +635,15 @@ const xFmt = (x: { pct: number; r: number | null } | null) => (x ? `${x.pct >= 0
 function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | null; spy: number | null; bench: number | null; onDone: () => void }) {
   const [stop, setStop] = useState("");
   const [addStop, setAddStop] = useState("");
-  const [addNote, setAddNote] = useState("");
+  const [addNote_, setAddNote] = useState("");
+  const [note, setNote] = useState("");
+  const addNote = async () => {
+    setMsg(null);
+    const { json } = await post("/api/stocks/trade", { id: t.id, action: "note", note });
+    if (json.ok) setNote("");
+    else setMsg(String(json.error ?? "Couldn't save the note"));
+    onDone();
+  };
   const [target, setTarget] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const dir = t.direction === "long" ? 1 : -1;
@@ -728,6 +736,29 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
         </div>
       )}
       <div className="mt-1 text-xs text-muted">{t.thesis}</div>
+      <div className="mt-2 space-y-1 rounded-lg bg-surface p-2 text-xs">
+        <div className="font-semibold text-ink-2">Notes</div>
+        {t.ideaNotes && <div className="text-ink-2">At entry — {t.ideaNotes}</div>}
+        {(t.notes ?? []).map((n, i) => (
+          <div key={i} className="text-ink-2">
+            {n}
+          </div>
+        ))}
+        {!t.ideaNotes && !(t.notes ?? []).length && <div className="text-muted">No notes yet.</div>}
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className={`${inputCls} min-w-0 flex-1`}
+            placeholder="Add a note (what changed, what you're watching…)"
+            value={note}
+            maxLength={500}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && note.trim() && void addNote()}
+          />
+          <button className="rounded-lg border border-border px-2 py-1 text-xs" disabled={!note.trim()} onClick={() => void addNote()}>
+            Add note
+          </button>
+        </div>
+      </div>
       <StockTradeChart trade={t} last={last} />
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <input className={`${inputCls} w-24`} inputMode="decimal" placeholder="new stop" value={stop} onChange={(e) => setStop(e.target.value)} />
@@ -781,13 +812,13 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
           {!t.add && t.status === "open" && (
             <div className="flex flex-wrap items-center gap-2">
               <input className={`${inputCls} w-24`} inputMode="decimal" placeholder="new stop" value={addStop} onChange={(e) => setAddStop(e.target.value)} />
-              <input className={`${inputCls} min-w-40 flex-1`} placeholder="what happened (one line)" value={addNote} onChange={(e) => setAddNote(e.target.value)} />
+              <input className={`${inputCls} min-w-40 flex-1`} placeholder="what happened (one line)" value={addNote_} onChange={(e) => setAddNote(e.target.value)} />
               <button
                 className="rounded-lg bg-accent px-2 py-1 font-semibold text-page disabled:opacity-40"
-                disabled={!addStop || !addNote.trim()}
+                disabled={!addStop || !addNote_.trim()}
                 onClick={async () => {
                   setMsg(null);
-                  const { json } = await post("/api/stocks/trade", { id: t.id, action: "add", value: Number(addStop), note: addNote });
+                  const { json } = await post("/api/stocks/trade", { id: t.id, action: "add", value: Number(addStop), note: addNote_ });
                   setMsg(json.ok ? "Add sent" : `${json.error ?? "Blocked"}${json.requiredStop ? ` (stop needed: ${json.requiredStop})` : ""}`);
                   onDone();
                 }}

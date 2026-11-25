@@ -10,7 +10,7 @@ import { cached } from "../cache";
 import { normalizePosition, type SchwabPosition } from "../spreads";
 import { mockEnabled } from "../schwab/mock";
 import { liveTradingEnabled, schwabOrder } from "../schwab/trading";
-import { etParts } from "../time";
+import { etParts, formatDateTimeET } from "../time";
 import {
   bracketOrder,
   entrySession,
@@ -764,6 +764,22 @@ export async function savePostMortem(id: string, raw: Record<string, unknown>) {
     t.postMortem = pm;
     await saveTrade(t);
     await log({ kind: "change", mode: t.mode, ticker: t.ticker, tradeId: id, text: `Post-mortem: thesis ${pm.thesisRight}, catalyst ${pm.catalystHappened}, right reason ${pm.rightReason} — ${pm.learned}` });
+    return { ok: true };
+  });
+}
+
+/** Add a dated note to a trade (open or closed). Notes are kept in order and never edited. */
+export async function addTradeNote(id: string, text: string) {
+  return withLock(async () => {
+    const t = (await store().hgetall<Trade>(KEYS.stockTrades))[id];
+    if (!t) return { ok: false, error: "No trade with that id" };
+    const note = text.replace(/\s+/g, " ").trim();
+    if (note.length < 2) return { ok: false, error: "Write the note first" };
+    if (note.length > 500) return { ok: false, error: "Keep a note under 500 characters" };
+    const notes = Array.isArray(t.notes) ? t.notes : [];
+    if (notes.length >= 100) return { ok: false, error: "This trade already has 100 notes" };
+    t.notes = [...notes, `${formatDateTimeET(Date.now())} — ${note}`];
+    await saveTrade(t);
     return { ok: true };
   });
 }
