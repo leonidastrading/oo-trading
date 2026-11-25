@@ -129,7 +129,8 @@ export function StockTradeChart({ trade, live, last, held }: { trade: ChartTrade
     };
     const entry = trade.entryPrice ?? (trade.entryType && trade.entryType !== "market" ? trade.limitPrice : null);
     line(entry, css("--spot", "#3987e5"), trade.entryPrice ? "entry" : trade.entryType === "stop" ? "entry stop" : "limit", trade.entryPrice ? LineStyle.Solid : LineStyle.Dashed);
-    line(trade.stop, loss, "stop");
+    // Solid = a price that has traded (the filled entry). Dashed = an order still waiting: entry, stop, target.
+    line(trade.stop, loss, "stop", LineStyle.Dashed);
     if (trade.initialStop !== trade.stop) line(trade.initialStop, loss, "initial stop", LineStyle.Dotted);
     line(trade.target, gain, "target", LineStyle.Dashed);
     if (held) {
