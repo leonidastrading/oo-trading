@@ -843,31 +843,125 @@ export async function closeTrade(id: string, reason: ExitReason = "manual") {
 }
 
 /**
- * Close part of an open position at market (25 / 50 / 75 %). The closed part becomes its own closed trade,
- * scored like any other; the rest stays open with its stop and target. Dry run only for now: a live partial
- * would have to resize the working stop and target orders at Schwab, which isn't built.
+ * Close part of an open position at market (25 / 50 / 75 %). The closed part becomes its own trade, scored
+ * like any other; the rest stays open with its stop and target.
+ *
+ * Live: the working stop (and target) orders are first shrunk to the shares that stay, then the part is sold
+ * at market. If Schwab refuses a step, the stop sizes are put back; if even that fails, the position is
+ * flattened, so shares are never left without a stop.
  */
 export async function partialClose(id: string, pct: number) {
   return withLock(async () => {
     const t = (await store().hgetall<Trade>(KEYS.stockTrades))[id];
     if (!t || t.status !== "open") return { ok: false, error: "No open (filled) trade with that id" };
-    if (![25, 50, 75].includes(pct)) return { ok: false, error: "Partial exits are 25, 50 or 75 % (use Close for 100 %)" };
-    if (t.mode !== "dry") return { ok: false, error: "Partial exits work on dry-run positions only for now: close a live position in full, or ask for live partials to be built" };
-    const q = (await stockQuotes([t.ticker]).catch(() => ({}) as Record<string, StockQuote>))[t.ticker];
-    const px = q?.last ?? null;
-    if (!px) return { ok: false, error: `No current quote for ${t.ticker}` };
+    if (![25, 50, 75].includes(pct)) return { ok: false, error: "Partial exits are 25, 50 or 75 % (use 100 % to close it all)" };
     const split = splitForPartial(t, pct, rid());
     if (!split) return { ok: false, error: "The position is too small to split that way" };
-    const now = Date.now();
-    const done = closeOut(split.slice, px, now, "manual", await marksAt(t, now));
-    await saveTrade(done);
-    await saveTrade(split.rest);
+    const { slice, rest } = split;
+
+    if (t.mode === "dry") {
+      const q = (await stockQuotes([t.ticker]).catch(() => ({}) as Record<string, StockQuote>))[t.ticker];
+      const px = q?.last ?? null;
+      if (!px) return { ok: false, error: `No current quote for ${t.ticker}` };
+      const now = Date.now();
+      const done = closeOut(slice, px, now, "manual", await marksAt(t, now));
+      await saveTrade(done);
+      await saveTrade(rest);
+      await log({
+        kind: "exit",
+        mode: "dry",
+        ticker: t.ticker,
+        tradeId: t.id,
+        text: `DRY RUN — closed ${pct}% (${done.shadowShares} of ${t.shadowShares} shadow sh) at market ~${px}: ${(done.shadowPl ?? 0) >= 0 ? "+" : ""}${done.shadowPl ?? 0}; ${rest.shadowShares} sh stay open`,
+      });
+      return { ok: true };
+    }
+
+    // ---- Live ----
+    if (!liveTradingEnabled()) return { ok: false, error: "STOCK_LIVE_TRADING is off on the server: live orders can't be sent" };
+    if (!t.stopOrderId) return { ok: false, error: "The stop order isn't known yet; try again after the next sync" };
+    if (t.add?.status === "pending") return { ok: false, error: "The add order is still working: wait for it to fill (or cancel it) first" };
+    const addOn = t.add?.status === "filled" ? t.add : null;
+    const sellMain = slice.shares;
+    const sellAdd = addOn ? (slice.add?.liveShares ?? 0) : 0;
+    const keepMain = rest.shares;
+    const keepAdd = addOn ? (rest.add?.liveShares ?? 0) : 0;
+    if (sellMain + sellAdd < 1 || keepMain < 1 || (addOn && keepAdd < 1)) return { ok: false, error: "The position is too small to split that way (whole shares only)" };
+    if (addOn && !addOn.stopOrderId) return { ok: false, error: "The add's stop order isn't known yet; try again after the next sync" };
+
+    const acct = await tradingAccount();
+    const url = (orderId: string) => `/trader/v1/accounts/${acct.hash}/orders/${orderId}`;
+    // The live order ids, updated as each order is replaced (a replacement gets a new id).
+    const ids = { stop: t.stopOrderId, target: t.targetOrderId ?? null, addStop: addOn?.stopOrderId ?? null, addTarget: addOn?.targetOrderId ?? null };
+    const resize = async (main: number, add: number) => {
+      const r1 = await schwabOrder("PUT", url(ids.stop), stopReplacement({ ...t, shares: main }, t.stop));
+      if (r1.orderId) ids.stop = r1.orderId;
+      if (t.target && ids.target) {
+        const r2 = await schwabOrder("PUT", url(ids.target), targetReplacement({ ...t, shares: main }, t.target));
+        if (r2.orderId) ids.target = r2.orderId;
+      }
+      if (addOn && ids.addStop && add !== (sized.add ?? add)) {
+        const r3 = await schwabOrder("PUT", url(ids.addStop), stopReplacement({ ...t, shares: add }, t.stop));
+        if (r3.orderId) ids.addStop = r3.orderId;
+        if (t.target && ids.addTarget) {
+          const r4 = await schwabOrder("PUT", url(ids.addTarget), targetReplacement({ ...t, shares: add }, t.target));
+          if (r4.orderId) ids.addTarget = r4.orderId;
+        }
+      }
+      sized.add = add;
+    };
+    // What the add's orders are sized to right now (skips a needless replace when the add part doesn't change).
+    const sized: { add: number | null } = { add: addOn ? addOn.liveShares : null };
+    const keepIds = (tr: Trade) => {
+      tr.stopOrderId = ids.stop;
+      tr.targetOrderId = ids.target;
+      if (tr.add && tr.add.status === "filled") Object.assign(tr.add, { stopOrderId: ids.addStop, targetOrderId: ids.addTarget });
+    };
+    // Put the stop sizes back to the whole position; if that can't be done, flatten rather than leave shares unprotected.
+    const restore = async (why: string) => {
+      try {
+        await resize(t.shares, addOn ? addOn.liveShares : 0);
+        keepIds(t);
+        await saveTrade(t);
+        return `${why}. Nothing was sold and the stop is back on the full position.`;
+      } catch (e2) {
+        keepIds(t);
+        await saveTrade(t);
+        await alert(`${t.ticker}: a partial exit failed and the stop size couldn't be restored (${(e2 as Error).message}). Flattening the position.`, t.id);
+        await closeTradeUnlocked(t, "kill", undefined).catch(() => {});
+        return `${why}, and the stop size couldn't be restored: the position was flattened`;
+      }
+    };
+
+    try {
+      await resize(keepMain, keepAdd);
+    } catch (e) {
+      const msg = await restore(`Schwab refused shrinking the stop (${(e as Error).message})`);
+      await log({ kind: "error", mode: "live", ticker: t.ticker, tradeId: id, text: `Partial exit ${pct}%: ${msg}` });
+      return { ok: false, error: msg };
+    }
+    const order = marketClose({ ...t, shares: sellMain + sellAdd });
+    let exitOrderId: string | null = null;
+    try {
+      exitOrderId = (await schwabOrder("POST", `/trader/v1/accounts/${acct.hash}/orders`, order)).orderId;
+    } catch (e) {
+      const msg = await restore(`Schwab refused the market order (${(e as Error).message})`);
+      await log({ kind: "error", mode: "live", ticker: t.ticker, tradeId: id, text: `Partial exit ${pct}%: ${msg}`, detail: { order } });
+      return { ok: false, error: msg };
+    }
+    // The part being sold: closing, with no protective orders of its own. The sync books it when the fill arrives.
+    Object.assign(slice, { status: "closing", exitOrderId, exitReason: "manual", stopOrderId: null, targetOrderId: null });
+    if (slice.add) Object.assign(slice.add, { stopOrderId: null, targetOrderId: null });
+    keepIds(rest);
+    await saveTrade(slice);
+    await saveTrade(rest);
     await log({
-      kind: "exit",
-      mode: "dry",
+      kind: "order",
+      mode: "live",
       ticker: t.ticker,
       tradeId: t.id,
-      text: `DRY RUN — closed ${pct}% (${done.shadowShares} of ${t.shadowShares} shadow sh) at market ~${px}: ${(done.shadowPl ?? 0) >= 0 ? "+" : ""}${done.shadowPl ?? 0}; ${split.rest.shadowShares} sh stay open`,
+      text: `Partial exit ${pct}%: sent market close of ${sellMain + sellAdd} sh · order ${exitOrderId}; stop${t.target ? " and target" : ""} resized to the ${keepMain + keepAdd} sh that stay · account ••${acct.last4}`,
+      detail: { order },
     });
     return { ok: true };
   });
@@ -983,6 +1077,9 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
             await saveTrade(done);
             await log({ kind: "exit", mode: "live", ticker: t.ticker, tradeId: t.id, text: `Closed (${done.exitReason}) at ${done.exitPrice}: ${done.pl! >= 0 ? "+" : ""}${done.pl} (${done.r}R)` });
             changes.push(`${t.ticker}: closed`);
+          } else if (o && DEAD.has(o.status ?? "") && t.partialOf) {
+            // The stop was already shrunk to the shares that stay, so these shares have no stop.
+            await alert(`${t.ticker}: the partial-exit order ${t.exitOrderId} was ${o.status}. ${t.shares + (t.add?.status === "filled" ? t.add.liveShares : 0)} share(s) may still be open WITHOUT a stop — close them in Schwab now, or use Flatten all.`, t.id);
           } else if (o && DEAD.has(o.status ?? "")) {
             await alert(`${t.ticker}: the market close order ${t.exitOrderId} was ${o.status}. The position may still be open with no stop — check Schwab now.`, t.id);
           }
