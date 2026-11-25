@@ -203,4 +203,6 @@ export const KEYS = {
   stockAlerts: "stocks:alerts",
   stockAccount: "stocks:account",
   stockLock: "stocks:lock",
+  /** One day's open-P/L samples (field = HH:MM ET). */
+  stockEquity: (date: string) => `stocks:equity:${date}`,
 } as const;

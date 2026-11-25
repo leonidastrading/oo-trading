@@ -27,6 +27,8 @@ import {
   shadowSize,
   starterShares,
   orderShares,
+  openPlSample,
+  type EquitySample,
   tradeCapPct,
   riskSizingActive,
   checkAdd,
@@ -889,6 +891,15 @@ export async function reconcile(): Promise<{ checked: number; changes: string[] 
       () => ({}) as Record<string, StockQuote>,
     );
     const settingsCap = (await settingsNow()).maxPositionPct;
+    // One open-P/L sample a minute during the regular session, for the intraday equity curve.
+    if (regularSession(now)) {
+      const p = etParts(now);
+      const sample = openPlSample(trades, (tk) => quotes[tk]?.last, now);
+      if (sample.n) {
+        const hhmm = `${String(Math.floor(p.minutesOfDay / 60)).padStart(2, "0")}:${String(p.minutesOfDay % 60).padStart(2, "0")}`;
+        await store().hset(KEYS.stockEquity(p.date), hhmm, sample).catch(() => {});
+      }
+    }
 
     for (const t of trades) {
       const q = quotes[t.ticker];
@@ -1171,6 +1182,15 @@ export async function trimDryToCap(): Promise<{ ok: boolean; error?: string; tri
     }
     return { ok: true, trimmed };
   });
+}
+
+/** Today's open-P/L samples (regular session), oldest first. */
+export async function equitySamples(date: string): Promise<EquitySample[]> {
+  const h = await store().hgetall<EquitySample | string>(KEYS.stockEquity(date));
+  return Object.values(h)
+    .map((v) => (typeof v === "string" ? (JSON.parse(v) as EquitySample) : v))
+    .filter((v) => v && typeof v.t === "number")
+    .sort((a, b) => a.t - b.t);
 }
 
 // ---- Settings ----

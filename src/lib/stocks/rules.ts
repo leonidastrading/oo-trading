@@ -1054,3 +1054,68 @@ export function adoptChecks(checks: Check[]): { hard: Check[]; overrides: Check[
     overrides: shown.filter((c) => !c.ok && !ADOPT_HARD.has(c.name)),
   };
 }
+
+// ---- Open P/L sampling (intraday equity curve) ----
+
+export interface EquitySample {
+  /** Epoch ms. */
+  t: number;
+  /** Total open P/L, $ (dry-run positions at their shadow size, live ones at the shares held). */
+  pl: number;
+  /** Cost basis of those positions, $. */
+  cost: number;
+  /** Positions counted. */
+  n: number;
+}
+
+/** Total open P/L of the filled positions at these prices; positions without a price are left out. */
+export function openPlSample(trades: Trade[], last: (ticker: string) => number | null | undefined, t: number): EquitySample {
+  const s: EquitySample = { t, pl: 0, cost: 0, n: 0 };
+  for (const tr of trades) {
+    const px = last(tr.ticker);
+    if ((tr.status !== "open" && tr.status !== "closing") || !tr.entryPrice || !px) continue;
+    const dry = tr.mode === "dry";
+    const dir = tr.direction === "long" ? 1 : -1;
+    const legs = [{ sh: dry ? tr.shadowShares : tr.shares, px: tr.entryPrice }];
+    if (tr.add?.status === "filled" && tr.add.price) legs.push({ sh: dry ? tr.add.shadowShares : tr.add.liveShares, px: tr.add.price });
+    for (const l of legs) {
+      s.pl += (px - l.px) * dir * l.sh;
+      s.cost += l.px * l.sh;
+    }
+    s.n++;
+  }
+  s.pl = Math.round(s.pl * 100) / 100;
+  s.cost = Math.round(s.cost);
+  return s;
+}
+
+export interface DayPoint {
+  date: string;
+  /** P/L of the trades closed that day, $. */
+  day: number;
+  /** Running total, $. */
+  total: number;
+  trades: number;
+}
+
+/** Closed trades rolled up by closing date (ET): each day's P/L and the running total. */
+export function dailyClosedCurve(trades: Trade[], mode: Mode): DayPoint[] {
+  const byDay = new Map<string, { day: number; trades: number }>();
+  for (const t of trades) {
+    if (t.mode !== mode || t.status !== "closed" || !t.exitTime) continue;
+    // A dry-run trade is scored at its shadow size; a live one at the shares actually traded.
+    const pl = mode === "dry" ? (t.shadowPl ?? t.pl ?? 0) : (t.pl ?? 0);
+    const d = etParts(t.exitTime).date;
+    const e = byDay.get(d) ?? { day: 0, trades: 0 };
+    e.day += pl;
+    e.trades++;
+    byDay.set(d, e);
+  }
+  let total = 0;
+  return [...byDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, e]) => {
+      total += e.day;
+      return { date, day: Math.round(e.day * 100) / 100, total: Math.round(total * 100) / 100, trades: e.trades };
+    });
+}

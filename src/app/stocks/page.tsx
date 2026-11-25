@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { StocksData } from "@/app/api/stocks/route";
 import { money, plClass } from "@/components/format";
+import { StockEquity } from "@/components/StockEquity";
 import { StockPnlChart } from "@/components/StockPnlChart";
 import { StockPortfolio } from "@/components/StockPortfolio";
 import { StockTradeChart, type ChartTrade, type HeldMark } from "@/components/StockTradeChart";
@@ -1236,6 +1237,7 @@ export default function StocksPage() {
       <OpenPositions trades={open} quotes={data.quotes} accountValue={data.accountValue} now={data.now} maxPositionPct={data.settings.maxPositionPct} onDone={refresh} />
 
       <StockPortfolio />
+      <StockEquity trades={data.trades} mode={data.mode} />
 
       {data.alerts.map((a) => (
         <div key={a.id} className="card flex items-start justify-between gap-3 border-loss/60 p-3 text-sm text-loss">
