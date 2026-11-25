@@ -1068,6 +1068,9 @@ function BackToTop() {
 function PostMortemForm({ t, onDone }: { t: Trade; onDone: () => void }) {
   const [v, setV] = useState({ thesisRight: "", catalystHappened: "", rightReason: "", learned: "" });
   const [msg, setMsg] = useState<string | null>(null);
+  // The trade's own result: % on the position (direction-adjusted) and $ (shadow size for a dry run).
+  const pmMove = t.entryPrice && t.exitPrice ? ((t.exitPrice - t.entryPrice) / t.entryPrice) * 100 * (t.direction === "long" ? 1 : -1) : 0;
+  const pmPl = (t.mode === "dry" ? (t.shadowPl ?? t.pl) : t.pl) ?? 0;
   const sel = (k: keyof typeof PM_OPTS, label: string) => (
     <label className="text-xs text-ink-2">
       {label}
@@ -1092,6 +1095,29 @@ function PostMortemForm({ t, onDone }: { t: Trade; onDone: () => void }) {
           </div>
         )}
       </div>
+      <div className="text-xs text-ink-2">
+        Entry <b>{t.entryPrice ?? "—"}</b> → exit <b>{t.exitPrice ?? "—"}</b>
+        {t.entryPrice && t.exitPrice ? (
+          <span className={plClass(pmMove)}>
+            {" "}
+            ({pmMove >= 0 ? "+" : ""}
+            {pmMove.toFixed(2)}%)
+          </span>
+        ) : null}{" "}
+        · stop {t.stop}
+        {t.target ? ` · target ${t.target}` : ""} · P/L{" "}
+        <b className={plClass(pmPl)}>{money(pmPl, { sign: true, cents: true })}</b>
+        {t.mode === "dry" ? " (shadow size)" : ""}
+        {t.cardId && (
+          <>
+            {" · "}
+            <a className="text-accent underline" href={t.cardUrl ?? "#"} target="_blank" rel="noreferrer">
+              card {t.cardId}
+            </a>
+          </>
+        )}
+      </div>
+      <StockTradeChart trade={t} />
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         {sel("thesisRight", "Was the thesis right?")}
         {sel("catalystHappened", "Did the catalyst happen?")}
