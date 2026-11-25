@@ -643,6 +643,8 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
   const shadowPl = entry !== null && last !== null ? (last - entry) * dir * t.shadowShares : null;
   const vsSpy = entry !== null && last !== null ? excessReturn(t, last, t.spyEntry, spy) : null;
   const vsBench = entry !== null && last !== null && t.benchmark ? excessReturn(t, last, t.benchEntry, bench) : null;
+  // The stock's own move from the entry price to the last price (negative is good for a short).
+  const move = entry !== null && last !== null && entry > 0 ? ((last - entry) / entry) * 100 : null;
   const act = async (action: string, value?: number) => {
     setMsg(null);
     const { json } = await post("/api/stocks/trade", { id: t.id, action, value });
@@ -681,11 +683,25 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
           </span>
         </div>
         <div className={`font-semibold ${plClass(pl ?? 0)}`}>
-          {pl === null ? "—" : money(pl, { sign: true, cents: true })} {r !== null && <span className="text-xs">({r.toFixed(2)}R)</span>}
+          {pl === null ? "—" : money(pl, { sign: true, cents: true })}{" "}
+          {move !== null && (
+            <span className="text-xs">
+              ({move * dir >= 0 ? "+" : ""}
+              {(move * dir).toFixed(2)}%{r !== null ? ` · ${r.toFixed(2)}R` : ""})
+            </span>
+          )}
         </div>
       </div>
       <div className="mt-1 text-xs text-ink-2">
-        entry {entry ?? (t.entryType !== "market" ? `${t.entryType} ${t.limitPrice} (working)` : "pending")} · last {r2(last)} · stop {t.stop} · target {t.target ?? "—"} · risk/sh {t.riskPerShare} · shadow{" "}
+        entry {entry ?? (t.entryType !== "market" ? `${t.entryType} ${t.limitPrice} (working)` : "pending")} · last {r2(last)}
+        {move !== null && (
+          <span className={plClass(move * dir)}>
+            {" "}
+            ({move >= 0 ? "+" : ""}
+            {move.toFixed(2)}% since entry)
+          </span>
+        )}{" "}
+        · stop {t.stop} · target {t.target ?? "—"} · risk/sh {t.riskPerShare} · shadow{" "}
         {t.shadowShares} sh
       </div>
       {entry !== null && (
