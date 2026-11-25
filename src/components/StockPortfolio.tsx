@@ -172,7 +172,7 @@ export function StockPortfolio() {
                   up={d!.breadth.advancers}
                   flat={d!.breadth.unchanged}
                   down={d!.breadth.decliners}
-                  note={`Delayed prices · as of ${new Date(d!.breadth.at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false })} ET`}
+                  note={`Schwab quotes · as of ${new Date(d!.breadth.at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false })} ET`}
                 />
               ) : (
                 <div className="text-xs text-muted">S&amp;P 500 advancers / decliners aren&apos;t available right now.</div>

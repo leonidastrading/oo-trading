@@ -2,6 +2,7 @@
 // are up or down today. Public sources (no key), read-only, cached so they are fetched rarely.
 import "server-only";
 import { cached } from "../cache";
+import { fetchQuotes } from "../schwab/data";
 
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 const NASDAQ_URL = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&download=true";
@@ -13,7 +14,6 @@ export const normSymbol = (s: string) => s.trim().toUpperCase().replace(/[./]/g,
 
 interface NasdaqRow {
   symbol?: string;
-  pctchange?: string;
   sector?: string;
 }
 
@@ -82,23 +82,28 @@ export interface Breadth {
   at: number;
 }
 
-/** S&P 500 stocks up / down / flat on the day, from Nasdaq's (delayed) screener prices. */
+/**
+ * S&P 500 stocks up / down / flat today, from live Schwab quotes of the members (three requests per
+ * refresh). Nasdaq's screener can't be used for this: its prices are the previous session's close.
+ */
 export function sp500Breadth(maxAgeMs: number) {
-  return cached<Breadth>("stocks:breadth:v1", maxAgeMs, async () => {
+  return cached<Breadth>("stocks:breadth:v2", maxAgeMs, async () => {
     const members = (await sp500()).data;
     if (!members) throw new Error("No S&P 500 member list");
-    const set = new Set(members);
     const b: Breadth = { advancers: 0, decliners: 0, unchanged: 0, counted: 0, at: Date.now() };
-    for (const r of await nasdaqRows()) {
-      if (!r.symbol || !set.has(normSymbol(r.symbol))) continue;
-      const pct = Number.parseFloat(String(r.pctchange ?? "").replace("%", ""));
-      if (!Number.isFinite(pct)) continue;
-      b.counted++;
-      if (pct > 0) b.advancers++;
-      else if (pct < 0) b.decliners++;
-      else b.unchanged++;
+    const BATCH = 170;
+    for (let i = 0; i < members.length; i += BATCH) {
+      // Schwab writes share classes with a slash (BRK/B).
+      const quotes = await fetchQuotes(members.slice(i, i + BATCH).map((m) => m.replace("-", "/")));
+      for (const q of Object.values(quotes)) {
+        if (q.changePct === null) continue;
+        b.counted++;
+        if (q.changePct > 0) b.advancers++;
+        else if (q.changePct < 0) b.decliners++;
+        else b.unchanged++;
+      }
     }
-    if (b.counted < 300) throw new Error("Too few S&P 500 prices in the screener");
+    if (b.counted < 300) throw new Error("Too few S&P 500 quotes came back");
     return b;
   });
 }
