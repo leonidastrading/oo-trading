@@ -159,12 +159,22 @@ export function StockTradeChart({ trade, live, last, held }: { trade: ChartTrade
     if (markers.length) createSeriesMarkers(series, markers);
     // Open / high / low / close of the bar under the crosshair (the latest bar when not hovering).
     const dp = lastClose < 1 ? 4 : 2;
-    const show = (b: { open: number; high: number; low: number; close: number } | undefined) => {
+    // The % change is against the previous bar's close (the way a quote screen shows a day's move), not the bar's open.
+    const show = (b: { time?: unknown; open: number; high: number; low: number; close: number } | undefined) => {
       if (!legend.current) return;
       const x = b ?? data[data.length - 1];
-      const chg = x.open ? ((x.close - x.open) / x.open) * 100 : 0;
+      const t = typeof x.time === "number" ? x.time : (data[data.length - 1].time as number);
+      let prev: number | null = null;
+      for (let i = data.length - 1; i >= 0; i--) {
+        if ((data[i].time as number) < t) {
+          prev = data[i].close;
+          break;
+        }
+      }
+      const base = prev ?? x.open;
+      const chg = base ? ((x.close - base) / base) * 100 : 0;
       legend.current.textContent = `O ${x.open.toFixed(dp)}  H ${x.high.toFixed(dp)}  L ${x.low.toFixed(dp)}  C ${x.close.toFixed(dp)}  ${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%`;
-      legend.current.style.color = x.close >= x.open ? gain : loss;
+      legend.current.style.color = chg >= 0 ? gain : loss;
     };
     show(undefined);
     cur.current = {
@@ -176,7 +186,7 @@ export function StockTradeChart({ trade, live, last, held }: { trade: ChartTrade
         show(b);
       },
     };
-    chart.subscribeCrosshairMove((p) => show(p.time ? (p.seriesData.get(series) as { open: number; high: number; low: number; close: number } | undefined) : undefined));
+    chart.subscribeCrosshairMove((p) => show(p.time ? (p.seriesData.get(series) as { time?: unknown; open: number; high: number; low: number; close: number } | undefined) : undefined));
     if (tf === "D") chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 90), to: data.length + 3 });
     else chart.timeScale().fitContent();
     return () => {
