@@ -359,7 +359,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct }: { onDone: ()
         <QuoteLine q={quote} stop={Number(f.stop)} target={Number(f.target)} limit={f.entryType !== "market" ? Number(f.limitPrice) : 0} long={f.direction === "long"} />
         {chartTrade && (
           <div className="col-span-2 md:col-span-4">
-            <StockTradeChart trade={chartTrade} live />
+            <StockTradeChart trade={chartTrade} live last={quote?.q?.last ?? null} />
           </div>
         )}
         {!adopt && (
@@ -677,7 +677,7 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
         </div>
       )}
       <div className="mt-1 text-xs text-muted">{t.thesis}</div>
-      <StockTradeChart trade={t} />
+      <StockTradeChart trade={t} last={last} />
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <input className={`${inputCls} w-24`} inputMode="decimal" placeholder="new stop" value={stop} onChange={(e) => setStop(e.target.value)} />
         <button className="rounded-lg border border-border px-2 py-1 text-xs" onClick={() => void act("stop", Number(stop))} disabled={!stop}>

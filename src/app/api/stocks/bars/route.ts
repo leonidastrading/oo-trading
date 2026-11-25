@@ -5,7 +5,7 @@ import { cachedDailyBars, cachedFiveMinuteBars, type Bar } from "@/lib/schwab/da
 import { rateUsage, schwabGet } from "@/lib/schwab/client";
 import { loadTrades } from "@/lib/stocks/engine";
 
-const CHART_BUDGET = 35; // of the 60 requests a minute
+const CHART_BUDGET = 45; // of the 60 requests a minute
 import { regularSession } from "@/lib/stocks/rules";
 import { etParts, isTradingDay } from "@/lib/time";
 

@@ -4,8 +4,8 @@ import { CandlestickSeries, ColorType, createChart, createSeriesMarkers, LineSty
 import { useEffect, useRef, useState } from "react";
 import { usePref } from "@/components/usePref";
 import type { Bar } from "@/lib/schwab/data";
-import type { Trade } from "@/lib/stocks/rules";
-import { etOffsetMinutes } from "@/lib/time";
+import { regularSession, type Trade } from "@/lib/stocks/rules";
+import { etOffsetMinutes, todayET } from "@/lib/time";
 
 const css = (name: string, fallback: string) =>
   (typeof window !== "undefined" && getComputedStyle(document.documentElement).getPropertyValue(name).trim()) || fallback;
@@ -18,7 +18,11 @@ export type ChartTrade = Pick<Trade, "ticker" | "direction" | "stop" | "initialS
   Partial<Pick<Trade, "entryPrice" | "limitPrice" | "target" | "exitPrice" | "entryType" | "entryTime" | "exitTime" | "pl" | "exitReason">>;
 
 /** `live` re-reads the bars every 30 s (used on the entry form, before there is a trade). */
-export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boolean }) {
+type Ohlc = { time: UTCTimestamp; open: number; high: number; low: number; close: number };
+
+/** `last` (the live quote) keeps the newest candle moving between bar refreshes. */
+export function StockTradeChart({ trade, live, last }: { trade: ChartTrade; live?: boolean; last?: number | null }) {
+  const cur = useRef<{ update: (b: Ohlc) => void; lastBar: Ohlc; tf: "D" | "5m"; shift: number } | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const legend = useRef<HTMLSpanElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
@@ -145,11 +149,38 @@ export function StockTradeChart({ trade, live }: { trade: ChartTrade; live?: boo
       legend.current.style.color = x.close >= x.open ? gain : loss;
     };
     show(undefined);
+    cur.current = {
+      lastBar: { ...data[data.length - 1] },
+      tf,
+      shift,
+      update: (b) => {
+        series.update(b);
+        show(b);
+      },
+    };
     chart.subscribeCrosshairMove((p) => show(p.time ? (p.seriesData.get(series) as { open: number; high: number; low: number; close: number } | undefined) : undefined));
     if (tf === "D") chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 90), to: data.length + 3 });
     else chart.timeScale().fitContent();
-    return () => chart.remove();
+    return () => {
+      cur.current = null;
+      chart.remove();
+    };
   }, [bars, tf, trade]);
+
+  // Move the newest candle with the live quote (regular session only), starting a new candle when its time comes.
+  useEffect(() => {
+    const c = cur.current;
+    if (!c || !last || !(last > 0) || !regularSession()) return;
+    const now = Date.now();
+    const t = (c.tf === "D" ? Date.parse(todayET(now) + "T00:00:00Z") / 1000 : Math.floor(now / 1000 / 300) * 300 + c.shift) as UTCTimestamp;
+    if (t < c.lastBar.time) return;
+    const b: Ohlc =
+      t > c.lastBar.time
+        ? { time: t, open: last, high: last, low: last, close: last }
+        : { ...c.lastBar, high: Math.max(c.lastBar.high, last), low: Math.min(c.lastBar.low, last), close: last };
+    c.lastBar = b;
+    c.update(b);
+  }, [last, bars, tf, trade]);
 
   return (
     <div className="mt-2" ref={wrap}>
