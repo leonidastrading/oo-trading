@@ -25,7 +25,7 @@ const FIXED: Record<number, string> = {
 };
 const EXTRA = ["rgba(63, 181, 157, 0.55)", "rgba(230, 103, 103, 0.55)", "rgba(240, 150, 70, 0.55)", "rgba(120, 200, 240, 0.55)", "rgba(220, 120, 200, 0.55)"];
 
-/** Line colour for each period: the original four keep theirs; others take the next spare colour. */
+/** Line color for each period: the original four keep theirs; others take the next spare color. */
 export function smaColors(periods: number[]): { n: number; color: string }[] {
   let i = 0;
   return periods.map((n) => ({ n, color: FIXED[n] ?? EXTRA[i++ % EXTRA.length] }));
