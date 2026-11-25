@@ -324,11 +324,14 @@ export async function getLiveData(force = false): Promise<LiveData> {
   // Intraday day-P/L curve: one sample a minute while the market is open, from fresh data only.
   const dayFrom = etMidnightUtc(sessionDate).getTime() + session.openMin * 60_000;
   const dayTo = etMidnightUtc(sessionDate).getTime() + session.closeMin * 60_000;
-  const openGroups = groupSpreads(splitByEntry(expired.open, openLots(fills.data ?? []), today), today);
-  // Day P/L of the trades: each open position's change since the prior close (Schwab's P/L Day; equal to its
-  // open P/L when bought today) plus today's closed P/L. Not net liq − prior close: deposits, transfers and
-  // overnight settlements move that without any trading.
-  const dayTrades = pl ? Math.round((expired.open.reduce((s, p) => s + p.plDay, 0) + pl.closed) * 100) / 100 : null;
+  const byEntry = splitByEntry(expired.open, openLots(fills.data ?? []), today);
+  const openGroups = groupSpreads(byEntry, today);
+  // Day P/L of the trades: each open entry's change since the prior close, plus today's closed P/L. An entry
+  // opened today counts its own open P/L (so with nothing carried overnight this is exactly Open + Closed);
+  // only entries from earlier days use Schwab's P/L Day. Schwab's figure can't be used for today's entries: it
+  // also carries the day's already-closed trades in the same contract, which would count them twice.
+  // Not net liq − prior close either: deposits, transfers and overnight settlements move that without any trading.
+  const dayTrades = pl ? Math.round((byEntry.reduce((s, p) => s + p.plDay, 0) + pl.closed) * 100) / 100 : null;
   const equity = b && b.netLiq !== null && b.startNetLiq !== null ? b.netLiq - b.startNetLiq : null;
   if (pl && b && dayTrades !== null && session.phase !== "closed" && Number.isFinite(fetchedAt) && now - fetchedAt < 90_000) {
     const t = Math.floor(now / 60_000) * 60_000;
