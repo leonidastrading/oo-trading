@@ -104,8 +104,9 @@ export function StockTradeChart({ trade, live, last, held }: { trade: ChartTrade
       autoSize: true,
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: css("--muted", "#898781"), fontSize: 11 },
       grid: { vertLines: { visible: false }, horzLines: { color: css("--axis", "#4a4a46") + "55" } },
-      rightPriceScale: { borderVisible: false },
-      timeScale: { borderVisible: false, timeVisible: tf === "5m", secondsVisible: false },
+      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.05, bottom: 0.05 } },
+      // Empty space right of the last bar, so the candles don't sit under the line labels.
+      timeScale: { borderVisible: false, timeVisible: tf === "5m", secondsVisible: false, rightOffset: 14 },
     });
     const shift = tf === "5m" ? etOffsetMinutes(bars[0].time * 1000) * 60 : 0;
     const series = chart.addSeries(CandlestickSeries, { upColor: gain, downColor: loss, borderVisible: false, wickUpColor: gain, wickDownColor: loss });
@@ -188,8 +189,8 @@ export function StockTradeChart({ trade, live, last, held }: { trade: ChartTrade
       },
     };
     chart.subscribeCrosshairMove((p) => show(p.time ? (p.seriesData.get(series) as { time?: unknown; open: number; high: number; low: number; close: number } | undefined) : undefined));
-    if (tf === "D") chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 90), to: data.length + 3 });
-    else chart.timeScale().fitContent();
+    if (tf === "D") chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 90), to: data.length + 14 });
+    else chart.timeScale().setVisibleLogicalRange({ from: 0, to: data.length + Math.max(14, Math.round(data.length * 0.08)) });
     return () => {
       cur.current = null;
       chart.remove();
