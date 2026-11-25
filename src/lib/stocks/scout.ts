@@ -19,7 +19,7 @@ export async function fetchCard(idRaw: unknown): Promise<CardResult> {
   const id = String(idRaw ?? "").trim().replace(/^#/, "");
   if (!/^\d{1,9}$/.test(id)) return { ok: false, error: "Card number is required (digits only, e.g. 246)" };
   let raw: unknown;
-  if (process.env.SCHWAB_MOCK === "1") raw = id === "404" ? null : { ...MOCK_CARD, id: Number(id) };
+  if (process.env.SCHWAB_MOCK === "1") raw = id === "404" ? null : { ...MOCK_CARD, id: Number(id), ticker: ({ "247": "NVDA", "248": "GME", "249": "SMH", "250": "TSLA" } as Record<string, string>)[id] ?? MOCK_CARD.ticker };
   else {
     const token = process.env.SCOUT_API_TOKEN;
     if (!token) return { ok: false, error: "SCOUT_API_TOKEN isn't set on the server" };
