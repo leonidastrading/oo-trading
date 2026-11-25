@@ -738,14 +738,32 @@ function OpenTrade({ t, last, spy, bench, onDone }: { t: Trade; last: number | n
         <button className="rounded-lg border border-border px-2 py-1 text-xs" onClick={() => void act("target", Number(target))} disabled={!target}>
           Change target
         </button>
-        <button
-          className="rounded-lg border border-loss/50 px-2 py-1 text-xs text-loss"
-          onClick={() => {
-            if (confirm(`Close ${t.ticker} at market?`)) void act("close");
-          }}
-        >
-          {t.status === "pending" ? "Cancel entry" : "Close at market"}
-        </button>
+        {t.status === "pending" ? (
+          <button
+            className="rounded-lg border border-loss/50 px-2 py-1 text-xs text-loss"
+            onClick={() => {
+              if (confirm(`Cancel the ${t.ticker} entry?`)) void act("close");
+            }}
+          >
+            Cancel entry
+          </button>
+        ) : (
+          <span className="flex flex-wrap items-center gap-1">
+            <span className="text-xs text-ink-2">Close at market:</span>
+            {[25, 50, 75, 100].map((p) => (
+              <button
+                key={p}
+                className="rounded-lg border border-loss/50 px-2 py-1 text-xs text-loss"
+                onClick={() => {
+                  if (!confirm(p === 100 ? `Close all of ${t.ticker} at market?` : `Close ${p}% of ${t.ticker} at market? The rest stays open with its stop${t.target ? " and target" : ""}.`)) return;
+                  void (p === 100 ? act("close") : act("partial", p));
+                }}
+              >
+                {p}%
+              </button>
+            ))}
+          </span>
+        )}
         {msg && <span className="text-xs text-ink-2">{msg}</span>}
       </div>
       {t.planAdd && (
@@ -1179,7 +1197,8 @@ export default function StocksPage() {
   );
   const s = data.summary;
   const chartTrade = closed.find((t) => t.id === shownChart) ?? null;
-  const needPm = data.trades.filter((t) => t.mode === data.mode && t.status === "closed" && !t.postMortem);
+  // A partial exit is a slice of a position that is still open: its post-mortem comes with the final close.
+  const needPm = data.trades.filter((t) => t.mode === data.mode && t.status === "closed" && !t.partialOf && !t.postMortem);
   const kill = async (on: boolean) => {
     setBusy(true);
     await post("/api/stocks/kill", { on });

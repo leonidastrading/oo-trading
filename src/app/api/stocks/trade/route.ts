@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireKv } from "@/lib/apiGuard";
-import { changeStop, changeTarget, closeTrade, savePostMortem, setTradeCard, triggerAdd } from "@/lib/stocks/engine";
+import { changeStop, changeTarget, closeTrade, partialClose, savePostMortem, setTradeCard, triggerAdd } from "@/lib/stocks/engine";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +19,8 @@ export async function POST(req: NextRequest) {
           ? await changeTarget(b.id, v)
           : b.action === "close"
             ? await closeTrade(b.id, "manual")
+            : b.action === "partial"
+              ? await partialClose(b.id, v)
             : b.action === "add"
               ? await triggerAdd(b.id, v, String(b.note ?? ""))
               : b.action === "postmortem"

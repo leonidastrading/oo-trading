@@ -27,6 +27,7 @@ import {
   shadowSize,
   starterShares,
   orderShares,
+  splitForPartial,
   openPlSample,
   type EquitySample,
   tradeCapPct,
@@ -837,6 +838,37 @@ export async function closeTrade(id: string, reason: ExitReason = "manual") {
     if (!t || !["pending", "open"].includes(t.status)) return { ok: false, error: "No open trade with that id" };
     const q = (await stockQuotes([t.ticker]).catch(() => ({}) as Record<string, StockQuote>))[t.ticker];
     await closeTradeUnlocked(t, reason, q);
+    return { ok: true };
+  });
+}
+
+/**
+ * Close part of an open position at market (25 / 50 / 75 %). The closed part becomes its own closed trade,
+ * scored like any other; the rest stays open with its stop and target. Dry run only for now: a live partial
+ * would have to resize the working stop and target orders at Schwab, which isn't built.
+ */
+export async function partialClose(id: string, pct: number) {
+  return withLock(async () => {
+    const t = (await store().hgetall<Trade>(KEYS.stockTrades))[id];
+    if (!t || t.status !== "open") return { ok: false, error: "No open (filled) trade with that id" };
+    if (![25, 50, 75].includes(pct)) return { ok: false, error: "Partial exits are 25, 50 or 75 % (use Close for 100 %)" };
+    if (t.mode !== "dry") return { ok: false, error: "Partial exits work on dry-run positions only for now: close a live position in full, or ask for live partials to be built" };
+    const q = (await stockQuotes([t.ticker]).catch(() => ({}) as Record<string, StockQuote>))[t.ticker];
+    const px = q?.last ?? null;
+    if (!px) return { ok: false, error: `No current quote for ${t.ticker}` };
+    const split = splitForPartial(t, pct, rid());
+    if (!split) return { ok: false, error: "The position is too small to split that way" };
+    const now = Date.now();
+    const done = closeOut(split.slice, px, now, "manual", await marksAt(t, now));
+    await saveTrade(done);
+    await saveTrade(split.rest);
+    await log({
+      kind: "exit",
+      mode: "dry",
+      ticker: t.ticker,
+      tradeId: t.id,
+      text: `DRY RUN — closed ${pct}% (${done.shadowShares} of ${t.shadowShares} shadow sh) at market ~${px}: ${(done.shadowPl ?? 0) >= 0 ? "+" : ""}${done.shadowPl ?? 0}; ${split.rest.shadowShares} sh stay open`,
+    });
     return { ok: true };
   });
 }

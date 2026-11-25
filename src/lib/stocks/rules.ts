@@ -129,6 +129,8 @@ export interface Trade extends IdeaInput {
   shadowPl?: number | null;
   /** Entry order session: NORMAL (regular hours) or SEAMLESS (extended-hours limit). */
   session?: "NORMAL" | "SEAMLESS";
+  /** A slice closed out of a bigger position (a partial exit): the id of the trade it came from. */
+  partialOf?: string;
   /** The order was sized from the account (risk % to the stop), not the fixed share count. */
   sizedByRisk?: boolean;
   /** How many times an expired/cancelled order of this trade was put back by the sync. */
@@ -595,7 +597,8 @@ export function preTradeChecks(c: CheckContext): Check[] {
   const open = mine.filter(isOpen);
   add("Max open ideas", open.length < settings.maxOpen, `${open.length} open of ${settings.maxOpen}`);
   const wk = weekStart(etParts(now).date);
-  const thisWeek = mine.filter((t) => weekStart(etParts(t.submittedAt).date) === wk).length;
+  // A partial exit is a slice of an idea already counted, not a new idea.
+  const thisWeek = mine.filter((t) => !t.partialOf && weekStart(etParts(t.submittedAt).date) === wk).length;
   add("Ideas this week", thisWeek < settings.maxPerWeek, `${thisWeek} of ${settings.maxPerWeek} this week (Mon–Fri)`);
   const sameTicker = open.find((t) => t.ticker === idea.ticker);
   add("One position per ticker", !sameTicker, sameTicker ? `Already ${sameTicker.status} in ${idea.ticker}: no adding to a position` : "None open");
@@ -802,7 +805,7 @@ export function checkAdd(c: {
 /** Closed trades (this mode) still missing a post-mortem 3+ trading days after they closed. */
 export function overduePostMortems(trades: Trade[], mode: Mode, now: number): Trade[] {
   const today = etParts(now).date;
-  return trades.filter((t) => t.mode === mode && t.status === "closed" && !t.postMortem && t.exitTime && addTradingDays(etParts(t.exitTime).date, 3) <= today);
+  return trades.filter((t) => t.mode === mode && t.status === "closed" && !t.partialOf && !t.postMortem && t.exitTime && addTradingDays(etParts(t.exitTime).date, 3) <= today);
 }
 
 export function parsePostMortem(raw: Record<string, unknown>, now = Date.now()): { pm: PostMortem | null; errors: string[] } {
@@ -1118,4 +1121,48 @@ export function dailyClosedCurve(trades: Trade[], mode: Mode): DayPoint[] {
       total += e.day;
       return { date, day: Math.round(e.day * 100) / 100, total: Math.round(total * 100) / 100, trades: e.trades };
     });
+}
+
+// ---- Partial exits ----
+
+/**
+ * Split an open position for a partial exit: `slice` is the part to close now (a copy with the shares,
+ * sizes and planned risk scaled to `pct` %), `rest` is what stays open. Whole shares only; null when the
+ * slice would be nothing or everything (use a full close for that).
+ */
+export function splitForPartial(t: Trade, pct: number, sliceId: string): { slice: Trade; rest: Trade } | null {
+  const f = pct / 100;
+  if (!(f > 0 && f < 1) || t.status !== "open") return null;
+  const part = (n: number | undefined) => Math.round((n ?? 0) * f);
+  const money2 = (v: number) => Math.round(v * 100) / 100;
+  const sShadow = part(t.shadowShares);
+  const sShares = part(t.shares);
+  const sAddShadow = t.add?.status === "filled" ? part(t.add.shadowShares) : 0;
+  const sAddLive = t.add?.status === "filled" ? part(t.add.liveShares) : 0;
+  if (sShadow + sShares + sAddShadow + sAddLive === 0) return null;
+  if (sShadow === t.shadowShares && sShares === t.shares) return null;
+  const scale = (src: Trade, shadow: number, shares: number, addShadow: number, addLive: number, k: number): Trade => {
+    const risk = Math.abs((src.entryPrice ?? 0) - src.initialStop);
+    const out: Trade = {
+      ...src,
+      shares,
+      shadowShares: shadow,
+      fullShadowShares: src.fullShadowShares == null ? src.fullShadowShares : Math.round(src.fullShadowShares * k),
+      plannedRisk: src.plannedRisk == null ? src.plannedRisk : money2(src.plannedRisk * k),
+      shadowPosition: money2(shadow * (src.entryPrice ?? 0)),
+      shadowRisk: money2(shadow * risk),
+      stopHistory: [...src.stopHistory],
+      targetHistory: [...src.targetHistory],
+    };
+    if (src.add) out.add = src.add.status === "filled" ? { ...src.add, shadowShares: addShadow, liveShares: addLive } : { ...src.add };
+    return out;
+  };
+  const slice = scale(t, sShadow, sShares, sAddShadow, sAddLive, f);
+  slice.id = sliceId;
+  slice.partialOf = t.partialOf ?? t.id;
+  // A planned add that hasn't happened stays with the part that is still open.
+  if (slice.add && slice.add.status !== "filled") delete slice.add;
+  if (slice.add?.status !== "filled") slice.planAdd = false;
+  const rest = scale(t, t.shadowShares - sShadow, t.shares - sShares, (t.add?.status === "filled" ? t.add.shadowShares : 0) - sAddShadow, (t.add?.status === "filled" ? t.add.liveShares : 0) - sAddLive, 1 - f);
+  return { slice, rest };
 }
