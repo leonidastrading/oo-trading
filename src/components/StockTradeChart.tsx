@@ -221,7 +221,13 @@ export function StockTradeChart({ trade, live, last, held }: { trade: ChartTrade
         <span ref={legend} className="num ml-2 whitespace-pre" />
         {err && <span className="text-loss">{err}</span>}
       </div>
-      <div ref={box} className="h-[32rem] w-full" />
+      <div className="relative">
+        {/* Ticker watermark behind the candles (the chart's own background is transparent). */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 flex select-none items-center justify-center text-7xl font-black tracking-widest text-ink opacity-[0.07] md:text-9xl">
+          {trade.ticker}
+        </div>
+        <div ref={box} className="relative h-[32rem] w-full" />
+      </div>
     </div>
   );
 }
