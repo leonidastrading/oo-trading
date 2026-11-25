@@ -851,6 +851,8 @@ interface WorkingOrder {
   dry: boolean;
   id: string | null;
   note?: string;
+  /** Set on an unfilled entry: the trade to cancel. */
+  cancelTradeId?: string;
 }
 
 /** Every order that is working right now, read off the trades: unfilled entries, protective stops, targets. */
@@ -864,7 +866,7 @@ function workingOrders(trades: Trade[], quotes: Record<string, number | null>): 
     const id = (v: string | null | undefined) => (v && !v.startsWith("dry-") ? v : null);
     if (t.status === "pending") {
       const kind = t.entryType === "stop" ? "Entry stop" : t.entryType === "limit" ? "Entry limit" : "Entry market";
-      out.push({ ...base, key: `${t.id}-e`, kind, side: open, shares: t.shares, price: t.entryType === "market" ? "market" : String(t.limitPrice), tif: t.entryType === "market" ? "Day" : "GTC", id: id(t.orderId) });
+      out.push({ ...base, key: `${t.id}-e`, kind, side: open, shares: t.shares, price: t.entryType === "market" ? "market" : String(t.limitPrice), tif: t.entryType === "market" ? "Day" : "GTC", id: id(t.orderId), cancelTradeId: t.id });
       // The stop and target are attached to the entry and start working once it fills.
       out.push({ ...base, key: `${t.id}-s`, kind: "Stop", side: close, shares: t.shares, price: String(t.stop), tif: "GTC", id: id(t.stopOrderId), note: "after entry fills" });
       if (t.target) out.push({ ...base, key: `${t.id}-t`, kind: "Target", side: close, shares: t.shares, price: String(t.target), tif: "GTC", id: id(t.targetOrderId), note: "after entry fills" });
@@ -1038,8 +1040,52 @@ function OpenPositions({ trades, quotes, accountValue, now, maxPositionPct, onDo
   );
 }
 
-function PendingOrders({ orders }: { orders: WorkingOrder[] }) {
+function PendingOrders({ orders, onDone }: { orders: WorkingOrder[]; onDone: () => void }) {
+  type Key = "ticker" | "kind" | "side" | "shares" | "price" | "last" | "away" | "tif";
+  type Show = "all" | "entries" | "stops" | "targets";
   const [c, btn] = useCollapsed("pending");
+  const [sort, setSort] = usePref<{ key: Key; desc: boolean } | null>("stocks.pending.sort", null, (v) => v === null || (!!v && typeof v === "object" && "key" in v));
+  const [show, setShow] = usePref<Show>("stocks.pending.show", "all", (v) => ["all", "entries", "stops", "targets"].includes(String(v)));
+  const [msg, setMsg] = useState<string | null>(null);
+  const kindOf = (o: WorkingOrder): Show => (o.cancelTradeId ? "entries" : o.kind.startsWith("Stop") ? "stops" : o.kind.startsWith("Target") ? "targets" : "all");
+  const rows = orders
+    .map((o) => {
+      const px = Number(o.price);
+      // How far the order's price is from the last price, in %.
+      return { o, px: px > 0 ? px : null, away: o.last && px > 0 ? ((px - o.last) / o.last) * 100 : null };
+    })
+    .filter((r) => show === "all" || kindOf(r.o) === show);
+  const val = (r: (typeof rows)[number], k: Key): string | number | null =>
+    k === "away" ? (r.away === null ? null : Math.abs(r.away)) : k === "price" ? r.px : k === "ticker" ? r.o.ticker : k === "kind" ? r.o.kind : k === "side" ? r.o.side : k === "shares" ? r.o.shares : k === "last" ? r.o.last : r.o.tif;
+  const sorted = sort
+    ? [...rows].sort((x, y) => {
+        const [vx, vy] = [val(x, sort.key), val(y, sort.key)];
+        if (vx === null || vy === null) return vx === vy ? 0 : vx === null ? 1 : -1; // blanks last
+        const d = typeof vx === "string" ? vx.localeCompare(String(vy)) : vx - (vy as number);
+        return sort.desc ? -d : d;
+      })
+    : rows;
+  const th = (k: Key, label: string) => (
+    <th key={k}>
+      <button
+        className={`uppercase tracking-wide ${sort?.key === k ? "text-ink" : ""}`}
+        title={k === "away" ? "Sort by distance from the last price (closest first)" : "Sort"}
+        // Third click on the same column goes back to the original order (each idea's orders together).
+        onClick={() => setSort(sort?.key !== k ? { key: k, desc: false } : sort.desc ? null : { key: k, desc: true })}
+      >
+        {label}
+        {sort?.key === k ? (sort.desc ? " ▼" : " ▲") : ""}
+      </button>
+    </th>
+  );
+  const cancel = async (o: WorkingOrder) => {
+    if (!o.cancelTradeId || !confirm(`Cancel the ${o.ticker} entry (${o.kind.toLowerCase()} ${o.price})? Its stop${orders.some((x) => x.key === o.key.replace(/-e$/, "-t")) ? " and target" : ""} go with it.`)) return;
+    setMsg(null);
+    const { json } = await post("/api/stocks/trade", { id: o.cancelTradeId, action: "close" });
+    setMsg(json.ok ? `${o.ticker} entry cancelled` : String(json.error ?? "Couldn't cancel"));
+    onDone();
+  };
+  const entries = orders.filter((o) => o.cancelTradeId).length;
   return (
     <section className={`card space-y-2 p-4${collapsedCls(c)}`}>
       <h2 className="font-bold text-accent">
@@ -1048,26 +1094,40 @@ function PendingOrders({ orders }: { orders: WorkingOrder[] }) {
       {orders.length === 0 ? (
         <p className="text-sm text-muted">No working orders.</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="data w-full text-sm">
-            <thead>
-              <tr>
-                <th>Ticker</th>
-                <th>Order</th>
-                <th>Side</th>
-                <th>Shares</th>
-                <th>Price</th>
-                <th>Last</th>
-                <th>Away</th>
-                <th>Good for</th>
-                <th>Where</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((o) => {
-                const px = Number(o.price);
-                const away = o.last && px > 0 ? (((px - o.last) / o.last) * 100).toFixed(2) + "%" : "—";
-                return (
+        <>
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            {(
+              [
+                ["all", `All (${orders.length})`],
+                ["entries", `Entries not filled (${entries})`],
+                ["stops", "Stops"],
+                ["targets", "Targets"],
+              ] as [Show, string][]
+            ).map(([k, label]) => (
+              <button key={k} onClick={() => setShow(k)} aria-pressed={show === k} className={`rounded-md px-2 py-1 ${show === k ? "bg-surface-2 text-ink" : "text-ink-2"}`}>
+                {label}
+              </button>
+            ))}
+            {msg && <span className="ml-2 text-ink-2">{msg}</span>}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="data w-full text-sm">
+              <thead>
+                <tr>
+                  {th("ticker", "Ticker")}
+                  {th("kind", "Order")}
+                  {th("side", "Side")}
+                  {th("shares", "Shares")}
+                  {th("price", "Price")}
+                  {th("last", "Last")}
+                  {th("away", "Away")}
+                  {th("tif", "Good for")}
+                  <th>Where</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map(({ o, away }) => (
                   <tr key={o.key}>
                     <td className="font-semibold">{o.ticker}</td>
                     <td className={o.kind.startsWith("Stop") ? "text-loss" : o.kind.startsWith("Target") ? "text-gain" : ""}>
@@ -1075,18 +1135,25 @@ function PendingOrders({ orders }: { orders: WorkingOrder[] }) {
                       {o.note && <span className="text-xs text-muted"> ({o.note})</span>}
                     </td>
                     <td>{o.side}</td>
-                    <td className="num">{o.shares}</td>
+                    <td className="num">{o.shares.toLocaleString("en-US")}</td>
                     <td className="num">{o.price}</td>
                     <td className="num">{o.last ?? "—"}</td>
-                    <td className="num">{away}</td>
+                    <td className="num">{away === null ? "—" : `${away.toFixed(2)}%`}</td>
                     <td>{o.tif}</td>
                     <td className="text-xs text-muted">{o.dry ? "dry run (not at Schwab)" : o.id ? `Schwab #${o.id}` : "Schwab (syncing)"}</td>
+                    <td>
+                      {o.cancelTradeId && (
+                        <button className="rounded-lg border border-loss/50 px-2 py-0.5 text-xs text-loss" onClick={() => void cancel(o)}>
+                          Cancel entry
+                        </button>
+                      )}
+                    </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </section>
   );
@@ -1469,7 +1536,7 @@ export default function StocksPage() {
 
       <IdeaForm dry={dry} onDone={refresh} maxPositionPct={data.settings.maxPositionPct} openTrades={open} unmanaged={data.unmanaged} />
 
-      <PendingOrders orders={workingOrders(open, data.quotes)} />
+      <PendingOrders orders={workingOrders(open, data.quotes)} onDone={refresh} />
 
       <section className={`card space-y-2 p-4${collapsedCls(ideasC)}`}>
         <h2 className="font-bold text-accent">
