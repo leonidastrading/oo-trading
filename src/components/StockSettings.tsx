@@ -7,6 +7,8 @@ import { formatDateTimeET } from "@/lib/time";
 const FIELDS: { key: Exclude<keyof S, "dryRun" | "sizeByRisk" | "sizeByRiskAt" | "loosenedAt">; label: string; hint: string }[] = [
   { key: "riskPct", label: "Risk per trade, % of account", hint: "what a stop-out loses; sets the size" },
   { key: "maxPositionPct", label: "Max position, % of account", hint: "no position bigger than this, whatever the stop" },
+  { key: "defaultPositionPct", label: "Default position size, % of account", hint: "what a new idea's size starts at; 0.1 to the max position" },
+  { key: "defaultStopPct", label: "Default stop distance, % from entry", hint: "prefilled when an idea has no stop; 0.5 to 25" },
   { key: "shares", label: "Fixed shares per order", hint: "used when account sizing is off" },
   { key: "maxOpen", label: "Max open ideas", hint: "" },
   { key: "maxPerWeek", label: "Max new ideas per week", hint: "Mon–Fri" },
@@ -90,6 +92,10 @@ export function StockSettings() {
           </label>
         ))}
       </div>
+      <p className="text-xs text-muted">
+        The two sizes are different things: &quot;Risk per trade&quot; is what a stop-out loses; &quot;Default position size&quot; is how much of the account goes into
+        the stock. With a 1% position and an 8% stop, a stop-out loses 0.08% of the account. Both defaults only prefill the entry form, where you can change them per idea.
+      </p>
       <button
         className="rounded-lg bg-accent px-3 py-1.5 font-semibold text-page"
         onClick={() => void save(Object.fromEntries(FIELDS.map((f) => [f.key, Number(draft[f.key])])))}

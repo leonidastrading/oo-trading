@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cardToPrefill } from "../src/lib/stocks/scoutCard";
 import {
   adoptChecks,
+  ideaPrefill,
   tradeCapPct,
   orderShares,
   riskSizingActive,
@@ -362,5 +363,53 @@ describe("per-trade position cap (confidence slider)", () => {
     expect(shadowSize(100_000, { riskPct: 1, maxPositionPct: tradeCapPct({ maxPositionPct: 15 }, 2) }, 200, 190).shares).toBe(10);
     expect(parseIdea({ ...idea, positionPct: 2 }).idea!.positionPct).toBe(2);
     expect(parseIdea({ ...idea, positionPct: -1 }).errors.join(" ")).toMatch(/Position size/);
+  });
+});
+
+describe("entry-form defaults (position size and stop distance)", () => {
+  const s = { defaultPositionPct: 1, defaultStopPct: 8, maxPositionPct: 5 };
+  it("prefills a missing stop the default distance from the entry: below for a long, above for a short", () => {
+    expect(ideaPrefill(s, { long: true, entryRef: 100 })).toEqual({ positionPct: 1, stop: 92, stopIsDefault: true });
+    expect(ideaPrefill(s, { long: false, entryRef: 100 })).toEqual({ positionPct: 1, stop: 108, stopIsDefault: true });
+    expect(ideaPrefill(s, { long: true, entryRef: 37.37 }).stop).toBe(34.38); // rounded to cents
+    expect(ideaPrefill(s, { long: true, entryRef: null })).toEqual({ positionPct: 1, stop: null, stopIsDefault: false });
+  });
+  it("never overwrites a stop that came with the idea", () => {
+    expect(ideaPrefill(s, { long: true, entryRef: 100, stop: 80 })).toMatchObject({ stop: 80, stopIsDefault: false });
+    expect(ideaPrefill(s, { long: false, entryRef: 100, stop: "121.5" })).toMatchObject({ stop: 121.5, stopIsDefault: false });
+  });
+  it("starts the position size at the default, keeps a chosen size, and caps both at the max position", () => {
+    expect(ideaPrefill(s, { long: true, entryRef: 100 }).positionPct).toBe(1);
+    expect(ideaPrefill(s, { long: true, entryRef: 100, positionPct: 3 }).positionPct).toBe(3);
+    expect(ideaPrefill(s, { long: true, entryRef: 100, positionPct: 9 }).positionPct).toBe(5);
+    expect(ideaPrefill({ ...s, defaultPositionPct: 4, maxPositionPct: 2 }, { long: true, entryRef: 100 }).positionPct).toBe(2);
+  });
+  it("defaults to a 1% position and a 20% stop, and rejects values outside the allowed ranges", () => {
+    expect(DEFAULT_SETTINGS).toMatchObject({ defaultPositionPct: 1, defaultStopPct: 20 });
+    const bad = (patch: Record<string, number>) => changeSettings(null, patch, NOW).errors.length;
+    expect(bad({ defaultPositionPct: 0.05 })).toBe(1);
+    expect(bad({ defaultPositionPct: 16 })).toBe(1); // above the max position (15 by default)
+    expect(bad({ defaultPositionPct: 15 })).toBe(0);
+    expect(bad({ defaultStopPct: 0.4 })).toBe(1);
+    expect(bad({ defaultStopPct: 26 })).toBe(1);
+    expect(bad({ defaultStopPct: 0.5 })).toBe(0);
+    // Lowering the max in the same save lowers the ceiling; raising it (dry run) raises it.
+    expect(bad({ maxPositionPct: 5, defaultPositionPct: 6 })).toBe(1);
+    expect(bad({ maxPositionPct: 30, defaultPositionPct: 20 })).toBe(0);
+  });
+  it("treats a raise of either as a limit raise: at once in dry run, 24 hours later when live, and it delays going live", () => {
+    const dry = changeSettings(null, { defaultPositionPct: 2, defaultStopPct: 25 }, NOW);
+    expect(effectiveSettings(dry.next, NOW)).toMatchObject({ defaultPositionPct: 2, defaultStopPct: 25, loosenedAt: NOW });
+    expect(changeSettings(dry.next, { dryRun: false }, NOW + 3600_000).errors.join(" ")).toMatch(/live is available from/);
+    const live = { values: { ...DEFAULT_SETTINGS, dryRun: false }, pending: [] };
+    const r = changeSettings(live, { defaultPositionPct: 2, defaultStopPct: 10 }, NOW);
+    expect(r.delayed).toEqual(["defaultPositionPct 1 → 2"]);
+    expect(r.applied).toEqual(["defaultStopPct 20 → 10"]); // lowering applies now
+    expect(effectiveSettings(r.next, NOW)).toMatchObject({ defaultPositionPct: 1, defaultStopPct: 10 });
+    expect(effectiveSettings(r.next, NOW + 24 * 3600_000).defaultPositionPct).toBe(2);
+  });
+  it("needs a position size on the idea, within range", () => {
+    expect(parseIdea({ ...idea, positionPct: 0.05 }).errors.join(" ")).toMatch(/Position size/);
+    expect(parseIdea({ ...idea, positionPct: 0.1 }).errors).toEqual([]);
   });
 });

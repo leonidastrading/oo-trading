@@ -11,7 +11,7 @@ import { usePoll } from "@/components/usePoll";
 import { usePref } from "@/components/usePref";
 import type { Check, StockQuote, Trade } from "@/lib/stocks/rules";
 import type { CardPrefill } from "@/lib/stocks/scoutCard";
-import { excessReturn, SOURCES, STAGES, SUGGESTED_STOP_PCT, suggestedStop } from "@/lib/stocks/rules";
+import { excessReturn, ideaPrefill, POSITION_PCT_MIN, SOURCES, STAGES } from "@/lib/stocks/rules";
 import { formatDateTimeET } from "@/lib/time";
 
 const post = async (url: string, body: unknown) => {
@@ -112,11 +112,33 @@ interface Held {
 }
 
 /** New idea — or, with `adopt`, the same form for a position already opened outside the app. */
-function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct, openTrades = [], unmanaged = [] }: { onDone: () => void; dry: boolean; adopt?: Held; onCancel?: () => void; maxPositionPct: number; openTrades?: Trade[]; unmanaged?: Held[] }) {
+function IdeaForm({
+  onDone,
+  dry,
+  adopt,
+  onCancel,
+  maxPositionPct,
+  defaultPositionPct,
+  defaultStopPct,
+  openTrades = [],
+  unmanaged = [],
+}: {
+  onDone: () => void;
+  dry: boolean;
+  adopt?: Held;
+  onCancel?: () => void;
+  maxPositionPct: number;
+  defaultPositionPct: number;
+  defaultStopPct: number;
+  openTrades?: Trade[];
+  unmanaged?: Held[];
+}) {
+  const defaults = { maxPositionPct, defaultPositionPct, defaultStopPct };
   // Confidence slider: this trade's position cap, from 0.5% (or the max, if lower) up to the max-position setting.
   const [posPct, setPosPct] = useState<number | null>(null);
-  const posMin = Math.min(0.5, maxPositionPct);
-  const pos = Math.min(posPct ?? maxPositionPct, maxPositionPct);
+  const posMin = Math.min(POSITION_PCT_MIN, maxPositionPct);
+  // Starts at the default position size from Settings (never above the max position) until the slider is moved.
+  const pos = ideaPrefill(defaults, { long: true, entryRef: null, positionPct: posPct }).positionPct;
   const blank = {
     ticker: "",
     direction: "long",
@@ -203,7 +225,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct, openTrades = [
   }, [mineKey]);
   // 20% stop suggestion from the entry reference (the limit price for a limit entry, else the last price).
   const stopRef = f.entryType !== "market" && Number(f.limitPrice) > 0 ? Number(f.limitPrice) : (quote?.q?.last ?? 0);
-  const stop20 = stopRef > 0 ? String(suggestedStop(stopRef, f.direction === "long")) : "";
+  const stop20 = stopRef > 0 ? String(ideaPrefill(defaults, { long: f.direction === "long", entryRef: stopRef }).stop ?? "") : "";
   async function loadCard() {
     setCardBusy(true);
     setCardErr(null);
@@ -233,7 +255,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct, openTrades = [
           .catch(() => null);
         const last = q?.quote?.last;
         if (last && last > 0) {
-          next.stop = String(suggestedStop(last, next.direction === "long"));
+          next.stop = String(ideaPrefill(defaults, { long: next.direction === "long", entryRef: last }).stop ?? "");
           autoStop = true;
         }
       }
@@ -368,7 +390,18 @@ function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct, openTrades = [
         </label>
         <label className="text-xs text-ink-2">
           Direction
-          <select className={inputCls} value={f.direction} disabled={!!adopt} onChange={set("direction")}>
+          <select
+            className={inputCls}
+            value={f.direction}
+            disabled={!!adopt}
+            onChange={(e) => {
+              // A stop that is still the default follows the direction (below for a long, above for a short);
+              // one that came from the card or was typed is left alone.
+              const long = e.target.value === "long";
+              const moved = autoStop && stopRef > 0 ? ideaPrefill(defaults, { long, entryRef: stopRef }).stop : null;
+              setF({ ...f, direction: e.target.value, ...(moved ? { stop: String(moved) } : {}) });
+            }}
+          >
             <option value="long">Long</option>
             <option value="short">Short</option>
           </select>
@@ -414,7 +447,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct, openTrades = [
           </>
         )}
         <label className="text-xs text-ink-2">
-          Stop{autoStop && f.stop ? ` (auto ${SUGGESTED_STOP_PCT}%)` : ""}
+          Stop{autoStop && f.stop ? ` (default ${defaultStopPct}%)` : ""}
           <input
             className={inputCls}
             inputMode="decimal"
@@ -433,7 +466,7 @@ function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct, openTrades = [
                 setF({ ...f, stop: stop20 });
               }}
             >
-              Use {SUGGESTED_STOP_PCT}% stop: {stop20}
+              Use the default {defaultStopPct}% stop: {stop20}
             </button>
           )}
         </label>
@@ -515,8 +548,8 @@ function IdeaForm({ onDone, dry, adopt, onCancel, maxPositionPct, openTrades = [
       </div>
       {!adopt && maxPositionPct > posMin && (
         <label className="block rounded-lg bg-surface-2 p-2 text-xs text-ink-2">
-          Position size by confidence: up to <b className="text-sm text-ink">{pos}%</b> of the account
-          <input type="range" className="mt-1 block w-full accent-[var(--accent)]" min={posMin} max={maxPositionPct} step={0.25} value={pos} onChange={(e) => setPosPct(Number(e.target.value))} />
+          Position size: up to <b className="text-sm text-ink">{pos}%</b> of the account{posPct === null ? " (the default from Settings)" : ""}
+          <input type="range" className="mt-1 block w-full accent-[var(--accent)]" min={posMin} max={maxPositionPct} step={0.05} value={pos} onChange={(e) => setPosPct(Number(e.target.value))} />
           <span className="flex justify-between text-muted">
             <span>{posMin}%</span>
             <span>The {"risk per trade"} limit still applies: a wide stop can make the size smaller than this.</span>
@@ -1532,9 +1565,17 @@ export default function StocksPage() {
           ))}
         </section>
       )}
-      {adopting && <IdeaForm key={adopting.symbol} dry={dry} adopt={adopting} onCancel={() => setAdopting(null)} onDone={refresh} maxPositionPct={data.settings.maxPositionPct} />}
+      {adopting && <IdeaForm key={adopting.symbol} dry={dry} adopt={adopting} onCancel={() => setAdopting(null)} onDone={refresh} maxPositionPct={data.settings.maxPositionPct} defaultPositionPct={data.settings.defaultPositionPct} defaultStopPct={data.settings.defaultStopPct} />}
 
-      <IdeaForm dry={dry} onDone={refresh} maxPositionPct={data.settings.maxPositionPct} openTrades={open} unmanaged={data.unmanaged} />
+      <IdeaForm
+        dry={dry}
+        onDone={refresh}
+        maxPositionPct={data.settings.maxPositionPct}
+        defaultPositionPct={data.settings.defaultPositionPct}
+        defaultStopPct={data.settings.defaultStopPct}
+        openTrades={open}
+        unmanaged={data.unmanaged}
+      />
 
       <PendingOrders orders={workingOrders(open, data.quotes)} onDone={refresh} />
 

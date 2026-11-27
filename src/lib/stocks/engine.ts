@@ -284,6 +284,9 @@ export async function submitIdea(raw: Record<string, unknown>, opts: { preview?:
     const [acct, quotes, trades, kill] = await Promise.all([tradingAccount(), stockQuotes([idea.ticker]).catch(() => ({}) as Record<string, StockQuote>), loadTrades(), killSwitchOn()]);
     const acctValue = await accountValue(acct).catch(() => null);
     const quote = quotes[idea.ticker] ?? null;
+    // The size is never taken from a default behind the form: the request has to carry the position size
+    // that was on screen.
+    if (idea.positionPct === null || idea.positionPct === undefined) return { ok: false, errors: ["Position size (% of the account) is required"], checks: [], mode };
     // This trade's own position cap (confidence slider), never above the setting.
     const sized = { ...settings, maxPositionPct: tradeCapPct(settings, idea.positionPct) };
     const checks = preTradeChecks({ idea, quote, trades, settings: sized, killSwitch: kill, accountValue: acctValue, now });

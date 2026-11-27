@@ -185,6 +185,12 @@ export interface StockSettings {
    */
   sizeByRisk: boolean;
   sizeByRiskAt: number;
+  /**
+   * Entry-form prefills (never applied behind the form): the position size a new idea starts at, % of the
+   * account (capped by `maxPositionPct`), and how far from the entry a missing stop is placed, %.
+   */
+  defaultPositionPct: number;
+  defaultStopPct: number;
   /** Last time a limit was raised (in dry run that applies at once; going live then waits 24 hours). */
   loosenedAt: number;
 }
@@ -202,11 +208,13 @@ export const DEFAULT_SETTINGS: StockSettings = {
   maxNetPct: 50,
   sizeByRisk: false,
   sizeByRiskAt: 0,
+  defaultPositionPct: 1,
+  defaultStopPct: 20,
   loosenedAt: 0,
 };
 
 /** Limits where a higher number is looser: raising them waits 24 hours; lowering them applies at once. */
-export const LOOSEN_UP: (keyof StockSettings)[] = ["shares", "maxOpen", "maxPerWeek", "weeklyLossPct", "riskPct", "maxPositionPct", "maxGrossPct", "maxNetPct"];
+export const LOOSEN_UP: (keyof StockSettings)[] = ["shares", "maxOpen", "maxPerWeek", "weeklyLossPct", "riskPct", "maxPositionPct", "maxGrossPct", "maxNetPct", "defaultPositionPct", "defaultStopPct"];
 export const LOOSEN_DELAY_MS = 24 * 3600_000;
 
 export interface StoredSettings {
@@ -244,8 +252,12 @@ const LIMITS: Record<keyof StockSettings, [number, number] | null> = {
   maxNetPct: [1, 400],
   sizeByRisk: null,
   sizeByRiskAt: null,
+  // The position default's upper end is really the current max position (checked in changeSettings).
+  defaultPositionPct: [0.1, 100],
+  defaultStopPct: [0.5, 25],
   loosenedAt: null,
 };
+export const POSITION_PCT_MIN = 0.1;
 
 /** The position cap for one trade: its own % (from the confidence slider) but never above the setting. */
 export function tradeCapPct(s: Pick<StockSettings, "maxPositionPct">, positionPct: number | null | undefined): number {
@@ -302,6 +314,18 @@ export function changeSettings(
     if (typeof v !== "number" || !Number.isFinite(v) || v < lim[0] || v > lim[1]) {
       errors.push(`${k} must be between ${lim[0]} and ${lim[1]}`);
       continue;
+    }
+    if (k === "defaultPositionPct") {
+      // Its ceiling is the max position in force once this change is applied (a raise of the max that
+      // has to wait 24 hours doesn't count yet).
+      const pm = patch.maxPositionPct;
+      const maxLim = LIMITS.maxPositionPct!;
+      const pmOk = typeof pm === "number" && Number.isFinite(pm) && pm >= maxLim[0] && pm <= maxLim[1];
+      const cap = pmOk && (pm <= next.values.maxPositionPct || next.values.dryRun) ? pm : next.values.maxPositionPct;
+      if (v > cap) {
+        errors.push(`defaultPositionPct must be between ${lim[0]} and the max position (${cap})`);
+        continue;
+      }
     }
     const val = k === "shares" || k === "maxOpen" || k === "maxPerWeek" ? Math.round(v) : v;
     const cur = next.values[k] as number;
@@ -385,8 +409,25 @@ const round2 = (v: number) => Math.round(v * 100) / 100;
 /** Order prices: cents, or 4 decimals under $1 (sub-dollar stocks trade in finer ticks). */
 export const roundPx = (v: number) => (v < 1 ? Math.round(v * 10000) / 10000 : round2(v));
 /** Default stop suggestion: 20% from the entry reference, on the losing side. */
-export const SUGGESTED_STOP_PCT = 20;
-export const suggestedStop = (ref: number, long: boolean) => roundPx(ref * (long ? 1 - SUGGESTED_STOP_PCT / 100 : 1 + SUGGESTED_STOP_PCT / 100));
+export const SUGGESTED_STOP_PCT = DEFAULT_SETTINGS.defaultStopPct;
+/** A stop `pct` % from the entry reference on the losing side: below for a long, above for a short. */
+export const suggestedStop = (ref: number, long: boolean, pct: number = SUGGESTED_STOP_PCT) => roundPx(ref * (long ? 1 - pct / 100 : 1 + pct / 100));
+
+/**
+ * What the entry form shows for a new idea before the user edits it: the position size starts at the
+ * default (never above the max position), and a stop that the idea didn't bring is placed the default
+ * distance from the entry. A stop that came with the idea (card or typed) is returned unchanged.
+ */
+export function ideaPrefill(
+  s: Pick<StockSettings, "defaultPositionPct" | "defaultStopPct" | "maxPositionPct">,
+  idea: { long: boolean; entryRef: number | null; stop?: number | string | null; positionPct?: number | null },
+): { positionPct: number; stop: number | null; stopIsDefault: boolean } {
+  const positionPct = tradeCapPct(s, idea.positionPct ?? s.defaultPositionPct);
+  const given = typeof idea.stop === "string" ? Number(idea.stop) : idea.stop;
+  if (given && given > 0) return { positionPct, stop: given, stopIsDefault: false };
+  const stop = idea.entryRef && idea.entryRef > 0 ? suggestedStop(idea.entryRef, idea.long, s.defaultStopPct) : null;
+  return { positionPct, stop, stopIsDefault: stop !== null };
+}
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : NaN);
 
 /** Parse and check the form: every field required (target optional). */
@@ -436,7 +477,7 @@ export function parseIdea(raw: Record<string, unknown>): { idea: IdeaInput | nul
   const ideaNotes = txt("ideaNotes", "Notes", 0, 1000, false);
   const posGiven = raw.positionPct !== undefined && raw.positionPct !== null && raw.positionPct !== "";
   const positionPct = posGiven ? num(raw.positionPct) : null;
-  if (positionPct !== null && !(positionPct > 0 && positionPct <= 100)) errors.push("Position size must be a % of the account");
+  if (positionPct !== null && !(positionPct >= POSITION_PCT_MIN && positionPct <= 100)) errors.push(`Position size must be ${POSITION_PCT_MIN}–100 % of the account`);
   const becauseData = txt("becauseData", '"Because of this data…"', 5, 300);
   const catalyst = txt("catalyst", "Catalyst", 5, 300);
   const catalystDate = txt("catalystDate", "Catalyst date or window", 0, 80, false);
